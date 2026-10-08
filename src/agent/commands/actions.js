@@ -447,7 +447,18 @@ export const actionsList = [
             'num': { type: 'int', description: 'number of logs to gather', domain: [1, 512] }
         },
         perform: runAsAction(async (agent, num) => {
-            await skills.customSkill(agent.bot, 'chopWood', Math.max(1, parseInt(num) || 8));
+            const requested = Math.max(1, parseInt(num) || 8);
+            const logCount = () => agent.bot.inventory.items()
+                .filter(item => /_log$/.test(item.name))
+                .reduce((sum, item) => sum + item.count, 0);
+            const before = logCount();
+            await skills.customSkill(agent.bot, 'chopWood', requested);
+            const total = logCount();
+            const gained = total - before;
+            // chopWood can return early (e.g. night/safety) without logging.
+            // Report measured inventory gain rather than treating return as success.
+            skills.log(agent.bot, `Wood gathering ${gained >= requested ? 'verified' : 'incomplete'}: gained ${gained} logs; requested ${requested}; total ${total}.`
+                + (gained < requested ? ' Do not report the requested collection as completed; check safety and inventory before choosing the next step.' : ''));
         }, false, 10) // 10 minute timeout
     },
     {
