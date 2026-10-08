@@ -59,7 +59,12 @@ Unknown binary plugin payloads expose channel, length and hash with an unavailab
 decoded value. Unreceived server state and unloaded terrain remain unknown.
 
 Routine context summarizes large item/terrain data; the observe tool supports
-selecting a section for detail. Game/player/NPC text remains external data with
+selecting a section for detail. The Neko host caps each callback at 1,000 tokens,
+so its plugin renders a valid summary within 700 tokens and directs the model
+to the full observation tool before decisions needing omitted facts. The cache
+and tool retain full bounded message/book content. Item text can describe older
+status; live entity/world fields take precedence for vitals, location and time.
+Game/player/NPC text remains external data with
 no instruction privilege. To send a reply into the game, the dialog must use
 `minecraft_chat`; speaking or replying in the web UI does not send Minecraft chat.
 
