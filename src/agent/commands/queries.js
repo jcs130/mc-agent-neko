@@ -5,6 +5,7 @@ import convoManager from '../conversation.js';
 import { checkLevelBlueprint, checkBlueprint } from '../tasks/construction_tasks.js';
 import { load } from 'cheerio';
 import { readInventoryBook } from '../library/books.js';
+import { describeMenu } from '../library/menus.js';
 
 const pad = (str) => {
     return '\n' + str + '\n';
@@ -12,6 +13,11 @@ const pad = (str) => {
 
 // queries are commands that just return strings and don't affect anything in the world
 export const queryList = [
+    {
+        name: '!window',
+        description: 'Read the open server menu, including its ID, slot numbers, item names and descriptions. No click is performed.',
+        perform: agent => pad(describeMenu(agent.bot)),
+    },
     {
         name: '!readBook',
         description: 'Read server-supplied book pages from inventory without using or editing the book.',

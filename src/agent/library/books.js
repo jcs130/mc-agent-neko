@@ -1,6 +1,6 @@
 const BOOKS = new Set(['written_book', 'writable_book']);
 
-function plainText(value, depth = 0) {
+export function plainText(value, depth = 0) {
     if (depth > 16 || value == null) return '';
     if (typeof value === 'string') {
         try { return plainText(JSON.parse(value), depth + 1); } catch { return value; }

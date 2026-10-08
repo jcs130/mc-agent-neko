@@ -1,4 +1,5 @@
 import * as skills from '../library/skills.js';
+import { clickMenuSlot, describeMenu } from '../library/menus.js';
 import settings from '../settings.js';
 import convoManager from '../conversation.js';
 
@@ -828,14 +829,24 @@ export const actionsList = [
         })
     },
     {
+        name: '!clickWindow',
+        description: 'Left-click an observed server-menu slot. Query !window first and use its actual ID and slot; verify the result afterward.',
+        params: {
+            window_id: { type: 'int', description: 'Current menu ID returned by !window.' },
+            slot: { type: 'int', description: 'Nonempty menu slot returned by !window; player inventory slots are excluded.' },
+        },
+        perform: (agent, windowId, slot) => clickMenuSlot(agent.bot, windowId, slot),
+    },
+    {
         name: '!useOn',
-        description: 'Use (right click) the given tool on the nearest target of the given type.',
+        description: 'Use (right click) the given tool on the nearest target of the given type. If a server menu opens, its observed contents are included in the result.',
         params: {
             'tool_name': { type: 'string', description: 'Name of the tool to use, or "hand" for no tool.' },
             'target': { type: 'string', description: 'The target as an entity type, block type, or "nothing" for no target.' }
         },
         perform: runAsAction(async (agent, tool_name, target) => {
             await skills.useToolOn(agent.bot, tool_name, target);
+            if (agent.bot.currentWindow) skills.log(agent.bot, describeMenu(agent.bot));
         })
     },
 ];
