@@ -14,7 +14,8 @@ export async function addBrowserViewer(bot, count_id) {
     }
     const { startModernViewer } = await import('./modern/host.mjs');
     const handle = await startModernViewer(bot, { port,
-        assetsDir: settings.modern_viewer_assets_dir, speakerName: bot.username });
+        assetsDir: settings.modern_viewer_assets_dir, speakerName: bot.username,
+        maxSessions: settings.modern_viewer_max_sessions ?? 8 });
     let lan;
     try {
         if (settings.modern_viewer_lan_address) lan = await startViewerLanProxy({

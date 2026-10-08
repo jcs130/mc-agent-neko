@@ -24,7 +24,17 @@ const result = await build({
                 const speechSetup = /  const speechBubbleScript = await readFile\([\s\S]*?  const speechRelay = new ViewerSpeechRelay\([^;]+;/;
                 if (!speechSetup.test(source)) throw new Error('Upstream speech setup changed; review the importer.');
                 if (!source.includes('res.end(page); return;')) throw new Error('Upstream page output changed; review the importer.');
+                const viewerStart = 'export async function startModernViewer(bot: mineflayer.Bot, options: ModernViewerOptions): Promise<ModernViewerHandle> {';
+                if (!source.includes('const MAX_SESSIONS = 2;') || !source.includes(viewerStart)) {
+                    throw new Error('Upstream viewer session configuration changed; review the importer.');
+                }
                 source = source.replace(/import \{ ViewerSpeechRelay \} from '[^']+';\r?\n/, '')
+                    .replace('const MAX_SESSIONS = 2;', '')
+                    .replace(viewerStart, `${viewerStart}
+  const MAX_SESSIONS = options.maxSessions ?? 8;
+  if (!Number.isInteger(MAX_SESSIONS) || MAX_SESSIONS < 1 || MAX_SESSIONS > 16) {
+    throw new Error('modern viewer: maxSessions must be an integer from 1 to 16');
+  }`)
                     .replace(speechSetup, "  const speakerScript = '';\n  const speechRelay = { handle: async () => false, close() {} };")
                     .replace(/'<iframe class="corti-speech-bubble"[^\n]+<\/iframe>',/, "'',")
                     .replace("'<script src=\"/speech-bubble.js\" defer></script>'", "''")
@@ -45,6 +55,7 @@ await writeFile(path.join(destination, 'source.json'), JSON.stringify({
     entry: 'src/worlds/minecraft/modern-viewer.ts',
     bundleSha256: createHash('sha256').update(bundle).digest('hex'),
     inputs: Object.keys(result.metafile.inputs).map(file => path.relative(sourceRoot, path.resolve(file)).replaceAll('\\', '/')),
-    changes: ['Remove the host speech and livestream overlay; retain game rendering and sound.'],
+    changes: ['Remove the host speech and livestream overlay; retain game rendering and sound.',
+        'Make concurrent viewing configurable (default 8, range 1-16); keep the separate capture limit.'],
 }, null, 2) + '\n');
 console.log(`Imported modern viewer host (${bundle.length} bytes).`);

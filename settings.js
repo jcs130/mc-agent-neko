@@ -52,6 +52,7 @@ const settings = {
     "modern_viewer_assets_dir": "", // generated 1.20.6 assets; see src/agent/vision/modern/README.md
     "modern_viewer_lan_address": "", // optional local IPv4 address for subnet-only viewing
     "modern_viewer_lan_prefix": 24,
+    "modern_viewer_max_sessions": 8, // shared across local/LAN pages and all viewpoints (1-16)
     "proactive_night_shelter": true, // disable for protected plugin hubs driven by an external agent
 
     "allow_insecure_coding": true, // allows newAction command and model can write/run code on your computer. enable at own risk
