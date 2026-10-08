@@ -1,4 +1,5 @@
 import * as mc from "../../utils/mcdata.js";
+import { makeableRecipes } from '../../utils/crafting_recipes.js';
 import * as world from "./world.js";
 import * as tickConfirm from "./tick_confirm.js";
 import pf from 'mineflayer-pathfinder';
@@ -344,11 +345,11 @@ export async function craftRecipe(bot, itemName, num=1) {
     }
 
     // get recipes that don't require a crafting table
-    let recipes = bot.recipesFor(mc.getItemId(itemName), null, 1, null); 
+    let recipes = makeableRecipes(bot, mc.getItemId(itemName));
     let craftingTable = null;
     const craftingTableRange = 16;
     placeTable: if (!recipes || recipes.length === 0) {
-        recipes = bot.recipesFor(mc.getItemId(itemName), null, 1, true);
+        recipes = makeableRecipes(bot, mc.getItemId(itemName), true);
         if(!recipes || recipes.length === 0) break placeTable; //Don't bother going to the table if we don't have the required resources.
 
         // A carried table makes this a local workstation operation. Previously
@@ -370,7 +371,7 @@ export async function craftRecipe(bot, itemName, num=1) {
                     await placeBlock(bot, 'crafting_table', pos.x, pos.y, pos.z);
                     craftingTable = await world.getNearestBlockAsync(bot, 'crafting_table', craftingTableRange);
                     if (craftingTable) {
-                        recipes = bot.recipesFor(mc.getItemId(itemName), null, 1, craftingTable);
+                        recipes = makeableRecipes(bot, mc.getItemId(itemName), craftingTable);
                         placedTable = true;
                     }
                 }
@@ -381,7 +382,7 @@ export async function craftRecipe(bot, itemName, num=1) {
             }
         }
         else {
-            recipes = bot.recipesFor(mc.getItemId(itemName), null, 1, craftingTable);
+            recipes = makeableRecipes(bot, mc.getItemId(itemName), craftingTable);
         }
     }
     if (!recipes || recipes.length === 0) {
@@ -484,24 +485,10 @@ export async function craftRecipeLocal(bot, itemName, num=1) {
         return false;
     }
 
-    let recipes = bot.recipesFor(itemId, null, 1, null);
+    let recipes = makeableRecipes(bot, itemId);
     let craftingTable = null;
-    // ★C301: bot.recipesFor() can return [] for a 2x2-craftable item EVEN WHEN the bot holds the
-    // ingredients — crafting_table is built from the #planks tag, which doesn't resolve for jungle/
-    // birch/etc. planks in some minecraft-data versions. The code then WRONGLY assumed a 3x3 table was
-    // needed, hunted for one, found none, and gave up — so a bot with 14 jungle_planks could never
-    // craft a crafting_table → no table → no tools/sword, the keystone dead-lock (T-0017). Before
-    // assuming a table is needed, try recipesAll() (inventory-independent) and keep any NO-table recipe
-    // the bot actually has ingredients for.
-    if (!recipes || recipes.length === 0) {
-        try {
-            const all = bot.recipesAll(itemId, null, null) || [];
-            const inv0 = world.getInventoryCounts(bot);
-            const makeable = all.filter(r => r && !r.requiresTable
-                && mc.calculateLimitingResource(inv0, mc.ingredientsFromPrismarineRecipe(r)).num > 0);
-            if (makeable.length) { recipes = makeable; log(bot, `${itemName}: recipesFor empty but recipesAll found a no-table recipe with held ingredients (C301).`); }
-        } catch (e) {}
-    }
+    // Resolve vanilla #planks recipes from held stacks before looking for a
+    // table. minecraft-data's oak-only expansion otherwise blocks spruce kits.
     let placedTableFromCarry = false;
     let placedTablePos = null;
     if (!recipes || recipes.length === 0) {
@@ -521,7 +508,7 @@ export async function craftRecipeLocal(bot, itemName, num=1) {
             log(bot, `Crafting ${itemName} needs a reachable crafting table.`);
             return false;
         }
-        recipes = bot.recipesFor(itemId, null, 1, craftingTable);
+        recipes = makeableRecipes(bot, itemId, craftingTable);
     }
     if (!recipes || recipes.length === 0) {
         log(bot, `You do not have the resources to craft a ${itemName} locally.`);

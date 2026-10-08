@@ -516,9 +516,10 @@ export function calculateLimitingResource(availableItems, requiredItems, discret
     let limitingResource = null;
     let num = Infinity;
     for (const itemType in requiredItems) {
-        if (availableItems[itemType] < requiredItems[itemType] * num) {
+        const available = availableItems[itemType] ?? 0;
+        if (available < requiredItems[itemType] * num) {
             limitingResource = itemType;
-            num = availableItems[itemType] / requiredItems[itemType];
+            num = available / requiredItems[itemType];
         }
     }
     if(discrete) num = Math.floor(num);
