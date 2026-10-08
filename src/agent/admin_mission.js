@@ -80,6 +80,8 @@ export class AdminMission {
 
         const ms = parseInt(process.env.MC_ADMIN_MISSION_MAX_MS, 10);
         this._maxMs = (Number.isFinite(ms) && ms > 0) ? ms : 1800000;   // 30 min default
+        const wall = parseInt(process.env.MC_ADMIN_MISSION_WALL_MS, 10);
+        this._wallMs = (Number.isFinite(wall) && wall > 0) ? wall : 0;
         const db = parseInt(process.env.MC_ADMIN_MISSION_DEATH_BUDGET, 10);
         this._deathBudget = Number.isFinite(db) ? db : 3;               // deaths tolerated before abort (0 = death aborts)
     }
@@ -104,6 +106,11 @@ export class AdminMission {
     //   canonical identity/telemetry string (banners / beginMissionTask / anti-reflexive guard); only
     //   the self-prompt LOOP sees this wrapped prompt.
     _loopPrompt(text) {
+        if (process.env.MC_FOOD_INSTINCTS === '1') {
+            return '[任务规则] 完成当前一个短目标后用 !endGoal 返回真实结果。资源不存在、不可达或连续失败则用 !cannotComplete 说明证据。'
+                + '生命值低于等于10、饥饿值低于等于8或遭受攻击时优先脱险和补充食物；安全后继续任务。'
+                + '优先使用背包现有材料合成，不要为已经拥有的材料反复攀爬或远行。任务：' + String(text ?? '');
+        }
         const RULE = '[任务铁律] 你正在执行管理员下达的指令，这是【最高优先级、独占】的任务，专注把它做完。'
             + '只有三种情况才停止：(1)任务已完成 → !endGoal；(2)确实无法完成（例如所需资源根本不存在或到不了）'
             + ' → !cannotComplete("简短原因")；(3)遇到致命危险（溺水/着火/岩浆/濒死）。期间【不要】为饥饿或进食'
@@ -418,6 +425,12 @@ export class AdminMission {
         const m = this.mission;
         const now = Date.now();
 
+        // A short Neko tool call must finish even if consuming inventory keeps
+        // extending the normal inactivity deadline.
+        if (this._wallMs && now - m.startedAt >= this._wallMs) {
+            this.end('deadline');
+            return;
+        }
         this._maybeExtendDeadline(now);
         if (now > m.deadlineAt) { this.end('impossible', 'deadline'); return; }
 
