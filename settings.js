@@ -47,6 +47,11 @@ const settings = {
     "chat_ingame": false, // bot responses are shown in minecraft chat
     "language": "en", // translate to/from this language. Supports these language names: https://cloud.google.com/translate/docs/languages
     "render_bot_view": false, // show bot's view in browser at localhost:3000, 3001...
+    "viewer_type": "prismarine", // "modern" uses Cortico's standalone renderer
+    "viewer_port": 3000,
+    "modern_viewer_assets_dir": "", // generated 1.20.6 assets; see src/agent/vision/modern/README.md
+    "modern_viewer_lan_address": "", // optional local IPv4 address for subnet-only viewing
+    "modern_viewer_lan_prefix": 24,
     "proactive_night_shelter": true, // disable for protected plugin hubs driven by an external agent
 
     "allow_insecure_coding": true, // allows newAction command and model can write/run code on your computer. enable at own risk

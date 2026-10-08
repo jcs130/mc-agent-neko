@@ -15,10 +15,7 @@ import { installVineUnstick } from './library/vine_unstick.js';
 import { installArrowGuard } from './arrow_guard.js';
 import convoManager from './conversation.js';
 import { handleTranslation, handleEnglishTranslation } from '../utils/translator.js';
-// NOTE (local deploy): addBrowserViewer import removed — it is HARD-DISABLED below
-// (its only call site is commented out) and statically importing browser_viewer.js
-// pulls in prismarine-viewer, whose require/import mix crashes Node's ESM/CJS loader
-// (ERR_INTERNAL_ASSERTION) at startup. Re-add after building headless-gl if you want it.
+// Browser transport is loaded on spawn only when rendering is enabled.
 import { serverProxy, sendOutputToServer } from './mindserver_proxy.js';
 import settings from './settings.js';
 import { Task } from './tasks/tasks.js';
@@ -485,7 +482,7 @@ export class Agent {
                 // Browser rendering is opt-in and does not load headless-gl.
                 if (settings.render_bot_view) {
                     const { addBrowserViewer } = await import('./vision/browser_viewer.js');
-                    addBrowserViewer(this.bot, this.count_id);
+                    await addBrowserViewer(this.bot, this.count_id);
                 }
                 console.log('Initializing vision intepreter...');
                 this.vision_interpreter = new VisionInterpreter(this, settings.allow_vision);
