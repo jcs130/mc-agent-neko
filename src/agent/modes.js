@@ -7342,6 +7342,9 @@ class ModeController {
     }
 
     async update() {
+        // Reconnection retires the old entity before the new body spawns.
+        // No observer or movement mode may inspect that absent/poisoned body.
+        if (!_agent?.bot?.entity?.position || _agent.bot._poisoned) return;
         if (_agent.isIdle()) {
             this.unPauseAll();
         }
