@@ -1,1 +1,2 @@
 *.patch whitespace=-blank-at-eol
+src/agent/vision/modern/host.mjs text eol=lf
