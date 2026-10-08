@@ -66,6 +66,7 @@ node main.js                                        ← 入口
 | modes:threat_radar | `radar.json`（24格实体全量）+ `combat_log.jsonl`（交战 1Hz 快照） | 5s / 交战期 1s |
 | modes:act_trace | `act_trace.jsonl` 行为心电图（pos/按键/action/寻路/挖掘目标）；**act 字段对 run_skill 不可见** | 1Hz |
 | ws_server 广播 → bridge | `vitals.json`/`vitals.jsonl`（pos/dim/hp/food/tod/hostiles/skill/mob/全背包） | 15s |
+| `src/websocket/game_information.js` → Neko 插件 | 独立 `game_state` 完整事实快照 + `game_events` 聊天/系统/插件反馈，附来源、时间、事件 ID；Neko 决策上下文与 `minecraft_observe` 使用同一份数据，见 [协议与边界](game-information.md) | 快照 3s / 事件聚合 250ms / 按需 |
 | agent.js 死亡钩子 | `death_log.jsonl`（死因/坐标/装备/怪列表，append-only 跨重启） | 每死 |
 | 策略 skill | `progress.txt`（fs 直写，实时） | 持续 |
 | `src/agent/vision/` | **已禁用**。三处 prismarine-viewer Camera（ws_server / agent.js addBrowserViewer / vision_interpreter）全部硬禁——headless-gl 原生崩溃带走整个进程。要看画面临时 `=5000` 再关回 |

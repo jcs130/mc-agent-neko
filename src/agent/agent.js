@@ -138,7 +138,11 @@ export class Agent {
 
 		this.respondFunc = respondFunc;
 
-        this.bot.on('whisper', respondFunc);
+        this.bot.on('whisper', (...args) => {
+            // The subscribed Neko dialog owns private conversation. Preserve
+            // the standalone body's reply path when no such client is present.
+            if (!wsServer.hasGameInformationClient?.()) respondFunc(...args);
+        });
         
         // ★2026-07-14 用户令: 游戏内 chat 路由重写 —— 根治 admin 指令风暴 (命令回执/系统消息被当指令:
         //   实录 "Applied effect Night Vision…"/"tp Neko" 漏 ignore_messages 黑名单进 mission, 每条触发
@@ -223,6 +227,7 @@ export class Agent {
 
     // 非指令真人聊天 → 节流聚合 (默认 3s 一批) → ws 转发外部 admin llm (env MC_INGAME_CHAT_FLUSH_MS 可调)
     _bufferChatForward(username, text) {
+        if (wsServer.hasGameInformationClient?.()) return;
         try {
             if (!this._chatFwdBuf) this._chatFwdBuf = [];
             this._chatFwdBuf.push({ player: username, text });
@@ -420,6 +425,7 @@ export class Agent {
 
     async initBot() {
         this.bot = initBot(this.name);
+        wsServer.observeAgent(this);
         this._stampBotEpoch();
         this._disconnectHandled = false;
         
@@ -851,6 +857,7 @@ export class Agent {
                 // Create new bot instance
                 const deadBot = this.bot;
                 this.bot = initBot(this.name);
+                wsServer.observeAgent(this);
                 this._stampBotEpoch();
                 this.bot._reconnectAttempt = this.reconnectAttempts;
                 this._disconnectHandled = false;

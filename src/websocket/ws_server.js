@@ -1,6 +1,8 @@
 import { WebSocketServer } from 'ws';
 import fs from 'fs';
 import { sendGameChat } from './chat_bridge.js';
+import { GameInformation } from './game_information.js';
+import settings from '../agent/settings.js';
 import { serverProxy } from '../agent/mindserver_proxy.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -130,10 +132,11 @@ class WSMessageServer {
             //   外部 LLM 本来会一直收不到"当前在干嘛", 直到状态下次变 —— 稳态下可能好几分钟空白。
             //   这里对这个新连接单独绕过 dedup 发一帧当前态(不写 _lastNLText、不镜像游戏聊天)。
             this._sendCurrentStatusNL(ws);
+            this.gameInformation?.sendState(ws);
 
             ws.on('message', (data) => {
                 try {
-                    this.handleMessage(JSON.parse(data.toString()));
+                    this.handleMessage(JSON.parse(data.toString()), ws);
                 } catch (error) {
                     console.error('Error parsing WebSocket message:', error);
                     ws.send(JSON.stringify({
@@ -157,6 +160,7 @@ class WSMessageServer {
 
     setAgent(agent) {
         this.agent = agent;
+        this.observeAgent(agent);
         console.log(`WebSocket server connected to agent: ${agent.name}`);
 
         // Reset NaN warning flag when agent reconnects
@@ -173,6 +177,18 @@ class WSMessageServer {
         // latest snapshot to vitals.json for the watchdog/patrol to read.
         this.startVitalsTimer();
         this.startStatusNLTimer();
+    }
+
+    observeAgent(agent) {
+        if (this.gameInformation?.bot === agent.bot) return;
+        this.gameInformation?.close();
+        this.gameInformation = new GameInformation(agent, frame => this.broadcast(frame), {
+            commandPrefix: settings.chat_command_prefix ?? '@neko',
+        });
+    }
+
+    hasGameInformationClient() {
+        return [...this.clients].some(client => client.gameInformationSubscribed && client.readyState === client.OPEN);
     }
 
     // ★2026-07-07 用户令 (取代原来每 5s 的 [dbg] 刷屏): 把"经 WS 与外部 LLM 往来的消息"(仅文本)
@@ -502,7 +518,15 @@ class WSMessageServer {
         }
     }
 
-    handleMessage(data) {
+    handleMessage(data, client) {
+        // Read-only subscription can arrive before the game has spawned.
+        if (data.type === 'query_game_state') {
+            if (client && data.schemaVersion === 1 && typeof data.conversationOwner === 'boolean') {
+                client.gameInformationSubscribed = data.conversationOwner;
+            }
+            this.gameInformation?.sendState(client);
+            return;
+        }
         if (!this.agent) {
             this.broadcast({
                 type: 'error',
@@ -1393,7 +1417,7 @@ class WSMessageServer {
         try {
             const t = data && data.type;
             const noMirror = (t === 'pong' || t === 'bot_status_nl' || t === 'screenshot'
-                || t === 'vitals' || t === 'inventory');
+                || t === 'vitals' || t === 'inventory' || t === 'game_state' || t === 'game_events');
             if (t && !noMirror) {
                 this._chatToMC('▶' + JSON.stringify(data));
             }
@@ -1426,6 +1450,7 @@ class WSMessageServer {
     }
 
     stop() {
+        this.gameInformation?.close();
         if (this.screenshotInterval) {
             clearInterval(this.screenshotInterval);
             this.screenshotInterval = null;
