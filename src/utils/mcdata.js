@@ -54,6 +54,20 @@ export const WOOL_COLORS = [
 
 
 export function initBot(username) {
+    // Settings arrive asynchronously from MindServer after this module loads.
+    // Read the pinned protocol now instead of auto-detecting the gateway version.
+    mc_version = settings.minecraft_version || mc_version;
+    if (mc_version === '1.20.6') {
+        // minecraft-data currently includes fields introduced after 1.20.6.
+        // Remove them before minecraft-protocol compiles the shared schema.
+        const slot = minecraftData(mc_version).protocol?.types?.SlotComponent;
+        const fields = slot?.[1]?.find(f => f.name === 'data')?.type?.[1]?.fields;
+        for (const [component, extra] of [['food', 'usingConvertsTo'], ['potion_contents', 'customName']]) {
+            const items = fields?.[component]?.[1];
+            const index = Array.isArray(items) ? items.findIndex(f => f.name === extra) : -1;
+            if (index >= 0) items.splice(index, 1);
+        }
+    }
     const options = {
         username: username,
         host: settings.host,

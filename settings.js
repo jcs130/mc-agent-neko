@@ -47,6 +47,7 @@ const settings = {
     "chat_ingame": false, // bot responses are shown in minecraft chat
     "language": "en", // translate to/from this language. Supports these language names: https://cloud.google.com/translate/docs/languages
     "render_bot_view": false, // show bot's view in browser at localhost:3000, 3001...
+    "proactive_night_shelter": true, // disable for protected plugin hubs driven by an external agent
 
     "allow_insecure_coding": true, // allows newAction command and model can write/run code on your computer. enable at own risk
     "allow_vision": true, // allows vision model to interpret screenshots (enables !lookAtPlayer/!lookAtPosition's real vision path; vision_model falls back to chat_model when not explicitly set in profile)

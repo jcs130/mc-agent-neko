@@ -1103,6 +1103,9 @@ const modes_list = [
             try { bot.clearControlStates(); } catch (e) {}
         },
         shouldNightShelter: function (bot) {
+            // Plugin server hubs may have fixed night and protected terrain.
+            // Disable only preventive shelter; drowning/fire/threat reflexes remain.
+            if (settings.proactive_night_shelter === false) return false;
             // ★PROACTIVE NIGHT INSTINCT (用户诊断: bot 没夜晚意识——天黑还慢悠悠挖,直到被怪偷袭
             // 致死;要"入夜主动转生存,而不是等到遇到怪再反应"). The OLD code required a mob to be
             // ALREADY near (`hostiles.length===0 → return false`) = purely REACTIVE → mobs spawn

@@ -482,13 +482,11 @@ export class Agent {
                 this._disconnectHandled = false;
                 this._reconnectNowInFlight = false;
                 if (reconnectAttempt > 0) console.log(`✅ Bot reconnected successfully (attempt ${reconnectAttempt}, spawn confirmed)`);
-                // HARD-DISABLED (unconditional): the prismarine-viewer browser renderer
-                // crashes the agent subprocess (exit 1) → auto-restart → ~15s offline → bot
-                // dies AFK. Env-gating didn't survive subprocess restarts, so the viewer (and
-                // the churn) came back on every restart. Never start it. (Visual feed gone;
-                // bot staying alive matters more. To restore the feed, re-enable this line.)
-                // addBrowserViewer(this.bot, this.count_id);
-                console.log('🛑 addBrowserViewer HARD-DISABLED (no renderer, no churn)');
+                // Browser rendering is opt-in and does not load headless-gl.
+                if (settings.render_bot_view) {
+                    const { addBrowserViewer } = await import('./vision/browser_viewer.js');
+                    addBrowserViewer(this.bot, this.count_id);
+                }
                 console.log('Initializing vision intepreter...');
                 this.vision_interpreter = new VisionInterpreter(this, settings.allow_vision);
 

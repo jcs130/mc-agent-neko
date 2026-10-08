@@ -1,6 +1,7 @@
 import settings from '../settings.js';
-import prismarineViewer from 'prismarine-viewer';
-const mineflayerViewer = prismarineViewer.mineflayer;
+import { createRequire } from 'node:module';
+// Load only the browser transport: the package entry also loads headless-gl.
+const mineflayerViewer = createRequire(import.meta.url)('prismarine-viewer/lib/mineflayer');
 
 export function addBrowserViewer(bot, count_id) {
     if (settings.render_bot_view)
