@@ -4,6 +4,7 @@ import { getCommandDocs } from './index.js';
 import convoManager from '../conversation.js';
 import { checkLevelBlueprint, checkBlueprint } from '../tasks/construction_tasks.js';
 import { load } from 'cheerio';
+import { readInventoryBook } from '../library/books.js';
 
 const pad = (str) => {
     return '\n' + str + '\n';
@@ -11,6 +12,21 @@ const pad = (str) => {
 
 // queries are commands that just return strings and don't affect anything in the world
 export const queryList = [
+    {
+        name: '!readBook',
+        description: 'Read server-supplied book pages from inventory without using or editing the book.',
+        params: { slot: { type: 'int', description: 'Inventory slot; -1 chooses the held book or first book.' } },
+        perform: (agent, slot) => pad(readInventoryBook(agent.bot, slot)),
+    },
+    {
+        name: '!readBookPages',
+        description: 'Read up to 8 book pages starting at a specified page, without using or editing the book.',
+        params: {
+            slot: { type: 'int', description: 'Inventory slot; -1 chooses the held book or first book.' },
+            start_page: { type: 'int', description: 'First page to read, starting at 1.' },
+        },
+        perform: (agent, slot, startPage) => pad(readInventoryBook(agent.bot, slot, startPage)),
+    },
     {
         name: "!stats",
         description: "Get your bot's location, health, hunger, and time of day.", 

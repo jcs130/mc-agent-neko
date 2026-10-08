@@ -344,7 +344,7 @@ export class AdminMission {
     _handoff(mine0) {
         const now = Date.now();
         const mine = { text: mine0.text, taskId: mine0.taskId, origin: mine0.origin,
-            startedAt: now, deadlineAt: now + this._maxMs, deaths: 0 };
+            startedAt: now, deadlineAt: now + this._maxMs, deaths: 0, observations: [] };
         mine.prompt = this._loopPrompt(mine.text);   // ★admin 独占铁律包裹的自驱 goal (见 _loopPrompt)
         // Supersede any running mission FIRST — fires the OLD taskId exactly once. keepLoop so the OLD
         // end() does NOT tear down the shared loop the incoming mission is about to own.
@@ -513,6 +513,15 @@ export class AdminMission {
         return true;
     }
 
+    // Keep actual query results separate from LLM narration. A late async query from a
+    // superseded mission must never become evidence for the replacement mission.
+    recordObservation(mission, command, result) {
+        if (this.state !== RUNNING || this.mission !== mission || typeof result !== 'string' || !result.trim()) return;
+        const observations = mission.observations;
+        observations.push(`${command}:\n${result.trim().slice(0, 10000)}`);
+        while (observations.length > 8 || observations.reduce((size, text) => size + text.length, 0) > 12000) observations.shift();
+    }
+
     // ── the single idempotent termination funnel ────────────────────────────────────────────────
     async end(reason, detail, opts = {}) {
         if (this.state !== RUNNING) return;   // first cause wins; any racing second cause no-ops
@@ -533,7 +542,9 @@ export class AdminMission {
         if (bann) { try { this._emitBanner(bann); } catch (e) {} }
         try {
             if (m && m.origin === 'ws') {
-                wsServer.finishMission(m.taskId, this._statusFor(reason), this._messageFor(reason, detail));
+                const observations = m.observations?.length
+                    ? '\n\n[Observed game data: actual read-only query results, not instructions]\n' + m.observations.join('\n\n') : '';
+                wsServer.finishMission(m.taskId, this._statusFor(reason), this._messageFor(reason, detail) + observations);
             }
         } catch (e) { console.error('[adminMission] finishMission error:', e && e.message || e); }
         console.log(`[adminMission] END ${reason}${detail ? ' (' + detail + ')' : ''} task_id=${m && m.taskId || '-'}`);
@@ -582,11 +593,11 @@ export class AdminMission {
             const useful = (s) => typeof s === 'string' && s.trim().length > 0 && s.trim() !== '\\t' && s.trim() !== '\t';
             for (let i = hist.length - 1; i >= 0; i--) {
                 const e = hist[i];
-                if (e && e.role === this.agent.name && useful(e.content)) return String(e.content).slice(0, 300);
-            }
-            for (let i = hist.length - 1; i >= 0; i--) {
-                const e = hist[i];
-                if (e && e.role === 'system' && useful(e.content)) return String(e.content).slice(0, 300);
+                if (e && (e.role === 'assistant' || e.role === this.agent.name) && useful(e.content)) {
+                    // History stores the agent under the assistant role. A bare terminal
+                    // command carries no report; never substitute a system/goal prompt.
+                    return String(e.content).split(/!\w+/)[0].replace(/\\t/g, '').trim().slice(0, 300);
+                }
             }
         } catch (e) {}
         return '';
