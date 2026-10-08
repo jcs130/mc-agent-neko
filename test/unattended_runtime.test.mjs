@@ -31,6 +31,26 @@ test('short missions hit their absolute deadline even with continuous inventory 
     assert.equal(ended,'deadline');
 });
 
+test('mission housekeeping cannot restart self prompting during the initial handoff', () => {
+    const context = vm.createContext({console, Date, setTimeout, clearTimeout,
+        process: {env: {DEBUG_CHAT: '0'}}, wsServer: {beginMissionTask() {}}});
+    const source = readFileSync(new URL('../src/agent/admin_mission.js', import.meta.url), 'utf8')
+        .replace(/^import .*;\r?\n/gm, '').replace(/\bexport /g, '');
+    vm.runInContext(source, context);
+    const Mission = vm.runInContext('AdminMission', context);
+    let starts = 0;
+    const mission = new Mission({bot: {}, requestInterrupt() {}, self_prompter: {
+        isActive: () => false, isStopped: () => true, start: () => { starts++; },
+    }});
+    const active = mission._handoff({text: '制作工作台', taskId: 'handoff', origin: 'ws'});
+    mission._maybeExtendDeadline = () => {};
+    mission.tick();
+    assert.equal(starts, 0, 'the initial turn owns handoff and startup');
+    active.initialTurnPending = false;
+    mission.tick();
+    assert.equal(starts, 1, 'normal stopped-loop recovery remains available');
+});
+
 test('food-enabled missions let survival preempt work and report blocked goals', () => {
     const context = vm.createContext({console, Date, setTimeout, clearTimeout,
         process:{env:{MC_FOOD_INSTINCTS:'1'}}, wsServer:{}});

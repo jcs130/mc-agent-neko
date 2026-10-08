@@ -351,7 +351,8 @@ export class AdminMission {
     _handoff(mine0) {
         const now = Date.now();
         const mine = { text: mine0.text, taskId: mine0.taskId, origin: mine0.origin,
-            startedAt: now, deadlineAt: now + this._maxMs, deaths: 0, observations: [] };
+            startedAt: now, deadlineAt: now + this._maxMs, deaths: 0, observations: [],
+            initialTurnPending: true };
         mine.prompt = this._loopPrompt(mine.text);   // ★admin 独占铁律包裹的自驱 goal (见 _loopPrompt)
         // Supersede any running mission FIRST — fires the OLD taskId exactly once. keepLoop so the OLD
         // end() does NOT tear down the shared loop the incoming mission is about to own.
@@ -383,8 +384,10 @@ export class AdminMission {
     async _drive(mine) {
         // Fix H4: force the OLD skill to release the body before we run the initial turn.
         try { await this._preemptBody(2000); } catch (e) {}
+        if (this.state !== RUNNING || this.mission !== mine) return;
         // Ensure the shared self_prompter is fully down before we take it over (parity with old begin).
-        try { await this.agent.self_prompter.stop(false); } catch (e) {}
+        try { await this.agent.self_prompter.stop(false, true); } catch (e) {}
+        if (this.state !== RUNNING || this.mission !== mine) return;
 
         // Initial turn — mission-managed so handleMessage skips its one-shot admin blocks.
         this.turnManaged = true;
@@ -394,6 +397,7 @@ export class AdminMission {
             console.error('[adminMission] initial turn error:', e && e.message || e);
         } finally {
             this.turnManaged = false;
+            mine.initialTurnPending = false;
         }
         // Only engage the persistent loop if this mission is STILL the active one (the LLM may have
         // already !endGoal'd a trivial task inside the initial turn → state IDLE → don't restart; or a
@@ -447,7 +451,7 @@ export class AdminMission {
         // Re-arm if an external stop() left the loop STOPPED (recover from run_skill's stop(false),
         // a leaked reflex stop, etc.) — but NOT while a supervised skill owns the body, and not in
         // the brief post-death settle window.
-        if (!this.agent.supervised_skill && this.agent.self_prompter.isStopped()
+        if (!m.initialTurnPending && !this.agent.supervised_skill && this.agent.self_prompter.isStopped()
             && !(bot._diedAt && now - bot._diedAt < 4000)) {
             try {
                 this.agent.self_prompter.owner = this;

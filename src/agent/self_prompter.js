@@ -7,6 +7,8 @@ export class SelfPrompter {
         this.state = STOPPED;
         this.loop_active = false;
         this.interrupt = false;
+        this._stopPromise = null;
+        this._loopGeneration = 0;
         this.prompt = '';
         this.idle_time = 0;
         this.cooldown = 2000;
@@ -25,7 +27,7 @@ export class SelfPrompter {
         }
         this.state = ACTIVE;
         this.prompt = prompt;
-        this.startLoop();
+        this.startLoop().catch(error => console.error('Self-prompt loop failed:', error));
     }
 
     isActive() {
@@ -64,8 +66,10 @@ export class SelfPrompter {
         }
         console.log('starting self-prompt loop')
         this.loop_active = true;
+        const generation = ++this._loopGeneration;
         let no_command_count = 0;
         const MAX_NO_COMMAND = 3;
+        try {
         while (!this.interrupt) {
             // ★PARK (no strike) while a supervised skill owns the body: handleMessage('system')
             //   early-returns false under supervised_skill (agent.js), so without this park each
@@ -105,9 +109,13 @@ export class SelfPrompter {
                 await new Promise(r => setTimeout(r, this.cooldown));
             }
         }
-        console.log('self prompt loop stopped')
-        this.loop_active = false;
-        this.interrupt = false;
+        } finally {
+            console.log('self prompt loop stopped')
+            if (this._loopGeneration === generation) {
+                this.loop_active = false;
+                this.interrupt = false;
+            }
+        }
     }
 
     update(delta) {
@@ -120,7 +128,7 @@ export class SelfPrompter {
 
             if (this.idle_time >= this.cooldown) {
                 console.log('Restarting self-prompting...');
-                this.startLoop();
+                this.startLoop().catch(error => console.error('Self-prompt loop failed:', error));
                 this.idle_time = 0;
             }
         }
@@ -131,29 +139,39 @@ export class SelfPrompter {
 
     async stopLoop() {
         // you can call this without await if you don't need to wait for it to finish
-        if (this.interrupt)
-            return;
+        if (this._stopPromise) return this._stopPromise;
         console.log('stopping self-prompt loop')
         this.interrupt = true;
-        while (this.loop_active) {
-            await new Promise(r => setTimeout(r, 500));
+        const stopped = (async () => {
+            while (this.loop_active) {
+                await new Promise(r => setTimeout(r, 50));
+            }
+            this.interrupt = false;
+        })();
+        this._stopPromise = stopped;
+        try {
+            await stopped;
+        } finally {
+            if (this._stopPromise === stopped) this._stopPromise = null;
         }
-        this.interrupt = false;
     }
 
-    async stop(stop_action=true) {
-        this.interrupt = true;
+    async stop(stop_action=true, wait_for_loop=false) {
+        this.state = STOPPED;
+        const stopped = this.stopLoop();
         if (stop_action)
             await this.agent.actions.stop();
-        this.stopLoop();
-        this.state = STOPPED;
+        // Commands such as !endGoal can run inside this loop. They must
+        // signal stop without waiting for themselves; an external mission
+        // handoff explicitly waits before installing its replacement.
+        if (wait_for_loop) await stopped;
     }
 
     async pause() {
-        this.interrupt = true;
-        await this.agent.actions.stop();
-        this.stopLoop();
         this.state = PAUSED;
+        this.stopLoop();
+        await this.agent.actions.stop();
+        // pause may also be requested by the current command turn.
     }
 
     shouldInterrupt(is_self_prompt) { // to be called from handleMessage
