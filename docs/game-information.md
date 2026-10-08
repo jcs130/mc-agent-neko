@@ -42,7 +42,8 @@ carried into the next cue rather than dropped by the cooldown.
 `minecraft_observe(sections, max_events)` requests a fresh snapshot without
 interrupting the action. It exposes bounded details for `self`, `world`,
 `inventory`, `nearby`, `window`, `activity`, `server` and `coverage`. In particular,
-`window` and `inventory` retain item components/NBT for books and menu lore;
+`window` and `inventory` extract readable book pages and item lore before
+retaining bounded raw components/NBT, so deeply nested 1.20.6 text remains usable;
 `server.channels` retains decodable JSON/text, including arbitrary server
 namespaces such as `mcagent:state` and `mcagent:event`.
 
@@ -51,7 +52,9 @@ current state and stop autonomous scheduling. A new connection/session clears
 old world context. Events have a 120-second retention window. Snapshots and
 buffers are bounded: 32 nearby entities within 32 blocks, loaded block samples
 within 4 blocks, 128 retained events, 48 snapshot events and 16 plugin channels.
-Truncation paths, omitted-entity counts and event-buffer overflow are explicit.
+Each state section has its own capacity. Server command names, scoreboards and
+Tab hints precede bulky advancement display data. Truncation paths,
+omitted-entity counts and event-buffer overflow are explicit.
 Unknown binary plugin payloads expose channel, length and hash with an unavailable
 decoded value. Unreceived server state and unloaded terrain remain unknown.
 

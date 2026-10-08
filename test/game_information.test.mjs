@@ -163,6 +163,30 @@ test('large item data cannot hide server feedback, menus or body facts; declared
     assert.ok(result.truncated.some(path => path.startsWith('$.inventory')));
 });
 
+test('1.20.6 NBT book pages are readable and all command names survive large advancement data', t => {
+    const { bot, information } = fixture(t);
+    const text = value => ({ type: 'compound', value: { text: { type: 'string', value: '' },
+        extra: { type: 'list', value: { type: 'compound', value: [{ text: { type: 'string', value } }] } } } });
+    bot.inventory.slots[10] = { name: 'written_book', count: 1, components: [
+        { type: 'custom_name', data: text('服务器功能指南') },
+        { type: 'lore', data: [text('查看技能与沟通方式')] },
+        { type: 'written_book_content', data: { rawTitle: '指南', author: '向导', pages: Array.from({ length: 23 }, (_, i) => ({ content: text(`第${i + 1}页：/skills 查看技能`) })) } },
+    ] };
+    const nodes = [{ children: Array.from({ length: 229 }, (_, i) => i + 1) },
+        ...Array.from({ length: 229 }, (_, i) => ({ extraNodeData: { name: `skill_${i}` }, children: [] }))];
+    bot._client.emit('declare_commands', { nodes, rootIndex: 0 });
+    bot._client.emit('advancements', { reset: true, advancementMapping: Array.from({ length: 128 }, (_, i) => ({ key: `adv_${i}`,
+        value: { displayData: { title: text('title'), description: text('x'.repeat(1000)) } } })) });
+    const state = information.snapshot().state;
+    const book = state.inventory.slots.find(item => item.name === 'written_book');
+    assert.equal(book.book.pages[22].text, '第23页：/skills 查看技能');
+    assert.equal(book.lore[0], '查看技能与沟通方式');
+    assert.equal(state.server.commandCatalog.count, 229);
+    assert.ok(state.server.commandCatalog.namesText.includes('skill_228'));
+    assert.equal(state.server.scoreboards[0].title, '公会委托');
+    assert.equal(state.server.tablist.footer, '输入 /help 查看功能');
+});
+
 test('real agent WS subscription owns whispers once, keeps standalone fallback and never mirrors observation frames into chat', async t => {
     const { agent, bot } = fixture(t);
     const bodyReplies = [], missions = [], received = [];

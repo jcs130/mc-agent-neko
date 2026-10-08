@@ -1,4 +1,5 @@
 import { randomUUID, createHash } from 'node:crypto';
+import { plainText } from '../agent/library/books.js';
 
 // Observation only: this module never sends game packets, chat or actions.
 const finite = value => typeof value === 'number' && Number.isFinite(value) ? value : null;
@@ -56,7 +57,24 @@ export function boundedGameValue(value, maxChars = 96000) {
 function itemState(item, slot) {
     if (!item) return null;
     const result = { slot }, unavailable = [];
-    for (const key of ['name', 'count', 'type', 'displayName', 'customName', 'metadata', 'durabilityUsed', 'maxDurability', 'enchants', 'components', 'nbt']) {
+    for (const key of ['name', 'count', 'type', 'displayName', 'durabilityUsed', 'maxDurability', 'enchants']) {
+        try { result[key] = item[key]; } catch { result[key] = null; unavailable.push(key); }
+    }
+    try {
+        result.customName = gameText(item.customName);
+        result.lore = (item.customLore ?? item.components?.find(value => /^(minecraft:)?lore$/.test(value.type))?.data ?? []).map(value => plainText(value));
+        const book = item.components?.find(value => /^(minecraft:)?(written|writable)_book_content$/.test(value.type))?.data;
+        if (Array.isArray(book?.pages)) result.book = {
+            title: plainText(book.rawTitle ?? book.title), author: plainText(book.author), pageCount: book.pages.length,
+            pages: book.pages.slice(0, 128).map((page, index) => ({ page: index + 1, text: plainText(page.content ?? page.rawContent ?? page) })),
+            pagesOmitted: Math.max(0, book.pages.length - 128),
+        };
+    } catch { unavailable.push('readableItemText'); }
+    if (finite(result.durabilityUsed) != null && finite(result.maxDurability) != null && result.durabilityUsed > result.maxDurability) {
+        result.durabilityInconsistent = true;
+        result.durabilityNote = 'Received damage exceeds library maximum; do not infer remaining lifetime from this maximum.';
+    }
+    for (const key of ['metadata', 'components', 'nbt']) {
         try { result[key] = item[key]; } catch { result[key] = null; unavailable.push(key); }
     }
     if (unavailable.length) result.unavailableFields = unavailable;
@@ -129,10 +147,15 @@ export function collectGameState(agent, presentation = {}) {
         activity: { action: agent.actions?.currentActionLabel ?? null, skill: bot._currentSkill ?? null,
             mobility: bot._mobility ?? null, digging: blockState(bot.targetDigBlock),
             usingHeldItem: bot.usingHeldItem ?? null },
-        server: { ...presentation, scoreboards,
+        server: { scoreboards,
             bossBars: Array.isArray(bot.bossBars) ? bot.bossBars.map(bar => ({ id: bar.entityUUID,
                 title: gameText(bar.title), health: bar.health, color: bar.color, dividers: bar.dividers })) : presentation.bossBars,
-            tablist: { header: gameText(bot.tablist?.header), footer: gameText(bot.tablist?.footer) } },
+            tablist: { header: gameText(bot.tablist?.header), footer: gameText(bot.tablist?.footer) },
+            titles: presentation.titles, actionBar: presentation.actionBar,
+            commandCatalog: presentation.commandCatalog, playerAbilities: presentation.playerAbilities,
+            channels: presentation.channels, teams: presentation.teams, signs: presentation.signs,
+            windowProperties: presentation.windowProperties, trades: presentation.trades,
+            recipeBook: presentation.recipeBook, advancements: presentation.advancements },
         coverage: { source: 'own Mineflayer connection and loaded game state',
             unavailable: ['unreceived server data', 'unloaded terrain', 'undecoded binary plugin payloads'],
             nearbyBlocks: 'loaded samples, not a complete map', maxNearbyEntities: 32 },
@@ -201,8 +224,9 @@ export class GameInformation {
             const commands = (root?.children ?? []).map(index => nodes[index]).filter(Boolean);
             this.presentation.commandCatalog = {
                 source: 'server-declared commands visible to this account; declaration does not prove execution permission',
-                count: commands.length, omitted: Math.max(0, commands.length - 128),
-                commands: commands.slice(0, 128).map(node => ({ name: node.extraNodeData?.name ?? node.name,
+                count: commands.length, namesText: commands.map(node => node.extraNodeData?.name ?? node.name).join(', '),
+                argumentDetailsOmitted: Math.max(0, commands.length - 32),
+                commands: commands.slice(0, 32).map(node => ({ name: node.extraNodeData?.name ?? node.name,
                     arguments: (node.children ?? []).slice(0, 16).map(index => {
                         const child = nodes[index];
                         return { name: child?.extraNodeData?.name ?? child?.name,
@@ -217,9 +241,18 @@ export class GameInformation {
             this.presentation.signs = this.presentation.signs.slice(-16);
         });
         this.on(this.bot._client, 'advancements', packet => {
-            const clipped = boundedGameValue(packet, 12000);
-            this.presentation.advancements = clipped;
-            this.event('advancement', { source: 'server', data: clipped });
+            if (packet.reset || !this.presentation.advancements.entries) this.presentation.advancements = { progress: {}, entries: {}, omitted: 0 };
+            const state = this.presentation.advancements;
+            for (const id of packet.identifiers ?? []) { delete state.entries[id]; delete state.progress[id]; }
+            for (const entry of packet.advancementMapping ?? []) state.entries[entry.key] = {
+                title: gameText(entry.value?.displayData?.title), description: gameText(entry.value?.displayData?.description),
+                parent: entry.value?.parentId, requirements: entry.value?.requirements,
+            };
+            for (const entry of packet.progressMapping ?? []) state.progress[entry.key] = boundedGameValue(entry.value, 2000).value;
+            for (const map of [state.entries, state.progress]) while (Object.keys(map).length > 128) {
+                delete map[Object.keys(map)[0]]; state.omitted++;
+            }
+            this.event('advancement', { source: 'server', data: boundedGameValue({ progress: packet.progressMapping }, 4000).value });
         });
         for (const name of ['trade_list', 'window_items', 'craft_progress_bar', 'unlock_recipes']) this.on(this.bot._client, name, packet => {
             if (name === 'trade_list') this.presentation.trades = boundedGameValue(packet, 12000).value;
