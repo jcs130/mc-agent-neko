@@ -34,6 +34,22 @@ test('stop waits for the previous turn before a new mission can take the loop', 
     assert.equal(prompter.interrupt, false);
 });
 
+test('stop interrupts the old self-prompt turn even after its state becomes STOPPED', async () => {
+    let release;
+    const prompter = new SelfPrompter({actions: {stop: async () => {}},
+        handleMessage: () => new Promise(resolve => { release = resolve; }),
+    });
+    prompter.cooldown = 1;
+    prompter.start('旧挖矿目标');
+    await prompter.stop(false);
+    const interruptedOldTurn = prompter.shouldInterrupt(true);
+    const interruptedHumanTurn = prompter.shouldInterrupt(false);
+    release(true);
+    await prompter.stop(false, true);
+    assert.equal(interruptedOldTurn, true, 'STOPPED must still cancel its outstanding self-prompt');
+    assert.equal(interruptedHumanTurn, false, 'a human instruction may take over');
+});
+
 test('a failed model turn releases the loop for recovery', async () => {
     const prompter = new SelfPrompter({
         handleMessage: async () => { throw new Error('local model stream lost'); },

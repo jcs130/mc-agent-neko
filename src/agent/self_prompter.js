@@ -175,7 +175,7 @@ export class SelfPrompter {
     }
 
     shouldInterrupt(is_self_prompt) { // to be called from handleMessage
-        return is_self_prompt && (this.state === ACTIVE || this.state === PAUSED) && this.interrupt;
+        return is_self_prompt && this.interrupt;
     }
 
     handleUserPromptedCmd(is_self_prompt, is_action) {
