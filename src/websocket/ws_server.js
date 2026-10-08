@@ -1,5 +1,6 @@
 import { WebSocketServer } from 'ws';
 import fs from 'fs';
+import { sendGameChat } from './chat_bridge.js';
 import { serverProxy } from '../agent/mindserver_proxy.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -103,9 +104,9 @@ class WSMessageServer {
     }
 
     start() {
-        this.wss = new WebSocketServer({ port: this.port, host: '0.0.0.0' });
+        this.wss = new WebSocketServer({ port: this.port, host: '127.0.0.1' });
 
-        console.log(`WebSocket server started on ws://0.0.0.0:${this.port}`);
+        console.log(`WebSocket server started on ws://127.0.0.1:${this.port}`);
 
         this.wss.on('connection', (ws) => {
             console.log('WebSocket client connected');
@@ -247,7 +248,9 @@ class WSMessageServer {
         const tod = (() => { try { return bot.time.timeOfDay || 0; } catch (e) { return 0; } })();
         const night = tod >= 12542 && tod <= 23459;
         const dim = (bot.game && bot.game.dimension) || 'overworld';
-        const cmt = bot._commitment || null;
+        // The read-only world observer still proposes vanilla survival goals
+        // when the kernel is disabled. Those proposals are not game actions.
+        const cmt = process.env.MC_FRAMEWORK_V2 === '0' ? null : (bot._commitment || null);
         const kind = (cmt && cmt.kind) || null;
         const skill = this._skillRunningName || bot._currentSkill || (cmt && cmt.skill) || null;
         // ★2026-07-08 ADMIN MISSION 真实性修复 (用户实观: 命令追蜘蛛却报"挖矿过夜"): 任务态下身体听的是
@@ -516,6 +519,11 @@ class WSMessageServer {
         } catch (e) { /* incoming chat mirror must never hurt the agent */ }
 
         switch (data.type) {
+            case 'chat':
+                void sendGameChat(this.agent.bot, data).then(result => {
+                    this.broadcast({ type: 'chat_result', request_id: data.request_id, ...result });
+                });
+                break;
             case 'task':
                 // Forward optional task_id so we can echo it back on the
                 // matching task_finished frame. The plugin uses that echo
