@@ -373,6 +373,7 @@ export function getCommandDocs(agent) {
         ['!inventory', 'Read current base IDs, custom labels/lore and tools.'],
         ['!equip', 'Equip the base item ID identified in inventory.'],
         ['!craftRecipe', 'Craft from carried ingredients; check wood/sticks/workbench first.'],
+        ['!breakBlockAt', 'Clear one observed nearby side/overhead block by exact coordinates; preserves dig permissions and reach.'],
         ['!goToSurface', 'Attempt an actual route to the surface; solid rock may require a usable pickaxe.'],
         ['!pillarUp', 'Climb in place with full blocks; requires clearable headroom.'],
         ['!serverQuery', 'Read documented server skill/recovery conditions and exact syntax.'],

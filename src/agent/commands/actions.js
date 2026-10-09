@@ -1,4 +1,5 @@
 import * as skills from '../library/skills.js';
+import Vec3 from 'vec3';
 import { sendServerCommand } from '../../websocket/server_commands.js';
 import { clickMenuSlot, closeMenu, describeMenu } from '../library/menus.js';
 import { tradeAtWindow } from '../library/merchant_trades.js';
@@ -70,6 +71,17 @@ function runAsAction (actionFn, resume = false, timeout = -1, preflight = null) 
     }
 
     return wrappedAction;
+}
+
+function targetedDigFeedback(agent, x, y, z) {
+    const bot = agent.bot;
+    if (bot.modes?.isOn?.('cheat')) return 'Targeted digging requires normal survival tools; the cheat/setblock path is disabled for this command.';
+    let block;
+    try { block = bot.blockAt(new Vec3(x, y, z)); } catch (_) { /* Unavailable chunk. */ }
+    if (!block?.position) return 'The specified block is not loaded. Observe the area before digging; no substitute block was chosen.';
+    const distance = bot.entity?.position?.distanceTo(block.position);
+    if (!Number.isFinite(distance) || distance > 4.5) return `The specified block is outside dig reach (${Number.isFinite(distance) ? distance.toFixed(1) : 'unknown'} blocks). Navigate separately, then observe again. No route or digging was started.`;
+    return null;
 }
 
 // Conservative policy for a follow-up decision/report, not a model timeout:
@@ -451,7 +463,7 @@ export const actionsList = [
     },
     {
         name: '!collectBlocks',
-        description: 'Collect the nearest blocks of a given type. For ores, even num=1 exhausts the whole connected vein (including temporarily occluded tail blocks). For a general request like "mine coal/iron/diamonds", use !mineOres instead so mining continues to a useful stockpile.',
+        description: 'Gather the nearest blocks of a given type; this may move and dig at a different location. For clearing a specified side/overhead block or an escape opening, use !breakBlockAt with the observed coordinates instead. For ores, even num=1 exhausts the whole connected vein (including temporarily occluded tail blocks). For a general request like "mine coal/iron/diamonds", use !mineOres instead so mining continues to a useful stockpile.',
         params: {
             'type': { type: 'BlockName', description: 'The block type to collect.' },
             'num': { type: 'int', description: 'The number of blocks to collect.', domain: [1, Number.MAX_SAFE_INTEGER] }
@@ -887,6 +899,22 @@ export const actionsList = [
         perform: runAsAction(async (agent, distance) => {
             return await skills.digDown(agent.bot, distance);
         })
+    },
+    {
+        name: '!breakBlockAt',
+        description: 'Break ONE observed nearby block at exact x,y,z coordinates, for side/overhead clearance and an upward escape route. Requires the target within 4.5 blocks; never walks or selects another block. Uses existing tool, digging and server-protection checks. Respect denied/unknown permission. Use this for specified terrain clearance; !collectBlocks gathers resources and may choose a different location.',
+        params: {
+            x: { type: 'int', description: 'Observed target block X.' },
+            y: { type: 'int', description: 'Observed target block Y.', domain: [-64, 319] },
+            z: { type: 'int', description: 'Observed target block Z.' },
+        },
+        perform: runAsAction(async (agent, x, y, z) => {
+            // Stopping a previous action can yield and change the body position.
+            // Recheck reach so the library cannot start incidental navigation.
+            const refusal = targetedDigFeedback(agent, x, y, z);
+            if (refusal) { skills.log(agent.bot, refusal); return false; }
+            return await skills.breakBlockAt(agent.bot, x, y, z);
+        }, false, -1, targetedDigFeedback),
     },
     {
         name: '!goToSurface',
