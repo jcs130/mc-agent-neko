@@ -1,5 +1,12 @@
 # Project N.E.K.O. companion patches
 
+Native task endings now require current game evidence, and inventory
+observations follow player slots in initialized open merchant/container windows.
+This prevents an unobserved first reply from completing or abandoning a task,
+and avoids stale counts during trading. See
+[the task evidence and inventory report](../../docs/neko-task-grounding-inventory-2026-10-10.md)
+for the reproduced failures, scope and verification limits.
+
 The [Windows guardian reference](deployment/README.md) preserves the unattended
 deployment fix that waits through remote server outages without repeatedly
 recovering a healthy game process. Its isolated regression scenarios are separate
@@ -80,8 +87,8 @@ The exported plugin passed 189 tests. All 59 ordered plugin patches reproduce
 the committed source. The manifest records the exact reproduced
 plugin tree and host-file blobs. The host callback/media regression suite passed
 195 tests at its last unchanged delivery, including six Minecraft budget tests.
-The current native source suite passed 526 tests; this contribution branch's
-full `node --test` discovery passed 549 tests. The existing mineDown contract
+The current native source suite passed 541 tests; this contribution branch's
+full `node --test` discovery passed 564 tests. The existing mineDown contract
 test also passed.
 
 Follow the patched plugin's README for the existing N.E.K.O. plugin lifecycle,
