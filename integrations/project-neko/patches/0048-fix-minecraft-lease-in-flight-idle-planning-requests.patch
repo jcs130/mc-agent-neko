@@ -1,0 +1,264 @@
+From f16dcad9565eaa1aaedc1e3c774e82481cb470d1 Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Fri, 9 Oct 2026 19:46:43 +0800
+Subject: [PATCH 48/50] fix(minecraft): lease in-flight idle planning requests
+
+---
+ .../plugins/game_agent_minecraft/service.py   | 35 +++++--
+ .../test_adaptive_heartbeat.py                | 96 +++++++++++++++++++
+ .../test_idle_decisions.py                    |  4 +-
+ 3 files changed, 125 insertions(+), 10 deletions(-)
+
+diff --git a/plugin/plugins/game_agent_minecraft/service.py b/plugin/plugins/game_agent_minecraft/service.py
+index 9a1f527..dcb2c38 100644
+--- a/plugin/plugins/game_agent_minecraft/service.py
++++ b/plugin/plugins/game_agent_minecraft/service.py
+@@ -365,6 +365,7 @@ class GameAgentService:
+         self._task_failure_streak = 0
+         self._idle_decision_key = None
+         self._idle_decision_attempts = 0
++        self._idle_decision_lease_until = 0.0
+ 
+         # Pacing state for inline log push (separate from autonomous nudge).
+         # mc-agent emits a ``log`` frame for each chat-loop turn the in-game
+@@ -695,6 +696,7 @@ class GameAgentService:
+         # later frame happened to repeat a stale id.
+         self._dispatched_history.clear()
+         self._retroactive_completion_seen.clear()
++        self._idle_decision_lease_until = 0.0
+         # The next WS session might land on a different mc-agent version
+         # (legacy or modern). Reset the latch so we re-learn from the
+         # first task_finished frame.
+@@ -886,6 +888,7 @@ class GameAgentService:
+             self._last_task_outcome = None
+             self._deferred_game_chat.clear()
+             self._retroactive_completion_seen.clear()
++            self._idle_decision_lease_until = 0.0
+         for waiter in self._game_state_waiters:
+             if not waiter.done():
+                 waiter.set_result(True)
+@@ -1450,6 +1453,7 @@ class GameAgentService:
+             self._task_finished = False
+             self._idle_decision_key = None
+             self._idle_decision_attempts = 0
++            self._idle_decision_lease_until = 0.0
+             self._server_calls_since_task = 0
+             self._log_info(
+                 "claim accepted (overwrite={}): {!r}", overwrite, task[:80],
+@@ -2514,6 +2518,12 @@ class GameAgentService:
+                     and self._last_task_finished_at > 0
+                     and not self._mc_agent_busy()  # [BUSY] agent is executing on its own — don't tell her to dispatch
+                 ):
++                    # The dialog may still be observing/planning from the
++                    # last request. Ordinary fact changes are not a second
++                    # decision; keep them cached until this lease expires.
++                    # A successful task claim clears the lease immediately.
++                    if now < self._idle_decision_lease_until:
++                        continue
+                     since_finish = now - self._last_task_finished_at
+                     since_last_keep = now - self._last_keep_going_nudge_at
+                     # A missed action is not new game progress. Retry the
+@@ -2548,9 +2558,9 @@ class GameAgentService:
+                             "since_last_keep={:.1f}s)",
+                             since_finish, since_last_keep,
+                         )
+-                        await self._fire_keep_going_nudge()
+-                        self._idle_decision_attempts += 1
+-                        self._last_keep_going_nudge_at = now
++                        if await self._fire_keep_going_nudge():
++                            self._idle_decision_attempts += 1
++                            self._last_keep_going_nudge_at = now
+                         continue
+ 
+                 # ---- Branch 3: general catch-all (original behavior) ----
+@@ -2633,7 +2643,7 @@ class GameAgentService:
+                 "in-progress nudge push failed: {}: {}", type(exc).__name__, exc,
+             )
+ 
+-    async def _fire_keep_going_nudge(self) -> None:
++    async def _fire_keep_going_nudge(self) -> bool:
+         """Push a "decide the next action" prompt after a task finishes.
+ 
+         Without this, the conversation drifts after each completion and
+@@ -2644,7 +2654,7 @@ class GameAgentService:
+         it can ground its next decision.
+         """
+         if self._game_execution_busy():
+-            return
++            return False
+         sections: list[str] = [prompts.t('PLAYER_COMMUNICATION_POLICY', lang=self._lang)]
+         if self._unattended.enabled:
+             sections.append(prompts.t("AUTONOMOUS_DECISION_BODY", lang=self._lang))
+@@ -2678,12 +2688,16 @@ class GameAgentService:
+             sections.append(self._game_observations.focused_context(max_tokens=min(700, max(400, 900 - count_tokens(overhead))), mode='decision'))
+             body_text = prompts.t('CUE_PREFIX_IDLE', lang=self._lang) + '\n' + '\n'.join(sections)
+             try:
+-                self._push_message(source='game_agent_minecraft', visibility=[], ai_behavior='respond',
++                result = self._push_message(source='game_agent_minecraft', visibility=[], ai_behavior='respond',
+                                    parts=[{'type': 'text', 'text': body_text}], priority=3, coalesce_key='mc_keep_going',
+                                    metadata={'expires_in_s': 60})
++                if isinstance(result, dict) and result.get('submitted') is False:
++                    return False
++                self._idle_decision_lease_until = time.time() + 30.0
++                return True
+             except Exception as exc:
+                 self._log_error('keep-going nudge push failed: {}: {}', type(exc).__name__, exc)
+-            return
++            return False
+         game_context = self._game_observations.context()
+         if game_context:
+             sections.append(game_context)
+@@ -2709,7 +2723,7 @@ class GameAgentService:
+         body_text = prompts.t("CUE_PREFIX_IDLE", lang=self._lang) + "\n" + "\n".join(sections)
+         parts: list[Dict[str, Any]] = [{"type": "text", "text": body_text}]
+         try:
+-            self._push_message(
++            result = self._push_message(
+                 source="game_agent_minecraft",
+                 visibility=[],
+                 ai_behavior="respond",
+@@ -2718,10 +2732,15 @@ class GameAgentService:
+                 coalesce_key="mc_keep_going",
+                 metadata={'expires_in_s': 60},
+             )
++            if isinstance(result, dict) and result.get('submitted') is False:
++                return False
++            self._idle_decision_lease_until = time.time() + 30.0
++            return True
+         except Exception as exc:
+             self._log_error(
+                 "keep-going nudge push failed: {}: {}", type(exc).__name__, exc,
+             )
++            return False
+ 
+     async def _fire_system_prompt(self) -> None:
+         """Build + push the autonomous nudge.
+diff --git a/plugin/plugins/game_agent_minecraft/test_adaptive_heartbeat.py b/plugin/plugins/game_agent_minecraft/test_adaptive_heartbeat.py
+index b6daafb..8888c2e 100644
+--- a/plugin/plugins/game_agent_minecraft/test_adaptive_heartbeat.py
++++ b/plugin/plugins/game_agent_minecraft/test_adaptive_heartbeat.py
+@@ -126,6 +126,102 @@ class AdaptiveHeartbeatTests(unittest.IsolatedAsyncioTestCase):
+                 revisions.append(info.decision_revision)
+         self.assertEqual(revisions, [1, 1, 2, 3])
+ 
++    async def test_slow_idle_decision_lease_survives_ordinary_fresh_fact_changes(self):
++        clock = [1000.0]
++        service, calls = self.service(clock)
++        seq, held_state = [0], []
++
++        async def step(_):
++            clock[0] += .5
++            if clock[0] > 1042:
++                raise asyncio.CancelledError
++            if clock[0] % 2 == 0:
++                seq[0] += 1
++                data = self.frame(clock, seq[0])
++                data['state']['inventory']['counts']['iron_ingot'] = seq[0]
++                data['state']['self']['health'] = 16 if clock[0] < 1012 else 20
++                await service._on_game_state(data)
++            if clock[0] == 1035:
++                held_state.append((service._idle_decision_attempts, service._last_keep_going_nudge_at))
++
++        module = 'plugin.plugins.game_agent_minecraft.service'
++        with patch(module + '.time.time', lambda: clock[0]), patch(module + '.asyncio.sleep', step):
++            await service._system_prompt_loop()
++        wakes = [stamp - 1000 for stamp, call in calls if call['coalesce_key'] == 'mc_keep_going']
++        self.assertEqual(wakes, [10.0, 40.0], 'fresh facts must not enqueue planning over a slow decision')
++        self.assertEqual(held_state, [(1, 1010.0)], 'lease skips must not count as attempts or deliveries')
++
++    async def test_accepted_task_claim_clears_lease_and_next_completion_starts_promptly(self):
++        clock = [1000.0]
++        service, calls = self.service(clock)
++        pending = [None]
++
++        async def step(_):
++            clock[0] += .5
++            if clock[0] > 1032:
++                raise asyncio.CancelledError
++            if clock[0] % 2 == 0:
++                await service._on_game_state(self.frame(clock, int(clock[0])))
++            if clock[0] == 1015:
++                self.assertGreater(service._idle_decision_lease_until, clock[0])
++                pending[0] = await service.try_claim_pending('制作木镐', overwrite=False)
++                self.assertIsNotNone(pending[0])
++                self.assertEqual(service._idle_decision_lease_until, 0)
++            if clock[0] == 1016:
++                await service._on_task_finished({'task_id': pending[0].task_id, 'status': 'ok', 'text': '制作完成'})
++
++        module = 'plugin.plugins.game_agent_minecraft.service'
++        with patch(module + '.time.time', lambda: clock[0]), patch(module + '.asyncio.sleep', step):
++            await service._system_prompt_loop()
++        wakes = [stamp - 1000 for stamp, call in calls if call['coalesce_key'] == 'mc_keep_going']
++        self.assertEqual(wakes, [10.0, 26.0], 'a new completion must not inherit the old planning lease')
++
++    async def test_private_chat_and_new_danger_bypass_idle_decision_lease(self):
++        clock = [1000.0]
++        service, calls = self.service(clock)
++        data = self.frame(clock, 2)
++        data['recentEvents'] = [{'id': 'urgent-private', 'kind': 'whisper', 'player': 'Friend_1',
++                                'text': '需要帮忙吗？', 'observedAt': clock[0] * 1000}]
++        module = 'plugin.plugins.game_agent_minecraft.service'
++        with patch(module + '.time.time', lambda: clock[0]):
++            await service._on_game_state(self.frame(clock, 1))
++            service._idle_decision_lease_until = 1030.0
++            await service._on_game_state(data)
++            await service._on_vitals({'hp': 6, 'food': 7, 'hostiles': 1})
++        self.assertEqual({call['coalesce_key'] for _, call in calls if call['ai_behavior'] == 'respond'},
++                         {'mc_game_attention', 'mc_survival'})
++        self.assertEqual(service._idle_decision_lease_until, 1030.0)
++
++    async def test_rejected_idle_callback_does_not_claim_a_lease_or_attempt(self):
++        clock = [1000.0]
++        service, calls = self.service(clock)
++        submissions = []
++
++        def submit(**kw):
++            if kw['coalesce_key'] == 'mc_keep_going':
++                submissions.append(clock[0])
++                if len(submissions) == 1:
++                    return {'submitted': False}
++            calls.append((clock[0], kw))
++            return {'submitted': True}
++
++        service._push_message = submit
++
++        async def step(_):
++            clock[0] += .5
++            if clock[0] > 1012:
++                raise asyncio.CancelledError
++            if clock[0] % 2 == 0:
++                await service._on_game_state(self.frame(clock, int(clock[0])))
++
++        module = 'plugin.plugins.game_agent_minecraft.service'
++        with patch(module + '.time.time', lambda: clock[0]), patch(module + '.asyncio.sleep', step):
++            await service._system_prompt_loop()
++        self.assertEqual(submissions, [1010.0, 1010.5])
++        self.assertEqual(service._idle_decision_attempts, 1)
++        self.assertEqual(service._last_keep_going_nudge_at, 1010.5)
++        self.assertEqual(service._idle_decision_lease_until, 1040.5)
++
+ 
+ if __name__ == '__main__':
+     unittest.main()
+diff --git a/plugin/plugins/game_agent_minecraft/test_idle_decisions.py b/plugin/plugins/game_agent_minecraft/test_idle_decisions.py
+index 06d76f0..6dea35a 100644
+--- a/plugin/plugins/game_agent_minecraft/test_idle_decisions.py
++++ b/plugin/plugins/game_agent_minecraft/test_idle_decisions.py
+@@ -52,7 +52,7 @@ class IdleDecisionTests(unittest.IsolatedAsyncioTestCase):
+             await service._system_prompt_loop()
+         self.assertEqual(len([c for c in calls if c['ai_behavior'] == 'respond']), 1)
+ 
+-    async def test_new_inventory_resets_retry_backoff(self):
++    async def test_new_inventory_resets_retry_backoff_after_decision_lease(self):
+         service, calls = self.service()
+         clock = [1000.0]
+         service._last_task_finished_at = clock[0]
+@@ -62,7 +62,7 @@ class IdleDecisionTests(unittest.IsolatedAsyncioTestCase):
+             if clock[0] == 1012:
+                 service._last_inventory = {'iron_ingot': 3}
+                 service._last_inventory_at = clock[0]
+-            if clock[0] > 1025:
++            if clock[0] > 1045:
+                 raise asyncio.CancelledError
+ 
+         module = 'plugin.plugins.game_agent_minecraft.service'

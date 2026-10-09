@@ -1,0 +1,49 @@
+From 417ed6550af5e12d6a65c54cb2420d1645f1b4eb Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Fri, 9 Oct 2026 19:49:21 +0800
+Subject: [PATCH 50/50] docs(minecraft): record final context budgets and
+ deployment evidence
+
+---
+ plugin/plugins/game_agent_minecraft/README.md             | 2 +-
+ .../docs/2026-10-09-decision-context-budget.md            | 8 ++++++--
+ 2 files changed, 7 insertions(+), 3 deletions(-)
+
+diff --git a/plugin/plugins/game_agent_minecraft/README.md b/plugin/plugins/game_agent_minecraft/README.md
+index 028e05b..4410213 100644
+--- a/plugin/plugins/game_agent_minecraft/README.md
++++ b/plugin/plugins/game_agent_minecraft/README.md
+@@ -261,7 +261,7 @@ MC 侧设置 `chat_ingame=false` 后，身体的工具调用和行动解说仅
+ 每条保留的说明按顺序拆成不超过 900 token 的独立 `read` 回调，每个分段有自己的
+ 合并键，同一会话只推送一次；失败分段在下次快照重试。它们供阅读，不发游戏聊天，
+ 也不主动唤醒决策或中断动作。决策摘要保留 `serverWelcome` 指针，需要重读时调用
+-`minecraft_observe(sections=["server"], max_events=0)`。
++`minecraft_observe(detail="full", sections=["server"], max_events=0)`。
+ `game_agent_status` 的 `game_information.welcomeMessages` 和
+ `welcomeContextPartsPushed` 分别记录缓存消息数和成功提交的阅读分段数。
+ 
+diff --git a/plugin/plugins/game_agent_minecraft/docs/2026-10-09-decision-context-budget.md b/plugin/plugins/game_agent_minecraft/docs/2026-10-09-decision-context-budget.md
+index a4f317f..0d41926 100644
+--- a/plugin/plugins/game_agent_minecraft/docs/2026-10-09-decision-context-budget.md
++++ b/plugin/plugins/game_agent_minecraft/docs/2026-10-09-decision-context-budget.md
+@@ -20,7 +20,9 @@
+ | 忙碌时普通公聊 | 最多缓存八条五分钟，空闲再处理 | 最近对话；不每条公聊都发起物理规划 |
+ | 生存危险 | 新危险或恶化时及时判断 | 食物、附近威胁、逃生工具、收到的救援规则；相同危险不反复争抢已有恢复动作 |
+ 
+-`focused_view` 和 `focused_context` 是原始缓存的场景投影。默认 `minecraft_observe()` 的整体工具结果预算为 1,600 tokens；显式指定 `sections` 保留按需读取完整资料的路径。重要字段因窄预算缺失时返回 `detailsRequired`，不能把省略理解成没有。
++`focused_view` 和 `focused_context` 是原始缓存的场景投影。默认 `minecraft_observe()` 的整体工具结果预算为 1,600 tokens，即使模型顺手填写了多个 `sections` 也保持摘要。读取完整资料必须明确使用 `detail="full"` 并选择相关区段；`sections=[]` 可只读消息。重要字段因窄预算缺失时返回 `detailsRequired`，不能把省略理解成没有。
++
++首次成功发布空闲规划后保留 30 秒请求占用期，避免模型仍在推理时因为回血或库存变化又排同一轮规划。真正接受任务后立刻解除，占用期不会拖慢该任务完成后的下一次首次决策；私聊和危险走独立通道。
+ 
+ 欢迎指引通过稳定分片槽位合并，并设置有效期，避免重连反复增加待投项。与当前决策有关的实际指引摘录也直接进入主动决策上下文，因为 read 入队不是已读确认。摘录标明来源与不完整性，服务器文字始终只是观察数据，不能授予权限或改变用户指令。
+ 
+@@ -30,6 +32,8 @@
+ 
+ ## 验证方式
+ 
+-使用同一份真实 WebSocket 状态做离线重放，不发送诊断游戏任务、聊天或技能。旧默认观察为 18,427 tokens；含调度契约和最近结果的新默认工具结果为 1,475 tokens（减少 92%）。此数值说明该样本的输入缩减，不等同于全部模型请求或端到端延迟减少 92%。
++使用同一份真实 WebSocket 状态做离线重放，不发送诊断游戏任务、聊天或技能。旧默认观察为 18,427 tokens；含调度契约和最近结果的新默认工具结果为 1,501 tokens（减少 91.9%）。此数值说明该样本的输入缩减，不等同于全部模型请求或端到端延迟减少 91.9%。
+ 
+ 回归覆盖忙碌保护、社交分流、迟到旧回执、Unicode 消息预算、救援指引、保护目标范围、陈旧状态，以及摘要并发/失败/恢复/持久化。部署后只观察真实自主动作及只读统计；需要更长运行窗口才能评估长期稳定性和平均延迟。
++
++首次部署后的被动捕获确认包含真实服务器指引摘录、装备与物资的 912-token 主动消息进入主模型输入。55 秒窗口内她自行派发并执行一个目标，身体移动 6 格且库存变化；这不是向上脱困成功验收。窗口还暴露了完整区段查询使某次输入回到约 22k，以及推理期间重复空闲请求，故补齐上述明确 detail 开关和占用期后再部署。原生 `goToSurface` 忽略导航 false 返回的假成功反馈也被独立定位并以最小改动修复；`digDown` 方向本身无反转，模型选择错误不能全部归因于上下文。

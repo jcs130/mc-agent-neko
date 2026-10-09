@@ -1,0 +1,90 @@
+From 99b76eff66ceb98352acfe561bcb57db1b248629 Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Fri, 9 Oct 2026 19:33:20 +0800
+Subject: [PATCH 44/47] fix(minecraft): preserve emergency context and flag
+ omitted essentials
+
+---
+ .../game_agent_minecraft/decision_context.py  | 24 +++++++++++++++----
+ .../test_focused_context.py                   | 22 +++++++++++++++++
+ 2 files changed, 41 insertions(+), 5 deletions(-)
+
+diff --git a/plugin/plugins/game_agent_minecraft/decision_context.py b/plugin/plugins/game_agent_minecraft/decision_context.py
+index 72f84d2..4246849 100644
+--- a/plugin/plugins/game_agent_minecraft/decision_context.py
++++ b/plugin/plugins/game_agent_minecraft/decision_context.py
+@@ -49,11 +49,17 @@ def _gameplay_excerpts(welcome, own, protection):
+         if not isinstance(item, dict) or item.get('source') != 'server':
+             continue
+         text = str(item.get('text') or '')
+-        if not re.search(r'/mycli|技能|职业|保护|领地|倒地|复活|传送|skill|protect|reviv|rescue', text, re.I):
+-            continue
+-        score = (3 if low_health and re.search(r'倒地|复活|救援|reviv|rescue', text, re.I) else 0)
+-        score += 2 if blocked and re.search(r'保护|领地|protect', text, re.I) else 0
+-        candidates.append((-score, index, text))
++        # Select the matching sentence/window, not a decorative welcome prefix
++        # that happens to precede the actual rule by several hundred letters.
++        for sentence in re.split(r'(?<=[。.!?])\s*|\n+', text):
++            match = re.search(r'/mycli|技能|职业|保护|领地|倒地|复活|传送|skill|protect|reviv|rescue', sentence, re.I)
++            if not match:
++                continue
++            start = max(0, match.start() - 16)
++            excerpt = sentence[start:start + 100]
++            score = (3 if low_health and re.search(r'倒地|复活|救援|reviv|rescue', sentence, re.I) else 0)
++            score += 2 if blocked and re.search(r'保护|领地|protect', sentence, re.I) else 0
++            candidates.append((-score, index, excerpt))
+     candidates.sort()
+     if not candidates:
+         return None
+@@ -143,6 +149,12 @@ def build_focused_view(info, *, mode='decision', max_events=6, max_tokens=1600,
+                     (0 if re.search(r'法杖|wand|staff', str(item.get('name') or ''), re.I) else
+                      1 if item.get('id') == 'blaze_rod' else 2))
+                 value['resources'] = resources
++                if mode == 'survival':
++                    # Emergency turns need food/threats and escape tools first;
++                    # crafting ingredients belong to the next planning turn.
++                    for key in ('wood', 'sticks', 'stations', 'iron'):
++                        resources.pop(key, None)
++                    resources['planningDetails'] = 'minecraft_observe(sections=["inventory"])'
+             protection = server.get('protection') or {}
+             if protection.get('enabled'):
+                 value['protection'] = {'automaticDigChecks': protection.get('installed') is True,
+@@ -243,6 +255,8 @@ def build_focused_view(info, *, mode='decision', max_events=6, max_tokens=1600,
+             remove(container, key, path)
+     if omitted:
+         value['omitted'] = list(dict.fromkeys(omitted))
++        if any(key in omitted for key in ('nearby.entities', 'serverGuide', 'serverSkills')):
++            value['detailsRequired'] = True
+     # Metadata/long custom names cannot defeat a caller's token ceiling. A
+     # coarse view explicitly requests details rather than inventing supplies.
+     for key in ('omitted', 'details', 'note', 'recentEvents', 'collision', 'truncated', 'droppedEvents'):
+diff --git a/plugin/plugins/game_agent_minecraft/test_focused_context.py b/plugin/plugins/game_agent_minecraft/test_focused_context.py
+index 1d45c06..f241f4e 100644
+--- a/plugin/plugins/game_agent_minecraft/test_focused_context.py
++++ b/plugin/plugins/game_agent_minecraft/test_focused_context.py
+@@ -156,3 +156,25 @@ class FocusedContextTests(unittest.TestCase):
+         view = observations.focused_view()
+         self.assertEqual(view['protection']['lastCheck']['x'], 999)
+         self.assertEqual(view['protection']['lastBlocked']['x'], 104)
++
++    def test_rule_after_a_long_welcome_prefix_is_the_actual_excerpt(self):
++        observations = GameObservations()
++        observations.ingest_state(welcome_frame(texts=['welcome ' * 30 + 'revive by approaching; no wand required']))
++        text = str(observations.focused_view()['serverGuide']['receivedExcerpts'])
++        self.assertIn('revive', text)
++        self.assertIn('no wand', text)
++
++    def test_small_capsule_reports_missing_danger_or_guide_and_survival_prefers_them(self):
++        observations = self.observations()
++        observations.state['server']['welcome'] = welcome_frame(session=observations.session_id)['state']['server']['welcome']
++        observations.state['self']['health'] = 4
++        for mode in ('decision', 'survival'):
++            for budget in (350, 400, 550, 700):
++                text = observations.focused_context(mode=mode, max_tokens=budget)
++                view = json.loads(text.split('\n', 1)[1])
++                self.assertLessEqual(count_tokens(text), budget)
++                if 'serverGuide' not in view or 'zombie' not in str(view):
++                    self.assertTrue(view.get('detailsRequired'), (mode, budget, view))
++        emergency = json.loads(observations.focused_context(mode='survival', max_tokens=550).split('\n', 1)[1])
++        self.assertIn('zombie', str(emergency))
++        self.assertIn('倒地救援', str(emergency['serverGuide']))

@@ -1,9 +1,9 @@
 {
   "upstreamRepository": "https://github.com/Project-N-E-K-O/N.E.K.O",
   "baseCommit": "fb2a2e731a8c954478d08678b0c8cf40e8145a54",
-  "sourceCommit": "37dad9a3eb14836a8c9e3a87bc6c0e19dc991bc7",
+  "sourceCommit": "417ed6550af5e12d6a65c54cb2420d1645f1b4eb",
   "scope": "plugin/plugins/game_agent_minecraft",
-  "resultPluginTree": "d36d2c2af666f3048b588140ac130f520efaeb05",
+  "resultPluginTree": "1ea77d07fa3fbd5cd9704bd91655f2921d2a30b2",
   "patches": [
     {
       "file": "0001-chore-configure-text-only-local-Qwen-Minecraft-trial.patch",
@@ -168,17 +168,53 @@
     {
       "file": "0041-docs-record-mission-wait-budgeting-and-delivered-aut.patch",
       "sha256": "41e3b3b6acbcb573ebbbedda1e584d2308e173c2154f5e2376589927f95802bc"
+    },
+    {
+      "file": "0042-feat-minecraft-project-bounded-context-for-current-d.patch",
+      "sha256": "c6db3b126003baae17bd5e0945480522be31840ec4a1867d0222baf3a922bc6a"
+    },
+    {
+      "file": "0043-fix-minecraft-carry-relevant-received-guides-into-au.patch",
+      "sha256": "1391fa2bcff0892267eda758b0b12da11d2629d3582097b41ea059fe12af5268"
+    },
+    {
+      "file": "0044-fix-minecraft-preserve-emergency-context-and-flag-om.patch",
+      "sha256": "b204cb843cfa730c3cfd06730b1035c3266eef833e3f0180d058a5fc65557a23"
+    },
+    {
+      "file": "0045-docs-minecraft-explain-state-aware-scheduling-and-co.patch",
+      "sha256": "58771433ae2780146ba6916259b83c6d0b890b736c5264828c9c1916e7d77f0f"
+    },
+    {
+      "file": "0046-fix-minecraft-pace-game-callbacks-around-owned-actio.patch",
+      "sha256": "934f2dcaa55312a92e83552cb5f0313911006fdcede78534fc31c08b2ae9937c"
+    },
+    {
+      "file": "0047-fix-minecraft-use-focused-facts-for-completion-decis.patch",
+      "sha256": "c9354155e4be99b0f1318e0bd798e09910ef9a9efcc6ed39d5f9f9d0806f1e77"
+    },
+    {
+      "file": "0048-fix-minecraft-lease-in-flight-idle-planning-requests.patch",
+      "sha256": "83dfc45a72c32b9dc4fc272786741445f948598043daa6be1b0d946c2171fc2f"
+    },
+    {
+      "file": "0049-fix-minecraft-make-full-reference-reads-an-explicit-.patch",
+      "sha256": "c6e4944ebc0186c9db0f6a23745242e879eb65eab27d4867daffc110f47ba8b1"
+    },
+    {
+      "file": "0050-docs-minecraft-record-final-context-budgets-and-depl.patch",
+      "sha256": "58c7e5edd166d6a7e41bcb13788062f324d0abbd78e91cf6b1f765802f567455"
     }
   ],
   "verification": {
     "appliedInOrderToBase": true,
     "resultPluginTreeMatchesSource": true,
-    "pluginTestsPassed": 118,
+    "pluginTestsPassed": 155,
     "hostCallbackTestsPassed": 195,
     "hostFileBlobsMatchSource": true,
-    "nativeTestsPassed": 379,
-    "contributionTestsPassed": 385,
-    "legacyMineDownContractTestsPassed": 1
+    "nativeSourceTestsPassed": 405,
+    "contributionTestsPassed": 411,
+    "existingMineDownContractTestsPassed": 1
   },
   "hostPatches": [
     {
@@ -207,5 +243,19 @@
     "stonePickRemaining35ReachedModel": true,
     "wandIdentityReachedModel": true,
     "passiveCapture": true
+  },
+  "contextOptimizationVerification": {
+    "oldObservationTokens": 18427,
+    "newDefaultToolResultTokens": 1501,
+    "sameCapturedState": true,
+    "comparisonScope": "default observation result only",
+    "diagnosticGameplayTasksOrChatSent": 0,
+    "livePluginTreeMatchesBundle": true,
+    "longRunSurvivalOrLatencyImprovementProven": false,
+    "finalReloadPassiveMovementBlocks": 5.2,
+    "finalReloadNewStonePickaxeObserved": true,
+    "finalReloadHandoffFailures": 0,
+    "finalReloadLocalModelReady": true,
+    "finalReloadLanViewerHttpStatus": 200
   }
 }

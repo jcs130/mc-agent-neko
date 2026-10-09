@@ -1,0 +1,73 @@
+From 577a53b1c8f0a43d6d257de9aace59f5a06593e3 Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Fri, 9 Oct 2026 19:39:06 +0800
+Subject: [PATCH 47/47] fix(minecraft): use focused facts for completion
+ decisions
+
+---
+ plugin/plugins/game_agent_minecraft/__init__.py |  5 ++++-
+ .../test_focused_context.py                     | 17 +++++++++++++++++
+ 2 files changed, 21 insertions(+), 1 deletion(-)
+
+diff --git a/plugin/plugins/game_agent_minecraft/__init__.py b/plugin/plugins/game_agent_minecraft/__init__.py
+index 60f9165..1d41468 100644
+--- a/plugin/plugins/game_agent_minecraft/__init__.py
++++ b/plugin/plugins/game_agent_minecraft/__init__.py
+@@ -504,6 +504,7 @@ class GameAgentMinecraftPlugin(NekoPluginBase):
+                 parts=[{"type": "text", "text": cue}],
+                 priority=7,
+                 coalesce_key="mc_completion",
++                metadata={'expires_in_s': 60},
+             )
+         except Exception as exc:
+             self.logger.warning(
+@@ -577,7 +578,7 @@ class GameAgentMinecraftPlugin(NekoPluginBase):
+             status = blocked_label
+ 
+         service = getattr(self, '_service', None)
+-        fresh_context = (service._game_observations.context(max_tokens=400)
++        fresh_context = (service._game_observations.focused_context(max_tokens=500, mode='decision', max_events=0)
+                          if service and service._game_observations.fresh else '')
+         recovery_context = service.recovery_context() if service else ''
+         inv = result.get("inventory") if not fresh_context else None
+@@ -648,6 +649,8 @@ class GameAgentMinecraftPlugin(NekoPluginBase):
+             lines.append(recovery_context)
+         if fresh_context:
+             lines.append(fresh_context)
++        if service and service._game_execution_busy():
++            lines.append('Body execution is still busy. Do not call minecraft_task or replace the current action; the idle scheduler owns the next physical decision.')
+         prefix = prompts.t("CUE_PREFIX_DONE", lang=self._lang) + '\n'
+         # This priority-7 callback can run before passive facts are consumed.
+         # Reserve its fresh resources/recovery facts before fitting feedback;
+diff --git a/plugin/plugins/game_agent_minecraft/test_focused_context.py b/plugin/plugins/game_agent_minecraft/test_focused_context.py
+index f241f4e..7351b8c 100644
+--- a/plugin/plugins/game_agent_minecraft/test_focused_context.py
++++ b/plugin/plugins/game_agent_minecraft/test_focused_context.py
+@@ -8,6 +8,8 @@ from .observations import GameObservations
+ from .test_grounded_recovery import crowded_frame
+ from .test_observations import event
+ from .test_server_welcome import welcome_frame
++from . import GameAgentMinecraftPlugin
++from .service import GameAgentService
+ 
+ 
+ class FocusedContextTests(unittest.TestCase):
+@@ -178,3 +180,18 @@ class FocusedContextTests(unittest.TestCase):
+         emergency = json.loads(observations.focused_context(mode='survival', max_tokens=550).split('\n', 1)[1])
+         self.assertIn('zombie', str(emergency))
+         self.assertIn('倒地救援', str(emergency['serverGuide']))
++
++    def test_active_completion_uses_selected_facts_and_respects_body_still_busy(self):
++        info = GameObservations()
++        data = welcome_frame(texts=['倒地救援靠近4格10秒自动复活，无需法杖。'])
++        data['state']['activity'] = {'action': 'getWood', 'skill': None, 'digging': None}
++        info.ingest_state(data)
++        service = GameAgentService(logger=None, push_message_fn=lambda **_: None)
++        service._game_observations = info
++        plugin = object.__new__(GameAgentMinecraftPlugin)
++        plugin._lang, plugin._service = 'zh', service
++        cue = plugin._format_completion_cue({'status': 'ok', 'query': '此前采集', 'text': '获得三块木头。'})
++        self.assertIn('倒地救援', cue)
++        self.assertIn('Body execution is still busy', cue)
++        self.assertIn('Do not call minecraft_task', cue)
++        self.assertLessEqual(count_tokens(cue), 1000)

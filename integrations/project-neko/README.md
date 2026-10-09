@@ -51,10 +51,10 @@ python -m unittest discover -s plugin/plugins/game_agent_minecraft -t .
 git rev-parse HEAD:plugin/plugins/game_agent_minecraft
 ```
 
-The exported plugin passed 118 tests. The manifest records the exact reproduced
+The exported plugin passed 155 tests. The manifest records the exact reproduced
 plugin tree and host-file blobs. The host callback/media regression suite passed
 195 tests, including six new Minecraft budget tests. The matching native body
-passed 379 tests; this contribution branch passed 385 tests. The existing
+passed 405 tests; this contribution branch passed 411 tests. The existing
 mineDown contract test also passed.
 
 Follow the patched plugin's README for the existing N.E.K.O. plugin lifecycle,
@@ -125,6 +125,53 @@ inactivity or wall deadline, leaving a conservative 30 seconds for a follow-up
 decision/report. Refusal returns the available wait without starting a timer or
 claiming completion. Standalone waiting and human/vital interruption keep their
 existing behavior. The reloaded body also automatically ate carried food.
+
+## State-aware decisions and bounded context
+
+Routine progress updates now refresh the plugin cache without repeatedly asking
+the main model to replan an active body action. Completion, failure, idle state,
+new danger and direct communication have separate cues. Ordinary public chat is
+deferred while busy; direct messages use a social-only cue. A successful idle
+planning request holds a 30-second lease while the model is still responding;
+accepting a task clears it, preserving the existing ten-second first check after
+the next completion. Danger and direct communication bypass this lease.
+
+`minecraft_observe` defaults to a bounded summary even when callers specify
+sections. Full reference retrieval requires `detail="full"` and explicit sections.
+Scene projections retain fresh survival state, resources, relevant custom items,
+permission scopes and excerpts from actually received server guides. Omitted
+critical details are flagged for retrieval. Received server text remains data,
+not authorization. Welcome fragments use stable replacement keys and expiry.
+
+On one identical captured state, the old default observation was 18,427 tokens;
+the complete new default tool result was 1,501 tokens, a 91.9% reduction. This is
+an observation-result comparison, not a measured reduction in all model prompts
+or end-to-end response time. Native model-facing history is bounded separately;
+memory summaries are batched, single-flight and deferred behind foreground
+actions, while original pending facts and archives remain durable. Current task
+and fresh state take precedence over stale goals, positions and vitals in memory.
+
+Read-only capture after the first deployment confirmed a 912-token active cue
+with real server-guide excerpts reaching the main model. A 55-second passive
+window showed an independently dispatched task, movement and inventory changes.
+It did not prove successful escape or long-term survival. That window exposed
+duplicate planning while inference was in flight and an overlong explicit query;
+the lease and explicit full-reference choice address those cases. A separate
+native fix makes `goToSurface` return navigation failure truthfully. Model action
+selection can still be wrong; no diagnostic gameplay commands were injected.
+
+See the exported plugin's
+`docs/2026-10-09-decision-context-budget.md` for the scheduling table and limits.
+The final plugin suite passed 155 tests, the matching native source passed 405,
+and this contribution branch passed 411.
+
+After the final reload, a separate passive window confirmed another autonomous
+task with 5.2 blocks of movement and no handoff failure. A subsequent fresh
+inventory snapshot confirmed a new stone pickaxe (125 cobblestone and 15 sticks,
+previously 128 and 17). The body reported completion and the main model dispatched
+its next task. Health was 20 and food 17. The viewer returned HTTP 200 and the
+supervisor reported all services ready with zero recoveries. This verifies a
+short task transition, not the correctness or eventual success of the next goal.
 
 ## Approved host bridge fix
 
