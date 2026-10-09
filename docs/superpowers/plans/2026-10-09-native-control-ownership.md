@@ -18,6 +18,10 @@
 - [x] Run the regression tests before/after the fix, affected lifecycle/chat/protection tests, and inspect the diff before committing. All 89 tests passed; evidence: `D:/neko-mc-trial/native-control-ownership-tests-20261009.tap`.
 - [ ] Deploy the committed change to the owned MC service, restore unattended play, verify fresh Neko/model/viewer health, and capture a new read-only observation. Keep the historical failing trace intact.
 
+### Live follow-up: cancellation signal
+
+The first deployed observation confirmed that unsafe overlap was blocked, but a real new task was refused because the old `chopWood` had not released within two seconds. Source tracing found `digToSurface` can clear the shared flag while its persistent `_superseded()` guard remains unchanged: native `Agent.requestInterrupt` did not bump `_chopGen`, unlike the existing external WebSocket cancel. Two added regression tests initially failed: the actual skill guard remained false after native cancellation, and a dig exception prevented downstream path/PvP cancellation. Repair the shared native cancellation entry, retain the confirmed-release guard, and redeploy after the affected suite passes.
+
 ## Review focus
 
 - An ended mission cannot revive its old goal after a slow model call returns.

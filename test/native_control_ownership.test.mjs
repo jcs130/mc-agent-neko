@@ -36,8 +36,37 @@ function fixture({ owner = true, translate = async text => text } = {}) {
     });
     agent.adminMission = new Mission(agent);
     const begin = () => agent.adminMission._handoff({ text: '挖竖井找铁', taskId: 'current', origin: 'ws' });
-    return { agent, mission: agent.adminMission, calls, state, begin };
+    return { agent, mission: agent.adminMission, calls, state, begin,
+        nativeInterrupt: () => Agent.prototype.requestInterrupt.call(agent) };
 }
+
+test('native interruption invalidates the actual chopWood generation even if a recovery path clears its flag', () => {
+    const f = fixture(), stopped = [];
+    Object.assign(f.agent.bot, { _chopGen: 7, stopDigging: () => stopped.push('dig'),
+        collectBlock: { cancelTask: () => stopped.push('collect') },
+        pathfinder: { stop: () => stopped.push('path') }, pvp: { stop: () => stopped.push('pvp') } });
+    // Exercise the cancellation guard from the real long-running skill, rather than
+    // duplicating its logic in this test. That guard survives interrupt_code resets.
+    const source = readFileSync(new URL('../bots/_supervisor/skills/chopWood.js', import.meta.url), 'utf8');
+    const declaration = source.split('\n').find(line => line.includes('const _superseded ='));
+    assert(declaration, 'the skill must expose its existing generation guard');
+    const oldRun = vm.runInNewContext(`(bot => { const _gen = bot._chopGen; ${declaration}\n return _superseded; })`)(f.agent.bot);
+    assert.equal(oldRun(), false);
+    f.nativeInterrupt();
+    f.agent.bot.interrupt_code = false; // recovery can clear the transient flag
+    assert.equal(oldRun(), true, 'the old chopWood stack must remain cancelled');
+    assert.deepEqual(stopped, ['dig', 'collect', 'path', 'pvp']);
+});
+
+test('an interrupted dig throwing cannot prevent the rest of the body from stopping', () => {
+    const f = fixture(), stopped = [];
+    Object.assign(f.agent.bot, { _chopGen: 7, stopDigging() { throw new Error('dig already aborted'); },
+        collectBlock: { cancelTask: () => stopped.push('collect') },
+        pathfinder: { stop: () => stopped.push('path') }, pvp: { stop: () => stopped.push('pvp') } });
+    assert.doesNotThrow(f.nativeInterrupt);
+    assert.equal(f.agent.bot.interrupt_code, true);
+    assert.deepEqual(stopped, ['collect', 'path', 'pvp']);
+});
 
 test('external Neko ownership rejects orphan native system prompts between skills', async () => {
     const f = fixture();

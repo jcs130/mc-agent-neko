@@ -257,11 +257,16 @@ export class Agent {
     }
 
     requestInterrupt() {
-        this.bot.interrupt_code = true;
-        this.bot.stopDigging();
-        this.bot.collectBlock.cancelTask();
-        this.bot.pathfinder.stop();
-        this.bot.pvp.stop();
+        const bot = this.bot;
+        if (!bot) return;
+        bot.interrupt_code = true;
+        // chopWood recovery can clear the transient interrupt flag. Invalidate
+        // its existing generation guard too, as the external WS cancel does.
+        bot._chopGen = (bot._chopGen || 0) + 1;
+        try { bot.stopDigging?.(); } catch (e) {}
+        try { bot.collectBlock?.cancelTask?.(); } catch (e) {}
+        try { bot.pathfinder?.stop?.(); } catch (e) {}
+        try { bot.pvp?.stop?.(); } catch (e) {}
     }
 
     clearBotLogs() {
