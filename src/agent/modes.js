@@ -116,6 +116,48 @@ function adminExclusiveActive(bot) {
     } catch (e) { return false; }
 }
 
+function noteWoodHarvestTarget(agent) {
+    try {
+        const bot = agent.bot, actions = agent.actions;
+        if (!actions?.executing || !(actions.currentActionLabel === 'action:getWood' || bot._currentSkill === 'chopWood')) return;
+        if (!/_(leaves|log|wood|stem|hyphae)$/.test(bot.targetDigBlock?.name || '')) return;
+        bot._mobilityHarvestTarget = {
+            at: Date.now(), action: actions.currentActionLabel, generation: bot._actionGeneration,
+        };
+    } catch (e) {}
+}
+
+function harvestCanopyGraceActive(agent) {
+    // Bare-hand log digging takes several seconds. Let the owning harvest
+    // finish one dig/pickup cycle in a tree canopy, but recover after at most
+    // eight seconds if this geometry persists. Stone, unknown cells, water,
+    // SEALED rooms and vital danger never receive this grace.
+    noteWoodHarvestTarget(agent);
+    try {
+        const bot = agent.bot, actions = agent.actions, now = Date.now();
+        if (!actions?.executing || !(actions.currentActionLabel === 'action:getWood' || bot._currentSkill === 'chopWood')) return false;
+        const mobility = bot._mobility || {}, observed = bot._mobilityHarvestTarget;
+        if (mobility.state !== 'ENTOMBED' || !Number.isFinite(mobility.since)
+            || now < mobility.since || now - mobility.since >= 8000) return false;
+        if (!observed || now < observed.at || now - observed.at > 3000
+            || observed.action !== actions.currentActionLabel || observed.generation !== bot._actionGeneration) return false;
+        const m = bot.entity.position.floored();
+        const tree = b => /_(leaves|log|wood|stem|hyphae)$/.test(b?.name || '');
+        const known = b => b && ['block', 'empty'].includes(b.boundingBox);
+        const roof = bot.blockAt(m.offset(0, 2, 0));
+        if (!roof || roof.boundingBox !== 'block' || !tree(roof)) return false;
+        for (const dy of [0, 1]) {
+            const body = bot.blockAt(m.offset(0, dy, 0));
+            if (!known(body) || body.boundingBox === 'block' || /water|lava/.test(body.name || '')) return false;
+            for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+                const block = bot.blockAt(m.offset(dx, dy, dz));
+                if (!known(block) || /water|lava/.test(block.name || '') || (block.boundingBox === 'block' && !tree(block))) return false;
+            }
+        }
+        return true;
+    } catch (e) { return false; }
+}
+
 // ★2026-07-08 用户令 (「周围有怪是否风筝/躲藏要看连通性, 别无脑逃跑」): 射手连通性 = 视线。从 bot 眼睛
 //   到怪身体采样, 中途遇实心方块 = 箭被挡 = 射手够不到 → 不算威胁。近战怪不用视线用寻路 (world.isClearPath,
 //   由 threat_radar 后台算)。fail-safe: 任何异常/不确定当【能看见】(返回 true), 绝不误判成"够不到"而压制逃跑。
@@ -4256,6 +4298,10 @@ const modes_list = [
             // 状态写 bot._mobility(vitals广播给监工),变化记 progress。)
             const bot = agent.bot;
             const now = Date.now();
+            // Observe actual tree digging even between the 2s topology samples.
+            // Retaining it briefly covers the log-break → pickup gap, not a
+            // stale action label or an earlier action generation.
+            noteWoodHarvestTarget(agent);
             if (now - this.lastEval < 2000) return;
             this.lastEval = now;
             // ★MAROONED detection inputs (用户: "FREE只管了最小的——寻路找不到路径持续
@@ -7216,6 +7262,7 @@ async function execute(mode, agent, func, timeout=-1) {
                 || mode.name === 'auto_eat'
                 || (mode.name === 'mobility' && /ENTOMBED|SEALED/.test(_mobState));
             if (!_adminAllowed) return;   // 非致命本能 → admin 独占, 冻结这一拍 (不抢身体)
+            if (mode.name === 'mobility' && harvestCanopyGraceActive(agent)) return;
         }
     } catch (e) {}
     // ★仲裁接入点 A (Phase 1, 签核设计 bots/_supervisor/arbitration-design.md): 反射经
