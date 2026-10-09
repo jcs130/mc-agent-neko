@@ -123,7 +123,7 @@ export class Kernel {
         // S3-shadow observation runs INDEPENDENTLY of the decision-loop flag: it only
         // reads the world + proposeTasks and appends a line — it never dispatches.
         if (this.observe) { try { this._shadowObserve(); } catch (e) {} }
-        if (!this.enabled) return;
+        if (!this.enabled || this.agent?.hasExternalAutonomyOwner?.()) return;
 
         // Companion window decays back to survival.
         if (this._companionUntil && Date.now() > this._companionUntil) {
@@ -185,6 +185,9 @@ export class Kernel {
 
     // ── survival ───────────────────────────────────────────────────────────
     async _survivalTick() {
+        // External controllers own decisions even in the gaps between missions.
+        // Vital reflexes run independently in modes.js and retain body access.
+        if (this.agent?.hasExternalAutonomyOwner?.()) return;
         // ★2026-07-07 外部意图独占 (用户令): admin 指令(WS task / 游戏内 chat)由内部 gpt-5.4-mini 执行
         //   期间, 内核完全让位 —— 不派发任何提案(夜挖/FREE_PLAY) —— 直到那个
         //   chat-loop 结束(agent.handleMessage 的 finally 清 bot._extIntentUntil)。这就是"外部意图=最高
@@ -287,7 +290,7 @@ export class Kernel {
         // (the #1 root fix). The LLM judge (S4.2) will layer on top of this.
         const committed = commitGoal(this.bot, proposals, world);
         const decision = await this.decide(proposals, world, committed);
-        if (!decision || !decision.chosen) return;
+        if (!decision || !decision.chosen || this.agent?.hasExternalAutonomyOwner?.()) return;
 
         await this._commit(decision);
     }
@@ -344,6 +347,7 @@ export class Kernel {
 
     /** Commit a decision = dispatch its skill (or shadow-log it). */
     async _commit(decision) {
+        if (this.agent?.hasExternalAutonomyOwner?.()) return;
         const p = decision.chosen;
         const line = `[kernel] commit ${p.kind} via ${p.skill || '(free)'} — ${decision.reason}`;
         if (this.shadow) {
@@ -437,6 +441,7 @@ export class Kernel {
         // Dispatch through the same supervised path the bridge uses, so the
         // re-entry guard + supervised lock still apply (one skill at a time).
         const skills = await import('../library/skills.js');
+        if (this.agent?.hasExternalAutonomyOwner?.()) return;
         // ★WS-MUTEX: the tick's ms.busy check is stale by now — the awaits since then
         // (decide, this import) are exactly where a ws run_skill can start. Re-check right
         // before taking the lock; no awaits between this check and the assignment, so

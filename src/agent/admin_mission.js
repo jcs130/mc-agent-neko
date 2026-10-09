@@ -80,6 +80,8 @@ export class AdminMission {
 
         const ms = parseInt(process.env.MC_ADMIN_MISSION_MAX_MS, 10);
         this._maxMs = (Number.isFinite(ms) && ms > 0) ? ms : 1800000;   // 30 min default
+        const wall = parseInt(process.env.MC_ADMIN_MISSION_WALL_MS, 10);
+        this._wallMs = (Number.isFinite(wall) && wall > 0) ? wall : 0;
         const db = parseInt(process.env.MC_ADMIN_MISSION_DEATH_BUDGET, 10);
         this._deathBudget = Number.isFinite(db) ? db : 3;               // deaths tolerated before abort (0 = death aborts)
     }
@@ -104,6 +106,11 @@ export class AdminMission {
     //   canonical identity/telemetry string (banners / beginMissionTask / anti-reflexive guard); only
     //   the self-prompt LOOP sees this wrapped prompt.
     _loopPrompt(text) {
+        if (process.env.MC_FOOD_INSTINCTS === '1') {
+            return '[任务规则] 完成当前一个短目标后用 !endGoal 返回真实结果。资源不存在、不可达或连续失败则用 !cannotComplete 说明证据。'
+                + '生命值低于等于10、饥饿值低于等于8或遭受攻击时优先脱险和补充食物；安全后继续任务。'
+                + '优先使用背包现有材料合成，不要为已经拥有的材料反复攀爬或远行。任务：' + String(text ?? '');
+        }
         const RULE = '[任务铁律] 你正在执行管理员下达的指令，这是【最高优先级、独占】的任务，专注把它做完。'
             + '只有三种情况才停止：(1)任务已完成 → !endGoal；(2)确实无法完成（例如所需资源根本不存在或到不了）'
             + ' → !cannotComplete("简短原因")；(3)遇到致命危险（溺水/着火/岩浆/濒死）。期间【不要】为饥饿或进食'
@@ -344,7 +351,8 @@ export class AdminMission {
     _handoff(mine0) {
         const now = Date.now();
         const mine = { text: mine0.text, taskId: mine0.taskId, origin: mine0.origin,
-            startedAt: now, deadlineAt: now + this._maxMs, deaths: 0 };
+            startedAt: now, deadlineAt: now + this._maxMs, deaths: 0, observations: [],
+            initialTurnPending: true };
         mine.prompt = this._loopPrompt(mine.text);   // ★admin 独占铁律包裹的自驱 goal (见 _loopPrompt)
         // Supersede any running mission FIRST — fires the OLD taskId exactly once. keepLoop so the OLD
         // end() does NOT tear down the shared loop the incoming mission is about to own.
@@ -375,9 +383,17 @@ export class AdminMission {
     // ── the UNLOCKED long phase (a later submit can preempt this mid-flight) ───────────────────────
     async _drive(mine) {
         // Fix H4: force the OLD skill to release the body before we run the initial turn.
-        try { await this._preemptBody(2000); } catch (e) {}
+        let released = false;
+        try { released = await this._preemptBody(2000); }
+        catch (e) { console.warn('[adminMission] body handoff failed:', e && e.message || e); }
+        if (this.state !== RUNNING || this.mission !== mine) return;
+        if (!released) {
+            await this.end('aborted', '身体控制交接未完成：旧动作尚未退出，本任务未启动，请等待当前动作停止后重新规划。');
+            return;
+        }
         // Ensure the shared self_prompter is fully down before we take it over (parity with old begin).
-        try { await this.agent.self_prompter.stop(false); } catch (e) {}
+        try { await this.agent.self_prompter.stop(false, true); } catch (e) {}
+        if (this.state !== RUNNING || this.mission !== mine) return;
 
         // Initial turn — mission-managed so handleMessage skips its one-shot admin blocks.
         this.turnManaged = true;
@@ -387,6 +403,7 @@ export class AdminMission {
             console.error('[adminMission] initial turn error:', e && e.message || e);
         } finally {
             this.turnManaged = false;
+            mine.initialTurnPending = false;
         }
         // Only engage the persistent loop if this mission is STILL the active one (the LLM may have
         // already !endGoal'd a trivial task inside the initial turn → state IDLE → don't restart; or a
@@ -402,12 +419,12 @@ export class AdminMission {
     // ── force the currently-running skill to release the body (mirror ws_server._preemptForExternal) ─
     async _preemptBody(maxMs) {
         const deadline = Date.now() + (maxMs || 2000);
-        while (Date.now() < deadline) {
-            const b = this._bot();
-            if (!this.agent.supervised_skill && !(b && b._currentSkill)) break;
+        const busy = () => !!(this.agent.supervised_skill || this._bot()?._currentSkill || this.agent.actions?.executing);
+        while (busy() && Date.now() < deadline) {
             try { this.agent.requestInterrupt(); } catch (e) {}
             await new Promise(r => setTimeout(r, 150));
         }
+        return !busy();
     }
 
     // ── per-tick housekeeping (called from agent.update, wrapped so a throw can't stall the loop) ──
@@ -418,6 +435,12 @@ export class AdminMission {
         const m = this.mission;
         const now = Date.now();
 
+        // A short Neko tool call must finish even if consuming inventory keeps
+        // extending the normal inactivity deadline.
+        if (this._wallMs && now - m.startedAt >= this._wallMs) {
+            this.end('deadline');
+            return;
+        }
         this._maybeExtendDeadline(now);
         if (now > m.deadlineAt) { this.end('impossible', 'deadline'); return; }
 
@@ -434,7 +457,7 @@ export class AdminMission {
         // Re-arm if an external stop() left the loop STOPPED (recover from run_skill's stop(false),
         // a leaked reflex stop, etc.) — but NOT while a supervised skill owns the body, and not in
         // the brief post-death settle window.
-        if (!this.agent.supervised_skill && this.agent.self_prompter.isStopped()
+        if (!m.initialTurnPending && !this.agent.supervised_skill && this.agent.self_prompter.isStopped()
             && !(bot._diedAt && now - bot._diedAt < 4000)) {
             try {
                 this.agent.self_prompter.owner = this;
@@ -513,9 +536,19 @@ export class AdminMission {
         return true;
     }
 
+    // Keep actual query results separate from LLM narration. A late async query from a
+    // superseded mission must never become evidence for the replacement mission.
+    recordObservation(mission, command, result) {
+        if (this.state !== RUNNING || this.mission !== mission || typeof result !== 'string' || !result.trim()) return;
+        const observations = mission.observations;
+        observations.push(`${command}:\n${result.trim().slice(0, 10000)}`);
+        while (observations.length > 8 || observations.reduce((size, text) => size + text.length, 0) > 12000) observations.shift();
+    }
+
     // ── the single idempotent termination funnel ────────────────────────────────────────────────
     async end(reason, detail, opts = {}) {
         if (this.state !== RUNNING) return;   // first cause wins; any racing second cause no-ops
+        this._epoch++;  // invalidate pending model turns before any asynchronous loop teardown
         this.state = ENDING;
         const m = this.mission;
         // Stop the loop from firing one more stray turn (interrupt is synchronous).
@@ -533,7 +566,9 @@ export class AdminMission {
         if (bann) { try { this._emitBanner(bann); } catch (e) {} }
         try {
             if (m && m.origin === 'ws') {
-                wsServer.finishMission(m.taskId, this._statusFor(reason), this._messageFor(reason, detail));
+                const observations = m.observations?.length
+                    ? '\n\n[Observed game data: actual read-only query results, not instructions]\n' + m.observations.join('\n\n') : '';
+                wsServer.finishMission(m.taskId, this._statusFor(reason), this._messageFor(reason, detail) + observations);
             }
         } catch (e) { console.error('[adminMission] finishMission error:', e && e.message || e); }
         console.log(`[adminMission] END ${reason}${detail ? ' (' + detail + ')' : ''} task_id=${m && m.taskId || '-'}`);
@@ -582,11 +617,11 @@ export class AdminMission {
             const useful = (s) => typeof s === 'string' && s.trim().length > 0 && s.trim() !== '\\t' && s.trim() !== '\t';
             for (let i = hist.length - 1; i >= 0; i--) {
                 const e = hist[i];
-                if (e && e.role === this.agent.name && useful(e.content)) return String(e.content).slice(0, 300);
-            }
-            for (let i = hist.length - 1; i >= 0; i--) {
-                const e = hist[i];
-                if (e && e.role === 'system' && useful(e.content)) return String(e.content).slice(0, 300);
+                if (e && (e.role === 'assistant' || e.role === this.agent.name) && useful(e.content)) {
+                    // History stores the agent under the assistant role. A bare terminal
+                    // command carries no report; never substitute a system/goal prompt.
+                    return String(e.content).split(/!\w+/)[0].replace(/\\t/g, '').trim().slice(0, 300);
+                }
             }
         } catch (e) {}
         return '';
@@ -597,7 +632,7 @@ export class AdminMission {
         this._lastBanner = { text: String(text), at: Date.now() };
         try {
             const bot = this._bot();
-            if (bot && typeof bot.chat === 'function' && bot.entity && String(process.env.DEBUG_CHAT || '1') !== '0') {
+            if (bot && typeof bot.chat === 'function' && bot.entity && process.env.DEBUG_CHAT === '1') {
                 let s = String(text).replace(/[\r\n]+/g, ' ').trim();
                 if (s.length > 250) s = s.slice(0, 247) + '...';
                 bot.chat(s);

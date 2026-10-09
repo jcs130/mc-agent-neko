@@ -158,7 +158,11 @@ export default async function replenishKit(bot, ctx, opts = {}) {
     if (!onSurface() && isNight() && hostilesNear(16) > 0) {
         prog(`replenishKit: ① SKIP surfaceUp — night+hostiles16=${hostilesNear(16)} (安全地下别爬进夜怪堆送死; 地下补镐即可)`);
     }
-    if (!onSurface() && !(isNight() && hostilesNear(16) > 0)) {
+    const canAssembleLocally = planksEq() >= 8;
+    if (!onSurface() && canAssembleLocally) {
+        prog(`replenishKit: ① use local materials first (planksEq=${planksEq()})`);
+    }
+    if (!onSurface() && !canAssembleLocally && !(isNight() && hostilesNear(16) > 0)) {
         if (stop() || overBudget()) return settle('stopped-before-surface');
         const yb = bot.entity.position.y;
         prog(`replenishKit: ① underground (y=${Math.round(yb)}) → surfaceUp target 63, budget 90s (skill-side deadline)`);

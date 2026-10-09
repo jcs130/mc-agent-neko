@@ -1,5 +1,9 @@
 import { WebSocketServer } from 'ws';
 import fs from 'fs';
+import { sendGameChat } from './chat_bridge.js';
+import { sendServerCommand } from './server_commands.js';
+import { GameInformation } from './game_information.js';
+import settings from '../agent/settings.js';
 import { serverProxy } from '../agent/mindserver_proxy.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -103,9 +107,9 @@ class WSMessageServer {
     }
 
     start() {
-        this.wss = new WebSocketServer({ port: this.port, host: '0.0.0.0' });
+        this.wss = new WebSocketServer({ port: this.port, host: '127.0.0.1' });
 
-        console.log(`WebSocket server started on ws://0.0.0.0:${this.port}`);
+        console.log(`WebSocket server started on ws://127.0.0.1:${this.port}`);
 
         this.wss.on('connection', (ws) => {
             console.log('WebSocket client connected');
@@ -129,10 +133,11 @@ class WSMessageServer {
             //   外部 LLM 本来会一直收不到"当前在干嘛", 直到状态下次变 —— 稳态下可能好几分钟空白。
             //   这里对这个新连接单独绕过 dedup 发一帧当前态(不写 _lastNLText、不镜像游戏聊天)。
             this._sendCurrentStatusNL(ws);
+            this.gameInformation?.sendState(ws);
 
             ws.on('message', (data) => {
                 try {
-                    this.handleMessage(JSON.parse(data.toString()));
+                    this.handleMessage(JSON.parse(data.toString()), ws);
                 } catch (error) {
                     console.error('Error parsing WebSocket message:', error);
                     ws.send(JSON.stringify({
@@ -156,6 +161,7 @@ class WSMessageServer {
 
     setAgent(agent) {
         this.agent = agent;
+        this.observeAgent(agent);
         console.log(`WebSocket server connected to agent: ${agent.name}`);
 
         // Reset NaN warning flag when agent reconnects
@@ -174,12 +180,24 @@ class WSMessageServer {
         this.startStatusNLTimer();
     }
 
+    observeAgent(agent) {
+        if (this.gameInformation?.bot === agent.bot) return;
+        this.gameInformation?.close();
+        this.gameInformation = new GameInformation(agent, frame => this.broadcast(frame), {
+            commandPrefix: settings.chat_command_prefix ?? '@neko',
+        });
+    }
+
+    hasGameInformationClient() {
+        return [...this.clients].some(client => client.gameInformationSubscribed && client.readyState === client.OPEN);
+    }
+
     // ★2026-07-07 用户令 (取代原来每 5s 的 [dbg] 刷屏): 把"经 WS 与外部 LLM 往来的消息"(仅文本)
     //   同步到游戏聊天, 方便肉眼 debug —— 出口=每条 bot_status_nl 的中文人话(startStatusNLTimer 调用),
     //   入口=收到的外部指令 task/run_skill/cancel(handleMessage 调用)。不再周期性刷原始字段。
     //   env DEBUG_CHAT=0 整体关闭。MC chat 单条上限 256, 超长截断; 全 try/catch, 聊天镜像绝不伤 agent。
     _chatToMC(text) {
-        if (String(process.env.DEBUG_CHAT || '1') === '0') return;
+        if (process.env.DEBUG_CHAT !== '1') return;
         try {
             const bot = this.agent && this.agent.bot;
             if (!bot || typeof bot.chat !== 'function' || !bot.entity) return;
@@ -248,7 +266,9 @@ class WSMessageServer {
         const tod = (() => { try { return bot.time.timeOfDay || 0; } catch (e) { return 0; } })();
         const night = tod >= 12542 && tod <= 23459;
         const dim = (bot.game && bot.game.dimension) || 'overworld';
-        const cmt = bot._commitment || null;
+        // The read-only world observer still proposes vanilla survival goals
+        // when the kernel is disabled. Those proposals are not game actions.
+        const cmt = process.env.MC_FRAMEWORK_V2 === '0' ? null : (bot._commitment || null);
         const kind = (cmt && cmt.kind) || null;
         const skill = this._skillRunningName || bot._currentSkill || (cmt && cmt.skill) || null;
         // ★2026-07-08 ADMIN MISSION 真实性修复 (用户实观: 命令追蜘蛛却报"挖矿过夜"): 任务态下身体听的是
@@ -499,7 +519,15 @@ class WSMessageServer {
         }
     }
 
-    handleMessage(data) {
+    handleMessage(data, client) {
+        // Read-only subscription can arrive before the game has spawned.
+        if (data.type === 'query_game_state') {
+            if (client && data.schemaVersion === 1 && typeof data.conversationOwner === 'boolean') {
+                client.gameInformationSubscribed = data.conversationOwner;
+            }
+            this.gameInformation?.sendState(client);
+            return;
+        }
         if (!this.agent) {
             this.broadcast({
                 type: 'error',
@@ -517,6 +545,18 @@ class WSMessageServer {
         } catch (e) { /* incoming chat mirror must never hurt the agent */ }
 
         switch (data.type) {
+            case 'server_command':
+                void sendServerCommand(this.agent.bot, data).then(result => {
+                    if (client?.readyState === 1) client.send(JSON.stringify({
+                        type: 'server_command_result', request_id: data.request_id, ...result,
+                    }));
+                });
+                break;
+            case 'chat':
+                void sendGameChat(this.agent.bot, data).then(result => {
+                    this.broadcast({ type: 'chat_result', request_id: data.request_id, ...result });
+                });
+                break;
             case 'task':
                 // Forward optional task_id so we can echo it back on the
                 // matching task_finished frame. The plugin uses that echo
@@ -1385,7 +1425,7 @@ class WSMessageServer {
         try {
             const t = data && data.type;
             const noMirror = (t === 'pong' || t === 'bot_status_nl' || t === 'screenshot'
-                || t === 'vitals' || t === 'inventory');
+                || t === 'vitals' || t === 'inventory' || t === 'game_state' || t === 'game_events');
             if (t && !noMirror) {
                 this._chatToMC('▶' + JSON.stringify(data));
             }
@@ -1418,6 +1458,7 @@ class WSMessageServer {
     }
 
     stop() {
+        this.gameInformation?.close();
         if (this.screenshotInterval) {
             clearInterval(this.screenshotInterval);
             this.screenshotInterval = null;

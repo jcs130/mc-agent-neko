@@ -45,6 +45,7 @@ const settings = {
     // Works on windows and mac, but linux requires you to install the espeak package through your package manager eg: `apt install espeak` `pacman -S espeak`.
 
     "chat_ingame": false, // bot responses are shown in minecraft chat
+    "external_autonomy_owner": null, // "neko" reserves decisions even before its plugin connects; native skills/reflexes remain available
     "language": "en", // translate to/from this language. Supports these language names: https://cloud.google.com/translate/docs/languages
     "render_bot_view": false, // show bot's view in browser at localhost:3000, 3001...
     "viewer_type": "prismarine", // "modern" enables the optional Minecraft 1.20.6 renderer
@@ -53,6 +54,7 @@ const settings = {
     "modern_viewer_lan_address": "", // optional local IPv4 address for subnet-only viewing
     "modern_viewer_lan_prefix": 24,
     "modern_viewer_max_sessions": 8, // shared across local/LAN pages and all viewpoints (1-16)
+    "proactive_night_shelter": true, // disable for protected plugin hubs driven by an external agent
 
     "allow_insecure_coding": true, // allows newAction command and model can write/run code on your computer. enable at own risk
     "allow_vision": true, // allows vision model to interpret screenshots (enables !lookAtPlayer/!lookAtPosition's real vision path; vision_model falls back to chat_model when not explicitly set in profile)

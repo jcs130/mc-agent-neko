@@ -6,6 +6,7 @@ import { readFile as readFile3, stat as stat3 } from "node:fs/promises";
 import path4 from "node:path";
 import { Server as SocketServer } from "socket.io";
 import { Vec3 as Vec33 } from "vec3";
+import { gameOnline } from "../game_health.js";
 
 // src/worlds/minecraft/viewer-biome.ts
 function nearestVanillaBiome(name2) {
@@ -2700,7 +2701,7 @@ async function startModernViewer(bot, options) {
       if (await speechRelay.handle(req, res, pathname)) return;
       if (pathname === "/healthz") {
         res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
-        res.end(JSON.stringify({ ok: !closed, version: bot.version, ...sessionSlots.status() }));
+        res.end(JSON.stringify({ ok: !closed, gameOnline: gameOnline(bot), version: bot.version, ...sessionSlots.status() }));
         return;
       }
       if (pathname === "/capture-lease") {

@@ -49,7 +49,14 @@ const result = await build({
     }],
 });
 await copyFile(path.join(sourceRoot, 'LICENSE'), path.join(destination, 'LICENSE'));
-const bundle = await readFile(path.join(destination, 'host.mjs'));
+let bundle = await readFile(path.join(destination, 'host.mjs'), 'utf8');
+const healthPayload = '{ ok: !closed, version: bot.version, ...sessionSlots.status() }';
+if (!bundle.includes(healthPayload)) throw new Error('Upstream health response changed; review the importer.');
+bundle = bundle.replace('import { Vec3 as Vec33 } from "vec3";',
+    'import { Vec3 as Vec33 } from "vec3";\nimport { gameOnline } from "../game_health.js";')
+    .replace(healthPayload, '{ ok: !closed, gameOnline: gameOnline(bot), version: bot.version, ...sessionSlots.status() }');
+if (!bundle.includes('import { gameOnline }')) throw new Error('Upstream imports changed; review the importer.');
+await writeFile(path.join(destination, 'host.mjs'), bundle);
 await writeFile(path.join(destination, 'source.json'), JSON.stringify({
     repository: 'https://github.com/jcs130/Cortico',
     revision: execFileSync('git', ['-C', sourceRoot, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
@@ -57,6 +64,7 @@ await writeFile(path.join(destination, 'source.json'), JSON.stringify({
     bundleSha256: createHash('sha256').update(bundle).digest('hex'),
     inputs: Object.keys(result.metafile.inputs).map(file => path.relative(sourceRoot, path.resolve(sourceRoot, file)).replaceAll('\\', '/')),
     changes: ['Remove the host speech and livestream overlay; retain game rendering and sound.',
-        'Make concurrent viewing configurable (default 8, range 1-16); keep the separate capture limit.'],
+        'Make concurrent viewing configurable (default 8, range 1-16); keep the separate capture limit.',
+        'Report Minecraft connection health separately from the renderer HTTP listener.'],
 }, null, 2) + '\n');
 console.log(`Imported modern viewer host (${bundle.length} bytes).`);

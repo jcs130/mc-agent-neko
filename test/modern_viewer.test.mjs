@@ -107,6 +107,11 @@ test('modern host streams both views over local and LAN connections and reuses s
     assert.equal(a.value.health, 20);
     const health = async () => (await fetch(base + '/healthz')).json();
     assert.equal((await health()).viewers, 3);
+    assert.equal((await health()).gameOnline, true);
+    bot._client.ended = true;
+    assert.equal((await health()).ok, true, 'HTTP rendering can remain available after game disconnect');
+    assert.equal((await health()).gameOnline, false);
+    bot._client.ended = false;
     const rejected = await connect(t, base, '/socket.io/', true);
     assert.equal(rejected.value.maximum, 3);
     const message = once(a.socket, 'gameMessage');

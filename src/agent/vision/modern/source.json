@@ -2,7 +2,7 @@
   "repository": "https://github.com/jcs130/Cortico",
   "revision": "f0db612ce5075287330ab3e095ffa449c6e8e71c",
   "entry": "src/worlds/minecraft/modern-viewer.ts",
-  "bundleSha256": "3b92aa08b86a0432f36ef62fd657d71c372dc35fad8c8967c316445465881d82",
+  "bundleSha256": "e06e83949158b0497477d4e0c12d13308831a9215bee636a943bdeed9a91d3a3",
   "inputs": [
     "src/worlds/minecraft/viewer-biome.ts",
     "src/worlds/minecraft/viewer-light.ts",
@@ -46,6 +46,7 @@
   ],
   "changes": [
     "Remove the host speech and livestream overlay; retain game rendering and sound.",
-    "Make concurrent viewing configurable (default 8, range 1-16); keep the separate capture limit."
+    "Make concurrent viewing configurable (default 8, range 1-16); keep the separate capture limit.",
+    "Report Minecraft connection health separately from the renderer HTTP listener."
   ]
 }

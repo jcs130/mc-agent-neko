@@ -138,7 +138,11 @@ export class Agent {
 
 		this.respondFunc = respondFunc;
 
-        this.bot.on('whisper', respondFunc);
+        this.bot.on('whisper', (...args) => {
+            // The subscribed Neko dialog owns private conversation. Preserve
+            // the standalone body's reply path when no such client is present.
+            if (!wsServer.hasGameInformationClient?.()) respondFunc(...args);
+        });
         
         // ★2026-07-14 用户令: 游戏内 chat 路由重写 —— 根治 admin 指令风暴 (命令回执/系统消息被当指令:
         //   实录 "Applied effect Night Vision…"/"tp Neko" 漏 ignore_messages 黑名单进 mission, 每条触发
@@ -223,6 +227,7 @@ export class Agent {
 
     // 非指令真人聊天 → 节流聚合 (默认 3s 一批) → ws 转发外部 admin llm (env MC_INGAME_CHAT_FLUSH_MS 可调)
     _bufferChatForward(username, text) {
+        if (wsServer.hasGameInformationClient?.()) return;
         try {
             if (!this._chatFwdBuf) this._chatFwdBuf = [];
             this._chatFwdBuf.push({ player: username, text });
@@ -251,12 +256,24 @@ export class Agent {
         }
     }
 
+    hasExternalAutonomyOwner() {
+        // Reserve autonomy at startup too: a long kernel skill must not begin
+        // while the external controller is still connecting/reloading.
+        return settings.external_autonomy_owner === 'neko'
+            || Boolean(wsServer.hasGameInformationClient?.());
+    }
+
     requestInterrupt() {
-        this.bot.interrupt_code = true;
-        this.bot.stopDigging();
-        this.bot.collectBlock.cancelTask();
-        this.bot.pathfinder.stop();
-        this.bot.pvp.stop();
+        const bot = this.bot;
+        if (!bot) return;
+        bot.interrupt_code = true;
+        // chopWood recovery can clear the transient interrupt flag. Invalidate
+        // its existing generation guard too, as the external WS cancel does.
+        bot._chopGen = (bot._chopGen || 0) + 1;
+        try { bot.stopDigging?.(); } catch (e) {}
+        try { bot.collectBlock?.cancelTask?.(); } catch (e) {}
+        try { bot.pathfinder?.stop?.(); } catch (e) {}
+        try { bot.pvp?.stop?.(); } catch (e) {}
     }
 
     clearBotLogs() {
@@ -420,6 +437,7 @@ export class Agent {
 
     async initBot() {
         this.bot = initBot(this.name);
+        wsServer.observeAgent(this);
         this._stampBotEpoch();
         this._disconnectHandled = false;
         
@@ -479,6 +497,7 @@ export class Agent {
                 this._disconnectHandled = false;
                 this._reconnectNowInFlight = false;
                 if (reconnectAttempt > 0) console.log(`✅ Bot reconnected successfully (attempt ${reconnectAttempt}, spawn confirmed)`);
+                // Browser rendering is opt-in and does not load headless-gl.
                 if (settings.render_bot_view) {
                     try {
                         const { addBrowserViewer } = await import('./vision/browser_viewer.js');
@@ -854,6 +873,7 @@ export class Agent {
                 // Create new bot instance
                 const deadBot = this.bot;
                 this.bot = initBot(this.name);
+                wsServer.observeAgent(this);
                 this._stampBotEpoch();
                 this.bot._reconnectAttempt = this.reconnectAttempts;
                 this._disconnectHandled = false;
@@ -997,11 +1017,20 @@ export class Agent {
         //   runs today's block byte-for-byte.
         const _missionManagedTurn = this._missionEnabled && this.adminMission && this.adminMission.turnManaged;
         const _entryMissionEpoch = (this._missionEnabled && this.adminMission) ? (this.adminMission._epoch || 0) : 0;
+        const self_prompt = source === 'system' || source === this.name;
+        // Neko owns autonomous decisions. A system notification between kernel skills
+        // must not revive an expired goal from the native conversation history.
+        const nativeTurnBlocked = () => self_prompt && (this.supervised_skill
+            || (this.hasExternalAutonomyOwner()
+                && !(this._missionEnabled && this.adminMission?.isActive())));
+        const checkInterrupt = () => nativeTurnBlocked() || this.self_prompter.shouldInterrupt(self_prompt)
+            || this.shut_up || convoManager.responseScheduledFor(source)
+            || (this._missionEnabled && this.adminMission && (this.adminMission._epoch || 0) !== _entryMissionEpoch);
         if (source === 'admin' && !_missionManagedTurn) {
             try { this.bot._extIntentUntil = Date.now() + 300000; } catch (e) {}
             // ★2026-07-07 用户令: 游戏聊天里提示"开始执行指令", 让人一眼知道 bot 正在跑 LLM/chat 任务(而非自主)。
             //   env DEBUG_CHAT=0 可关。self 消息会被 bot.on('chat') 的 self 过滤挡掉, 不回灌。
-            try { if (message && String(process.env.DEBUG_CHAT || '1') !== '0') this.bot.chat('🎯 开始执行指令：' + String(message).replace(/\n/g, ' ').slice(0, 80)); } catch (e) {}
+            try { if (message && process.env.DEBUG_CHAT === '1') this.bot.chat('🎯 开始执行指令：' + String(message).replace(/\n/g, ' ').slice(0, 80)); } catch (e) {}
             // ★2026-07-07 AUTO-PREEMPT for admin commands (用户实观 bug: 游戏内命"挖原木"但 bot 一直挖煤/
             //   状态显示挖煤矿). WS 路的 preempt 在 ws_server, 但游戏内 chat 不经 ws_server → 没打断在跑的技能,
             //   内核挖煤 skill 占着身体不让位 → LLM 的 !getWood 抢不到体。这里补上: admin 指令一进来就打断当前
@@ -1027,7 +1056,7 @@ export class Agent {
             // between mining/fleeing/fighting and gets killed. Tick-based modes
             // (self_defense/self_preservation/auto_eat) still run for survival.
             // User-typed commands (non-self_prompt) are still honored.
-            if (this.supervised_skill && (source === 'system' || source === this.name)) {
+            if (nativeTurnBlocked()) {
                 return false;
             }
 
@@ -1039,7 +1068,6 @@ export class Agent {
                 max_responses = Infinity;
             }
 
-            const self_prompt = source === 'system' || source === this.name;
             const from_other_bot = convoManager.isOtherAgent(source);
 
             if (!self_prompt && !from_other_bot) { // from user, check for forced commands
@@ -1069,9 +1097,8 @@ export class Agent {
 
             // Now translate the message
             message = await handleEnglishTranslation(message);
+            if (checkInterrupt()) return false;
             console.log('received message from', source, ':', message);
-
-            const checkInterrupt = () => this.self_prompter.shouldInterrupt(self_prompt) || this.shut_up || convoManager.responseScheduledFor(source) || (this._missionEnabled && this.adminMission && (this.adminMission._epoch || 0) !== _entryMissionEpoch);
 
             let behavior_log = this.bot.modes.flushBehaviorLog().trim();
             if (behavior_log.length > 0) {
@@ -1093,6 +1120,9 @@ export class Agent {
                 if (checkInterrupt()) break;
                 let history = this.history.getHistory();
                 let res = await this.prompter.promptConvo(history);
+                // Ownership or the mission generation can change during inference.
+                // Discard a stale response before publishing it or touching the body.
+                if (checkInterrupt()) break;
 
                 console.log(`${this.name} full response to ${source}: ""${res}""`);
 
@@ -1233,7 +1263,7 @@ export class Agent {
                 // ★外部意图独占: 本 admin chat-loop 结束(gpt-5.4-mini 判定完成)→ 释放让位戳, 内核恢复自主派发。
                 try { this.bot._extIntentUntil = 0; } catch (e) {}
                 // ★用户令: 提示指令回合结束、回到自主行动。
-                try { if (String(process.env.DEBUG_CHAT || '1') !== '0') this.bot.chat('✅ 指令完成，回到自主行动'); } catch (e) {}
+                try { if (process.env.DEBUG_CHAT === '1') this.bot.chat('✅ 指令完成，回到自主行动'); } catch (e) {}
                 try {
                     // The mini LLM often emits just '\t' when it has no
                     // narrative to add (see neko.json's "respond with just
@@ -1302,23 +1332,28 @@ export class Agent {
             to_translate = to_translate.substring(0, translate_up_to);
             remaining = message.substring(translate_up_to);
         }
-        message = (await handleTranslation(to_translate)).trim() + " " + remaining;
+        const conversation = (await handleTranslation(to_translate)).replace(/[\r\n]+/g, ' ').trim();
+        message = conversation + " " + remaining;
         // newlines are interpreted as separate chats, which triggers spam filters. replace them with spaces
         message = message.replaceAll('\n', ' ');
 
         // ★2026-07-09 死连接兜底 (实录 unhandledRejection: bot._client.chat is not a function —
         //   whisper/chat 打在已断开/半拆除的连接上)。try/catch 包住, 断线窗口的聊天丢弃即可, 别炸日志。
+        // With Neko owning conversation, body responses are action diagnostics.
+        // They still reach the local UI, while only sendGameChat publishes player
+        // communication. Even standalone chat must exclude the tool-call suffix.
+        const publishConversation = settings.chat_ingame && conversation && !wsServer.hasGameInformationClient();
         if (settings.only_chat_with.length > 0) {
-            for (let username of settings.only_chat_with) {
-                try { this.bot.whisper(username, message); } catch (e) { console.warn(`openChat: whisper dropped (bot connection dead): ${e.message}`); }
+            for (let username of publishConversation ? settings.only_chat_with : []) {
+                try { this.bot.whisper(username, conversation); } catch (e) { console.warn(`openChat: whisper dropped (bot connection dead): ${e.message}`); }
             }
         }
         else {
             if (settings.speak) {
                 speak(to_translate, this.prompter.profile.speak_model);
             }
-            if (settings.chat_ingame) {
-                try { this.bot.chat(message); } catch (e) { console.warn(`openChat: chat dropped (bot connection dead): ${e.message}`); }
+            if (publishConversation) {
+                try { this.bot.chat(conversation); } catch (e) { console.warn(`openChat: chat dropped (bot connection dead): ${e.message}`); }
             }
             sendOutputToServer(this.name, message);
         }
@@ -1864,7 +1899,7 @@ export class Agent {
         }
         
         this.history.add('system', msg);
-        this.bot.chat(code > 1 ? 'Restarting.': 'Exiting.');
+        console.log(code > 1 ? 'Restarting.' : 'Exiting.');
         this.history.save();
         process.exit(code);
     }

@@ -251,7 +251,12 @@ export async function executeCommand(agent, message) {
         if (numArgs !== numParams(command))
             return `Command ${command.name} was given ${numArgs} args, but requires ${numParams(command)} args.`;
         else {
+            const mission = agent._missionEnabled && agent.adminMission?.isActive()
+                ? agent.adminMission.mission : null;
             const result = await command.perform(agent, ...parsed.args);
+            if (mission && !isAction(parsed.commandName)) {
+                agent.adminMission.recordObservation(mission, parsed.commandName, result);
+            }
             return result;
         }
     }

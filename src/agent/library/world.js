@@ -515,5 +515,7 @@ export function getBiomeName(bot) {
      * let biome = world.getBiomeName(bot);
      **/
     const biomeId = bot.world.getBiome(bot.entity.position);
-    return mc.getAllBiomes()[biomeId].name;
+    // Custom servers can send biome IDs absent from the vanilla lookup.
+    // Unknown registry entries must not abort every telemetry/model prompt.
+    return bot.registry?.biomes?.[biomeId]?.name || mc.getAllBiomes()[biomeId]?.name || `unknown(${biomeId})`;
 }

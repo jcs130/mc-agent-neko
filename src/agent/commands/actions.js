@@ -1,4 +1,6 @@
 import * as skills from '../library/skills.js';
+import { sendServerCommand } from '../../websocket/server_commands.js';
+import { clickMenuSlot, describeMenu } from '../library/menus.js';
 import settings from '../settings.js';
 import convoManager from '../conversation.js';
 
@@ -159,6 +161,12 @@ export function decodeRunSkillArgs(entry, raw) {   // exported for tests
 }
 
 export const actionsList = [
+    {
+        name: '!serverCommand',
+        description: 'Execute one actual server /mycli gameplay command, such as learning a server spell or casting it. First discover/explain the ID with !serverQuery. Server spells are not local !runSkill scripts. Read the actual reply and verify points/abilities/mana/effects; sending or receiving a reply alone is not success.',
+        params: { command: { type: 'string', description: 'Exact /mycli syntax discovered from the server, including any required arguments.' } },
+        perform: async (agent, command) => JSON.stringify(await sendServerCommand(agent.bot, { command })),
+    },
     {
         name: '!newAction',
         description: 'Perform new and unknown custom behaviors that are not available as a command.', 
@@ -446,7 +454,18 @@ export const actionsList = [
             'num': { type: 'int', description: 'number of logs to gather', domain: [1, 512] }
         },
         perform: runAsAction(async (agent, num) => {
-            await skills.customSkill(agent.bot, 'chopWood', Math.max(1, parseInt(num) || 8));
+            const requested = Math.max(1, parseInt(num) || 8);
+            const logCount = () => agent.bot.inventory.items()
+                .filter(item => /_log$/.test(item.name))
+                .reduce((sum, item) => sum + item.count, 0);
+            const before = logCount();
+            await skills.customSkill(agent.bot, 'chopWood', requested);
+            const total = logCount();
+            const gained = total - before;
+            // chopWood can return early (e.g. night/safety) without logging.
+            // Report measured inventory gain rather than treating return as success.
+            skills.log(agent.bot, `Wood gathering ${gained >= requested ? 'verified' : 'incomplete'}: gained ${gained} logs; requested ${requested}; total ${total}.`
+                + (gained < requested ? ' Do not report the requested collection as completed; check safety and inventory before choosing the next step.' : ''));
         }, false, 10) // 10 minute timeout
     },
     {
@@ -828,14 +847,24 @@ export const actionsList = [
         })
     },
     {
+        name: '!clickWindow',
+        description: 'Left-click an observed server-menu slot. Query !window first and use its actual ID and slot; verify the result afterward.',
+        params: {
+            window_id: { type: 'int', description: 'Current menu ID returned by !window.' },
+            slot: { type: 'int', description: 'Nonempty menu slot returned by !window; player inventory slots are excluded.' },
+        },
+        perform: (agent, windowId, slot) => clickMenuSlot(agent.bot, windowId, slot),
+    },
+    {
         name: '!useOn',
-        description: 'Use (right click) the given tool on the nearest target of the given type.',
+        description: 'Use (right click) the given tool on the nearest target of the given type. If a server menu opens, its observed contents are included in the result.',
         params: {
             'tool_name': { type: 'string', description: 'Name of the tool to use, or "hand" for no tool.' },
             'target': { type: 'string', description: 'The target as an entity type, block type, or "nothing" for no target.' }
         },
         perform: runAsAction(async (agent, tool_name, target) => {
             await skills.useToolOn(agent.bot, tool_name, target);
+            if (agent.bot.currentWindow) skills.log(agent.bot, describeMenu(agent.bot));
         })
     },
 ];

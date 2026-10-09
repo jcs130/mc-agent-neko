@@ -4,6 +4,9 @@ import { getCommandDocs } from './index.js';
 import convoManager from '../conversation.js';
 import { checkLevelBlueprint, checkBlueprint } from '../tasks/construction_tasks.js';
 import { load } from 'cheerio';
+import { readInventoryBook } from '../library/books.js';
+import { describeMenu } from '../library/menus.js';
+import { sendServerCommand } from '../../websocket/server_commands.js';
 
 const pad = (str) => {
     return '\n' + str + '\n';
@@ -11,6 +14,32 @@ const pad = (str) => {
 
 // queries are commands that just return strings and don't affect anything in the world
 export const queryList = [
+    {
+        name: '!serverQuery',
+        description: 'Query actual server gameplay rules/spells, distinct from local runSkill scripts. Send /mycli help, /mycli spells list 1 (follow MC_SPELL_NEXT), /mycli spells explain selfheal, /mycli protect break <x> <y> <z>, or /mycli land here. Protection deny means avoid that target; unknown needs a fresh nearby check. Use returned IDs and syntax. A local skill list cannot prove a server spell is absent.',
+        params: { command: { type: 'string', description: 'One read-only /mycli discovery/status command.' } },
+        perform: async (agent, command) => pad(JSON.stringify(await sendServerCommand(agent.bot, { command, readOnly: true }))),
+    },
+    {
+        name: '!window',
+        description: 'Read the open server menu, including its ID, slot numbers, item names and descriptions. No click is performed.',
+        perform: agent => pad(describeMenu(agent.bot)),
+    },
+    {
+        name: '!readBook',
+        description: 'Read server-supplied book pages from inventory without using or editing the book.',
+        params: { slot: { type: 'int', description: 'Inventory slot; -1 chooses the held book or first book.' } },
+        perform: (agent, slot) => pad(readInventoryBook(agent.bot, slot)),
+    },
+    {
+        name: '!readBookPages',
+        description: 'Read up to 8 book pages starting at a specified page, without using or editing the book.',
+        params: {
+            slot: { type: 'int', description: 'Inventory slot; -1 chooses the held book or first book.' },
+            start_page: { type: 'int', description: 'First page to read, starting at 1.' },
+        },
+        perform: (agent, slot, startPage) => pad(readInventoryBook(agent.bot, slot, startPage)),
+    },
     {
         name: "!stats",
         description: "Get your bot's location, health, hunger, and time of day.", 

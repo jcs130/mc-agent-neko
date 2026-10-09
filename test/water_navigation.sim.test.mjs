@@ -855,6 +855,12 @@ test('A* planning accepts a future wet dig without applying the bot current reac
         'execution still enforces the live 4.6-block reach');
 });
 
+test('a known server protection denial vetoes a path break before physical exceptions', () => {
+    const movements = Object.create(pf.Movements.prototype);
+    movements.bot = { serverProtection: { isDenied: (action, p) => action === 'break' && p.x === 4 } };
+    assert.equal(movements.safeToBreak({ position: new Vec3(4, 20, 0) }), false);
+});
+
 test('lava remains an absolute veto even beside a valid breathing station', () => {
     const cells = new Map();
     waterColumn(cells);

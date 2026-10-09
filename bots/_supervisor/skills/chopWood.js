@@ -1804,6 +1804,7 @@ export default async function chopWood(bot, ctx, count = 8, opts = {}) {
                 const d = bot.entity.position.distanceTo(base);
                 if (d < nearestAnyDist) { nearestAnyDist = d; nearestAnyDy = base.y - bot.entity.position.y; }   // closest tree even if blacklisted — feeds the cost model below
                 if (_blk(key)) continue;                       // skip blacklisted unreachable tree
+                if (bot.serverProtection?.isDenied('break', p) || bot.serverProtection?.isDeniedWoodColumn(p)) continue;
                 if (_opts.criticalForageLocalOnly && (d > 10.5 || (base.y - bot.entity.position.y) > 5)) continue;
                 const risk = riskyTree(base, d);
                 if (risk) {
