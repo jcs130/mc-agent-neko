@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { describeMenu, clickMenuSlot, openNpcTradingInterface } from '../src/agent/library/menus.js';
+import * as menus from '../src/agent/library/menus.js';
 
 const menuBot = () => ({ currentWindow: { id: 3, type: 'generic_9x3', title: '{"text":"技能罗盘"}', inventoryStart: 2,
     slots: [{ name: 'ender_pearl', count: 1, components: [{ type: 'custom_name', data: { type: 'string', value: '传送地点' } },
@@ -35,6 +36,68 @@ test('clicks only the observed menu slot and does not claim a completed teleport
     assert.deepEqual(calls, [[0, 0, 0]]);
     assert.match(result, /Submitted/);
     assert.match(result, /verify the server outcome/);
+});
+
+test('ordinary windows expose the carried custom item separately from inventory', () => {
+    for (const onInventory of [false, true]) {
+        const bot = menuBot();
+        const cursor = { name: 'iron_sword', count: 1,
+            components: [{ type: 'custom_name', data: { text: '赤铜柄·闪现匕首' } }] };
+        if (onInventory) bot.inventory = { selectedItem: cursor };
+        else bot.currentWindow.selectedItem = cursor;
+        const before = structuredClone(bot);
+        const text = describeMenu(bot);
+        assert.match(text, /CURSOR.*iron_sword.*1.*赤铜柄·闪现匕首/);
+        assert.match(text, /not yet in.*inventory/i);
+        assert.match(text, /!closeWindow\(3\)/);
+        assert.deepEqual(bot, before);
+    }
+});
+
+test('a click that lifts an item reports its cursor state and a recovery tool', async () => {
+    const bot = menuBot();
+    bot.clickWindow = async () => { bot.currentWindow.selectedItem = { name: 'iron_sword', count: 1 }; };
+    const text = await clickMenuSlot(bot, 3, 0);
+    assert.match(text, /CURSOR.*iron_sword/);
+    assert.match(text, /!closeWindow\(3\)/);
+    assert.doesNotMatch(text, /successfully.*(took|stored|received)/i);
+});
+
+test('inventory cursor fallback also prevents a second unsafe menu click', async () => {
+    const bot = menuBot();
+    bot.inventory = { selectedItem: { name: 'iron_sword', count: 1 } };
+    bot.clickWindow = () => assert.fail('must not click while carrying an item');
+    assert.match(await clickMenuSlot(bot, 3, 0), /Cursor/);
+});
+
+test('closeWindow closes only the observed window and does not invent an inventory transfer', async () => {
+    const bot = menuBot(), window = bot.currentWindow;
+    window.selectedItem = { name: 'iron_sword', count: 1 };
+    const calls = [];
+    bot.closeWindow = value => { calls.push(value); bot.currentWindow = null; };
+    assert.equal(typeof menus.closeMenu, 'function');
+    const text = await menus.closeMenu(bot, 3);
+    assert.deepEqual(calls, [window]);
+    assert.equal(window.selectedItem.name, 'iron_sword', 'the helper must not fake cursor/inventory updates');
+    assert.match(text, /Submitted.*close/);
+    assert.match(text, /!inventory/);
+    assert.doesNotMatch(text, /successfully.*(stored|received|dropped)/i);
+});
+
+test('closeWindow refuses stale IDs and already closed windows', async () => {
+    const bot = menuBot();
+    bot.closeWindow = () => assert.fail('must not close a different window');
+    assert.equal(typeof menus.closeMenu, 'function');
+    assert.match(await menus.closeMenu(bot, 2), /changed or closed/);
+    assert.match(await menus.closeMenu(bot, '3'), /changed or closed/);
+    bot.currentWindow = null;
+    assert.match(await menus.closeMenu(bot, 3), /changed or closed/);
+});
+
+test('a cursor item remains visible when no server menu is currently open', () => {
+    const text = describeMenu({ inventory: { selectedItem: { name: 'iron_sword', count: 1 } } });
+    assert.match(text, /No server menu/);
+    assert.match(text, /CURSOR.*iron_sword/);
 });
 
 test('generic NPC shops expose real menu slots without invoking the vanilla trade API', async () => {

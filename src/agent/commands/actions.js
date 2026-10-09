@@ -1,6 +1,6 @@
 import * as skills from '../library/skills.js';
 import { sendServerCommand } from '../../websocket/server_commands.js';
-import { clickMenuSlot, describeMenu } from '../library/menus.js';
+import { clickMenuSlot, closeMenu, describeMenu } from '../library/menus.js';
 import { tradeAtWindow } from '../library/merchant_trades.js';
 import { openBackpack, openServerStorage, moveBackpackItem } from '../library/portable_storage.js';
 import settings from '../settings.js';
@@ -421,7 +421,7 @@ export const actionsList = [
     },
     {
         name: '!takeFromChest',
-        description: 'Take the given items from the nearest chest.',
+        description: 'Transfer the given items from the nearest ordinary chest into inventory. Prefer this over !clickWindow for taking chest items; a plain left click can leave an item on the cursor. If already carrying an item, query !window and close that exact window before checking inventory.',
         params: {
             'item_name': { type: 'ItemName', description: 'The name of the item to take.' },
             'num': { type: 'int', description: 'The number of items to take.', domain: [1, Number.MAX_SAFE_INTEGER] }
@@ -908,12 +908,18 @@ export const actionsList = [
     },
     {
         name: '!clickWindow',
-        description: 'Left-click an observed server-menu slot. Query !window first and use its actual ID and slot; verify the result afterward.',
+        description: 'Left-click an observed server-menu slot. Query !window first and use its actual ID and slot. A container click can lift an item onto the cursor instead of transferring it into inventory. Inspect CURSOR, then !closeWindow and !inventory as needed. For ordinary chest withdrawals prefer !takeFromChest.',
         params: {
             window_id: { type: 'int', description: 'Current menu ID returned by !window.' },
             slot: { type: 'int', description: 'Nonempty menu slot returned by !window; player inventory slots are excluded.' },
         },
         perform: (agent, windowId, slot) => clickMenuSlot(agent.bot, windowId, slot),
+    },
+    {
+        name: '!closeWindow',
+        description: 'Close only the current window with the ID observed in !window, including when an item is carried on the cursor. Verify !inventory afterward; do not assume the carried item was stored or dropped. Reopening a chest with !useOn does not close it.',
+        params: { window_id: { type: 'int', description: 'Exact current window ID from !window.', domain: [1, Number.MAX_SAFE_INTEGER] } },
+        perform: (agent, windowId) => closeMenu(agent.bot, windowId),
     },
     {
         name: '!openBackpack',

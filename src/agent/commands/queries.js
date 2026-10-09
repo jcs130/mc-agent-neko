@@ -28,7 +28,7 @@ export const queryList = [
     },
     {
         name: '!window',
-        description: 'Read the open server menu, including its ID, slot numbers, item names and descriptions. No click is performed.',
+        description: 'Read the open server menu, its ID, slot numbers, item names and descriptions, and the separate CURSOR item. A carried item is not yet in inventory. No click is performed. Use !closeWindow with the observed ID to close; reopening a chest is not closing it.',
         perform: agent => pad(describeMenu(agent.bot)),
     },
     {
