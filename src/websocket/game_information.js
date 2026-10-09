@@ -6,6 +6,33 @@ import { activeServerCommand } from './server_commands.js';
 // Observation only: this module never sends game packets, chat or actions.
 const finite = value => typeof value === 'number' && Number.isFinite(value) ? value : null;
 const point = value => value ? { x: finite(value.x), y: finite(value.y), z: finite(value.z) } : null;
+
+function guardOwnOxygen(bot) {
+    const key = bot.registry?.entitiesByName?.player?.metadataKeys?.indexOf('air_supply');
+    if (!bot.supportFeature?.('mcDataHasEntityMetadata') || !(key >= 0)) return () => {};
+    const previous = Object.getOwnPropertyDescriptor(bot, 'oxygenLevel');
+    if (previous && !previous.configurable) return () => {};
+    // Mineflayer 4.37.1 assigns every entity's air_supply to bot.oxygenLevel.
+    // Its entities handler updates entity.metadata before emitting breath, so
+    // reading our own metadata also protects synchronous native safety checks.
+    // Missing own metadata is unknown; never infer full air from a nearby mob.
+    const get = () => {
+        const air = bot.entity?.metadata?.[key];
+        return finite(air) === null ? undefined : Math.round(air / 15);
+    };
+    Object.defineProperty(bot, 'oxygenLevel', {
+        configurable: true, enumerable: previous?.enumerable ?? true,
+        get, set() { /* the own entity metadata is the source of truth */ },
+    });
+    return () => {
+        if (Object.getOwnPropertyDescriptor(bot, 'oxygenLevel')?.get !== get) return;
+        const oxygen = get();
+        if (previous) Object.defineProperty(bot, 'oxygenLevel', 'value' in previous
+            ? { ...previous, value: oxygen } : previous);
+        else delete bot.oxygenLevel;
+    };
+}
+
 export function gameText(value) {
     if (value == null) return '';
     if (typeof value === 'string') {
@@ -98,6 +125,11 @@ function distance(a, b) {
 export function collectGameState(agent, presentation = {}) {
     const bot = agent.bot, pos = bot.entity?.position;
     const slots = bot.inventory?.slots ?? [], counts = {};
+    let emptySlots = null;
+    try {
+        const count = bot.inventory?.emptySlotCount?.();
+        if (Number.isInteger(count) && count >= 0 && count <= 36) emptySlots = count;
+    } catch { /* unavailable inventory capacity remains unknown */ }
     slots.forEach((item, slot) => {
         // Player storage + offhand; crafting output and equipped armour are separate.
         if (item && slot >= 9) counts[item.name] = (counts[item.name] ?? 0) + item.count;
@@ -130,7 +162,7 @@ export function collectGameState(agent, presentation = {}) {
             hardcore: bot.game?.hardcore, timeOfDay: bot.time?.timeOfDay,
             age: bot.time?.age, weather: { rain: finite(bot.rainState), thunder: finite(bot.thunderState) },
             biome: below?.biome?.name ?? below?.biome ?? null, spawnPoint: point(bot.spawnPoint) },
-        inventory: { counts, selectedHotbar: bot.quickBarSlot, held: itemState(bot.heldItem),
+        inventory: { counts, emptySlots, selectedHotbar: bot.quickBarSlot, held: itemState(bot.heldItem),
             slots: slots.map(itemState).filter(Boolean) },
         // Keep local collision facts and real chat targets ahead of verbose
         // entity metadata. Otherwise a crowded scene hides how to get unstuck.
@@ -173,6 +205,7 @@ export class GameInformation {
         this.agent = agent; this.bot = agent.bot; this.publish = publish; this.now = now;
         this.sessionId = randomUUID(); this.eventSeq = 0; this.stateSeq = 0;
         this.events = []; this.pending = []; this.recent = new Map(); this.listeners = [];
+        this.listeners.push(guardOwnOxygen(this.bot));
         this.presentation = { bossBars: {}, channels: {}, advancements: {}, titles: {}, actionBar: null, signs: [] };
         this.presentation.welcome = { sessionId: this.sessionId, startedAt: now(), captureUntil: now() + 30000,
             messages: [], truncated: false, omittedMessages: 0 };
