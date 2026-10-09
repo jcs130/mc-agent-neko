@@ -6317,19 +6317,17 @@ export async function goToSurface(bot) {
         const targetY = block.position.y + 1;
         try {
             const reached = await goToPosition(bot, block.position.x, targetY, block.position.z, 0);
-            if (!reached) {
-                log(bot, `Surface not reached: currentY=${bot.entity.position.y}, targetY=${targetY}.`);
-                return false;
+            if (reached) {
+                log(bot, `Going to the surface at y=${targetY}.`);
+                return true;
             }
-            log(bot, `Going to the surface at y=${targetY}.`);
-            return true;
-        } catch (err) {
-            // The pathfinder couldn't walk a route up — the classic case is
-            // being trapped at the bottom of a vertical shaft, where there is
-            // no foothold to climb. Fall back to towering straight up.
-            log(bot, `No walkable route to the surface, towering up instead...`);
-            return await pillarUp(bot, targetY);
-        }
+        } catch (err) { /* A failed route can throw or return false. */ }
+        log(bot, `Surface not reached: currentY=${bot.entity.position.y}, targetY=${targetY}.`);
+        if (bot.interrupt_code || bot.death_abort || bot.health <= 0) return false;
+        // goToPosition normally catches path errors and returns false, so a
+        // catch-only fallback never runs for an ordinary blocked shaft.
+        log(bot, `No walkable route to the surface, towering up instead...`);
+        return await pillarUp(bot, targetY);
     }
     return false;
 }
@@ -6476,6 +6474,7 @@ export async function pillarUp(bot, targetY = null, opts = {}) {
     // the block stock (no target — "pillar until dirt gone" did its job).
     const reached = targetY != null ? finalY >= targetY : (placed > 0 || heldUsable() == null);
     log(bot, `Pillar up done: y=${startY}->${finalY} (+${finalY - startY}), placed ${placed} block(s).`);
+    if (!reached && targetY != null) log(bot, `Pillar up incomplete: currentY=${finalY}, targetY=${targetY}. The requested height was not reached.`);
     return reached;
 }
 

@@ -537,7 +537,7 @@ export const actionsList = [
             'num': { type: 'int', description: 'how many raw_iron to smelt', domain: [1, 128, '[]'] }
         },
         perform: runAsAction(async (agent, num) => {
-            await skills.customSkill(agent.bot, 'smeltSafe', 'raw_iron', Math.max(1, parseInt(num) || 1));
+            return await skills.customSkill(agent.bot, 'smeltSafe', 'raw_iron', Math.max(1, parseInt(num) || 1));
         }, false, 30) // ★2026-07-14: 等炼完 (10s/件, 128 件≈22min) — 10min 超时会把长炉次拦腰打断
     },
     {
@@ -882,15 +882,15 @@ export const actionsList = [
     },
     {
         name: '!digDown',
-        description: 'Digs down a specified distance. On water, lava, or a dangerous drop it keeps the shaft floor sealed and tries a short safe lateral detour.',
+        description: 'Dig the floor below your feet to descend: Y decreases. For climbing out use !goToSurface or !pillarUp; this command cannot dig overhead or move upward. On water, lava, or a dangerous drop it keeps the shaft floor sealed and tries a short safe lateral detour.',
         params: {'distance': { type: 'int', description: 'Distance to dig down', domain: [1, Number.MAX_SAFE_INTEGER] }},
         perform: runAsAction(async (agent, distance) => {
-            await skills.digDown(agent.bot, distance);
+            return await skills.digDown(agent.bot, distance);
         })
     },
     {
         name: '!goToSurface',
-        description: 'Moves the bot to the highest block above it (usually the surface).',
+        description: 'Move upward to the highest block above you (usually the surface). Try a walkable route, then climb in place with carried full blocks if the route fails. Solid headroom requires a usable tool and server permission.',
         params: {},
         perform: runAsAction(async (agent) => {
             return await skills.goToSurface(agent.bot);
@@ -903,7 +903,7 @@ export const actionsList = [
             'target_y': { type: 'int', description: 'The Y level to climb to. Use -1 to pillar in place until blocks run out.', domain: [-1, 320] }
         },
         perform: runAsAction(async (agent, target_y) => {
-            await skills.pillarUp(agent.bot, (target_y == null || target_y < 0) ? null : target_y);
+            return await skills.pillarUp(agent.bot, (target_y == null || target_y < 0) ? null : target_y);
         })
     },
     {

@@ -14,10 +14,11 @@ function sourceFunction(name, nextName) {
     return source.slice(start, end).replace('export ', '');
 }
 
-function fixture({ reachable = false, interrupted = false } = {}) {
+function fixture({ reachable = false, interrupted = false, dead = false, throws = false, pillarReaches = false } = {}) {
     const bot = {
         output: '',
         interrupt_code: false,
+        health: dead ? 0 : 20,
         entity: { position: new Vec3(-543, 57, -438) },
         modes: { isOn: () => false },
         blockAt(position) {
@@ -38,8 +39,13 @@ function fixture({ reachable = false, interrupted = false } = {}) {
             calls.navigation++;
             if (reachable) target.entity.position = new Vec3(goal.x, goal.y, goal.z);
             target.interrupt_code = interrupted;
+            if (throws) throw new Error('no path');
         },
-        pillarUp: async () => { calls.pillar++; return true; },
+        pillarUp: async (target, targetY) => {
+            calls.pillar++;
+            if (pillarReaches) target.entity.position.y = targetY;
+            return pillarReaches;
+        },
     });
     vm.runInContext(sourceFunction('goToPosition', 'goToNearestBlock')
         + sourceFunction('goToSurface', 'pillarUp')
@@ -47,14 +53,36 @@ function fixture({ reachable = false, interrupted = false } = {}) {
     return { bot, calls, run: () => context.runSurface(bot) };
 }
 
-test('goToSurface reports partial navigation as failure with current and target height', async () => {
+test('goToSurface tries the existing pillar fallback after a partial route, retaining honest failure', async () => {
     const f = fixture();
     assert.equal(await f.run(), false);
     assert.match(f.bot.output, /Unable to reach .*13 blocks away/);
     assert.match(f.bot.output, /Surface not reached: currentY=57, targetY=70/);
     assert.doesNotMatch(f.bot.output, /Going to the surface/);
     assert.equal(f.bot.entity.position.y, 57);
-    assert.deepEqual(f.calls, { navigation: 1, pillar: 0, timers: 1, clearedTimers: 1 });
+    assert.deepEqual(f.calls, { navigation: 1, pillar: 1, timers: 1, clearedTimers: 1 });
+});
+
+test('goToSurface can climb out when navigation returns false instead of throwing', async () => {
+    const f = fixture({ pillarReaches: true });
+    assert.equal(await f.run(), true);
+    assert.equal(f.bot.entity.position.y, 70);
+    assert.equal(f.calls.pillar, 1);
+});
+
+test('goToSurface retains the pillar fallback when navigation throws', async () => {
+    const f = fixture({ throws: true, pillarReaches: true });
+    assert.equal(await f.run(), true);
+    assert.equal(f.bot.entity.position.y, 70);
+    assert.equal(f.calls.pillar, 1);
+});
+
+test('goToSurface never starts a climb after death or interrupted exceptional navigation', async () => {
+    for (const options of [{ dead: true }, { throws: true, interrupted: true }]) {
+        const f = fixture(options);
+        assert.equal(await f.run(), false);
+        assert.equal(f.calls.pillar, 0);
+    }
 });
 
 test('goToSurface retains success when actual navigation reaches the surface', async () => {

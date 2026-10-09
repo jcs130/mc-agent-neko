@@ -15,6 +15,7 @@ function fixture({ discard = false, advanceMs = 0, interrupted = false, equip = 
             discardAway: async (_bot, name) => { calls.skills.push(name); now += advanceMs; return discard; },
             equip: async (_bot, name) => { calls.skills.push(name); return equip; },
             goToPosition: async () => false, goToSurface: async () => false,
+            pillarUp: async () => false, digDown: async () => false, customSkill: async () => false,
             craftRecipeLocal: async () => false, placeBlockNearby: async () => false,
             putInChest: async () => false, takeFromChest: async () => false,
         },
@@ -71,7 +72,8 @@ test('successful code execution preserves its actual receipt and private output'
 });
 
 for (const command of ['!equip("stone_pickaxe")', '!goToCoordinates(1, 65, 2, 1)',
-    '!goToSurface', '!craftRecipe("stone_pickaxe", 1)', '!placeHere("crafting_table")',
+    '!goToSurface', '!pillarUp(67)', '!digDown(1)', '!smeltIron(1)',
+    '!craftRecipe("stone_pickaxe", 1)', '!placeHere("crafting_table")',
     '!putInChest("cobblestone", 64)', '!takeFromChest("cobblestone", 64)']) {
     test(`explicit false from ${command} survives the real command wrapper`, async () => {
         const f = fixture({ equip: false });
