@@ -6,6 +6,7 @@ import * as tickConfirm from "./tick_confirm.js";
 import pf from 'mineflayer-pathfinder';
 import Vec3 from 'vec3';
 import { unclimbVines } from './vine_unstick.js';
+import { openNpcTradingInterface } from './menus.js';
 import settings from "../../../settings.js";
 import path from 'path';
 import { pathToFileURL } from 'url';
@@ -5894,7 +5895,12 @@ export async function showVillagerTrades(bot, id) {
     }
     
     try {
-        const villager = await bot.openVillager(villagerEntity);
+        const opened = await openNpcTradingInterface(bot, villagerEntity);
+        if (opened.kind === 'menu') {
+            log(bot, opened.description);
+            return true;
+        }
+        const villager = opened.window;
         
         if (!villager.trades || villager.trades.length === 0) {
             log(bot, 'This villager has no trades available - might be sleeping, a baby, or jobless');
@@ -5912,7 +5918,7 @@ export async function showVillagerTrades(bot, id) {
         villager.close();
         return true;
     } catch (err) {
-        log(bot, 'Failed to open villager trading interface - they might be sleeping, a baby, or jobless');
+        log(bot, `Failed to inspect villager interface: ${err.message}`);
         console.log('Villager trading error:', err.message);
         return false;
     }
@@ -5935,7 +5941,12 @@ export async function tradeWithVillager(bot, id, index, count) {
     }
     
     try {
-        const villager = await bot.openVillager(villagerEntity);
+        const opened = await openNpcTradingInterface(bot, villagerEntity);
+        if (opened.kind === 'menu') {
+            log(bot, opened.description + '\nNo trade was executed. The requested vanilla trade index cannot identify a custom menu slot.');
+            return false;
+        }
+        const villager = opened.window;
         
         if (!villager.trades || villager.trades.length === 0) {
             log(bot, 'This villager has no trades available - might be sleeping, a baby, or jobless');
@@ -5991,7 +6002,7 @@ export async function tradeWithVillager(bot, id, index, count) {
             return false;
         }
     } catch (err) {
-        log(bot, 'Failed to open villager trading interface');
+        log(bot, `Failed to open villager trading interface: ${err.message}`);
         console.log('Villager interface error:', err.message);
         return false;
     }

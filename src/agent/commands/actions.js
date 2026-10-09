@@ -776,7 +776,7 @@ export const actionsList = [
     },
     {
         name: '!showVillagerTrades',
-        description: 'Show trades of a specified villager.',
+        description: 'Inspect a villager NPC. Shows vanilla trades or the actual custom server menu; custom menus stay open for !window / !clickWindow.',
         params: {'id': { type: 'int', description: 'The id number of the villager that you want to trade with.' }},
         perform: runAsAction(async (agent, id) => {
             await skills.showVillagerTrades(agent.bot, id);
@@ -784,7 +784,7 @@ export const actionsList = [
     },
     {
         name: '!tradeWithVillager',
-        description: 'Trade with a specified villager.',
+        description: 'Execute a vanilla villager trade. Custom server menus require !window / !clickWindow with an observed slot; trade indices cannot select their offers.',
         params: {
             'id': { type: 'int', description: 'The id number of the villager that you want to trade with.' },
             'index': { type: 'int', description: 'The index of the trade you want executed (1-indexed).', domain: [1, Number.MAX_SAFE_INTEGER] },

@@ -1,5 +1,29 @@
 import { plainText } from './books.js';
 
+// Mineflayer's openVillager assumes a vanilla merchant window and rejects
+// server NPCs backed by generic inventory menus (also leaking its trade-list
+// listener on that rejection). Inspect through openEntity before using it.
+export async function openNpcTradingInterface(bot, entity) {
+    if (bot.currentWindow?.selectedItem || bot.inventory?.selectedItem) {
+        throw new Error('Cursor is holding an item. NPC interaction refused to avoid moving inventory items.');
+    }
+    if (bot.currentWindow) bot.closeWindow(bot.currentWindow);
+    // openEntity resolves after slot data arrives and has Mineflayer's bounded
+    // windowOpen timeout. Do not add a shorter race that leaves it running.
+    const window = await bot.openEntity(entity);
+    if (!window || bot.currentWindow !== window) throw new Error('NPC menu changed or closed. Interact again to inspect it.');
+    if (window.type !== 'minecraft:merchant' && window.type !== 'minecraft:villager') {
+        return { kind: 'menu', window, description: describeMenu(bot) +
+            '\nThis NPC uses a custom server menu, not vanilla trade indices. Keep it open; use !window and !clickWindow with the observed menu ID and slot. Verify the server reply and inventory afterward. Do not repeat !showVillagerTrades or guess a purchase slot.' };
+    }
+    // Reopen a vanilla merchant via its own API so it installs the trade-list
+    // handler before the server sends the offers. Raw openEntity has no trades.
+    bot.closeWindow(window);
+    const merchant = await bot.openVillager(entity);
+    if (bot.currentWindow !== merchant) throw new Error('Merchant window changed or closed before trades were ready.');
+    return { kind: 'merchant', window: merchant };
+}
+
 export function describeMenu(bot) {
     const window = bot.currentWindow;
     if (!window) return 'No server menu is open. Use the relevant item or interact first.';
