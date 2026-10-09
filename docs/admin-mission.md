@@ -68,6 +68,14 @@
 - [`src/agent/framework/kernel.js`](../src/agent/framework/kernel.js) —— 任务期独占和普通派发仲裁。
 - [`neko.json`](../neko.json) —— 持续目标 / `!endGoal` / `!cannotComplete` / 自我保命 提示。
 
+## 外部 Neko 控制时的任务交接
+
+当 Neko 已订阅并拥有游戏决策时，原生 `system`/机器人自发回合只服务于当前活跃任务。普通模式通知不能从历史记录重新启动已结束的目标；独立运行、明确的玩家/管理员指令及保命反射仍保留。
+
+任务结束会同步作废旧回合的代次；翻译和模型推理返回后重新检查任务与控制权，过期结果不发布也不执行。新任务必须确认旧技能和动作已经退出后才开始。交接超时或异常会回报 `interrupted`，不会强行清除旧锁再启动第二个动作。
+
+回归验证：`node --test test/native_control_ownership.test.mjs`。
+
 ## 上线注意
 核心文件（agent.js/ws_server.js/kernel.js/self_prompter.js/admin_mission.js）在进程启动时加载，
 **不热载** —— 改动**需重启** bot（`start-neko.ps1` 或 watchdog 自动重启）才生效。默认开，重启即 LIVE。

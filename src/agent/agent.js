@@ -1001,6 +1001,15 @@ export class Agent {
         //   runs today's block byte-for-byte.
         const _missionManagedTurn = this._missionEnabled && this.adminMission && this.adminMission.turnManaged;
         const _entryMissionEpoch = (this._missionEnabled && this.adminMission) ? (this.adminMission._epoch || 0) : 0;
+        const self_prompt = source === 'system' || source === this.name;
+        // Neko owns autonomous decisions. A system notification between kernel skills
+        // must not revive an expired goal from the native conversation history.
+        const nativeTurnBlocked = () => self_prompt && (this.supervised_skill
+            || (wsServer.hasGameInformationClient?.()
+                && !(this._missionEnabled && this.adminMission?.isActive())));
+        const checkInterrupt = () => nativeTurnBlocked() || this.self_prompter.shouldInterrupt(self_prompt)
+            || this.shut_up || convoManager.responseScheduledFor(source)
+            || (this._missionEnabled && this.adminMission && (this.adminMission._epoch || 0) !== _entryMissionEpoch);
         if (source === 'admin' && !_missionManagedTurn) {
             try { this.bot._extIntentUntil = Date.now() + 300000; } catch (e) {}
             // ★2026-07-07 用户令: 游戏聊天里提示"开始执行指令", 让人一眼知道 bot 正在跑 LLM/chat 任务(而非自主)。
@@ -1031,7 +1040,7 @@ export class Agent {
             // between mining/fleeing/fighting and gets killed. Tick-based modes
             // (self_defense/self_preservation/auto_eat) still run for survival.
             // User-typed commands (non-self_prompt) are still honored.
-            if (this.supervised_skill && (source === 'system' || source === this.name)) {
+            if (nativeTurnBlocked()) {
                 return false;
             }
 
@@ -1043,7 +1052,6 @@ export class Agent {
                 max_responses = Infinity;
             }
 
-            const self_prompt = source === 'system' || source === this.name;
             const from_other_bot = convoManager.isOtherAgent(source);
 
             if (!self_prompt && !from_other_bot) { // from user, check for forced commands
@@ -1073,9 +1081,8 @@ export class Agent {
 
             // Now translate the message
             message = await handleEnglishTranslation(message);
+            if (checkInterrupt()) return false;
             console.log('received message from', source, ':', message);
-
-            const checkInterrupt = () => this.self_prompter.shouldInterrupt(self_prompt) || this.shut_up || convoManager.responseScheduledFor(source) || (this._missionEnabled && this.adminMission && (this.adminMission._epoch || 0) !== _entryMissionEpoch);
 
             let behavior_log = this.bot.modes.flushBehaviorLog().trim();
             if (behavior_log.length > 0) {
@@ -1097,6 +1104,9 @@ export class Agent {
                 if (checkInterrupt()) break;
                 let history = this.history.getHistory();
                 let res = await this.prompter.promptConvo(history);
+                // Ownership or the mission generation can change during inference.
+                // Discard a stale response before publishing it or touching the body.
+                if (checkInterrupt()) break;
 
                 console.log(`${this.name} full response to ${source}: ""${res}""`);
 

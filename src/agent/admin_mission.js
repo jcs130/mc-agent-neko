@@ -383,8 +383,14 @@ export class AdminMission {
     // ── the UNLOCKED long phase (a later submit can preempt this mid-flight) ───────────────────────
     async _drive(mine) {
         // Fix H4: force the OLD skill to release the body before we run the initial turn.
-        try { await this._preemptBody(2000); } catch (e) {}
+        let released = false;
+        try { released = await this._preemptBody(2000); }
+        catch (e) { console.warn('[adminMission] body handoff failed:', e && e.message || e); }
         if (this.state !== RUNNING || this.mission !== mine) return;
+        if (!released) {
+            await this.end('aborted', '身体控制交接未完成：旧动作尚未退出，本任务未启动，请等待当前动作停止后重新规划。');
+            return;
+        }
         // Ensure the shared self_prompter is fully down before we take it over (parity with old begin).
         try { await this.agent.self_prompter.stop(false, true); } catch (e) {}
         if (this.state !== RUNNING || this.mission !== mine) return;
@@ -413,12 +419,12 @@ export class AdminMission {
     // ── force the currently-running skill to release the body (mirror ws_server._preemptForExternal) ─
     async _preemptBody(maxMs) {
         const deadline = Date.now() + (maxMs || 2000);
-        while (Date.now() < deadline) {
-            const b = this._bot();
-            if (!this.agent.supervised_skill && !(b && b._currentSkill)) break;
+        const busy = () => !!(this.agent.supervised_skill || this._bot()?._currentSkill || this.agent.actions?.executing);
+        while (busy() && Date.now() < deadline) {
             try { this.agent.requestInterrupt(); } catch (e) {}
             await new Promise(r => setTimeout(r, 150));
         }
+        return !busy();
     }
 
     // ── per-tick housekeeping (called from agent.update, wrapped so a throw can't stall the loop) ──
@@ -542,6 +548,7 @@ export class AdminMission {
     // ── the single idempotent termination funnel ────────────────────────────────────────────────
     async end(reason, detail, opts = {}) {
         if (this.state !== RUNNING) return;   // first cause wins; any racing second cause no-ops
+        this._epoch++;  // invalidate pending model turns before any asynchronous loop teardown
         this.state = ENDING;
         const m = this.mission;
         // Stop the loop from firing one more stray turn (interrupt is synchronous).
