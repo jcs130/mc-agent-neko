@@ -9,6 +9,7 @@ import { plugin as autoEat } from 'mineflayer-auto-eat';
 import plugin from 'mineflayer-armor-manager';
 import { installInvSync } from './inv_sync.js';
 import { repairLegacyDurability, installItemDurability } from './item_durability.js';
+import { installServerProtection } from './server_protection.js';
 const armorManager = plugin;
 let mc_version = settings.minecraft_version;
 let mcdata = null;
@@ -97,6 +98,7 @@ export function initBot(username) {
 
     const bot = createBot(options);
     if (!installItemDurability(bot)) bot.once('login', () => installItemDurability(bot));
+    installServerProtection(bot, { enabled: settings.server_protection === 'mycli' });
     
     // Increase max listeners to prevent EventEmitter warnings
     // Multiple systems listen to bot events: plugins, agent, proxy, viewer, etc.

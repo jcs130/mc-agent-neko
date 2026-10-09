@@ -2,7 +2,7 @@
 // Replies are observations: receiving a catalog/error is never action success.
 const inFlight = new WeakMap();
 export const activeServerCommand = bot => inFlight.get(bot);
-const READ_ONLY = /^\/mycli (?:help(?: .*)?|guide(?: .*)?|list(?: .*)?|explain(?: .*)?|spells (?:list|explain)(?: .*)?|skills (?:(?:list|info|status|explain)(?: .*)?|mine|points)|profession status|mastery|(?:guild|arena) (?:status|board|shared)|status)$/;
+const READ_ONLY = /^\/mycli (?:help(?: .*)?|guide(?: .*)?|list(?: .*)?|explain(?: .*)?|spells (?:list|explain)(?: .*)?|skills (?:(?:list|info|status|explain)(?: .*)?|mine|points)|profession status|mastery|(?:guild|arena) (?:status|board|shared)|protect (?:break|place|container|use) -?\d+ -?\d+ -?\d+|land (?:here|list|info [\w-]+)|status)$/;
 
 export async function sendServerCommand(bot, { command, readOnly = false } = {}, { timeoutMs = 2500, quietMs = 180 } = {}) {
     if (!bot?.entity || typeof bot.chat !== 'function') return { status: 'failed', reason: 'offline' };

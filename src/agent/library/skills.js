@@ -188,6 +188,7 @@ class _NoScaffoldMovements extends _PFMovements {
     }
 
     safeToBreak(block) {
+        if (this.bot.serverProtection?.isDenied('break', block?.position)) return false;
         if (super.safeToBreak(block)) return true;
         if (!this.dontCreateFlow || !canPlanWaterAdjacentWithBreathing(this.bot, block)) return false;
         // Re-run the upstream checks without its all-liquid veto. The helper above has
@@ -1954,6 +1955,7 @@ export async function collectBlock(bot, blockType, num=1, exclude=null, veinFoll
                 const block = bot.blockAt(_pos);
                 try {
                     if (!block || !block.position || !blocktypes.includes(block.name)) continue;
+                    if (bot.serverProtection?.isDenied('break', block.position)) continue;
                     if (_inDeathZone(block.position)) continue;   // 雷区矿物不可见
                     if (_nearSpawner(block.position)) continue;   // ★C304-S 刷怪笼房间的矿不碰
                     if (exclude) {

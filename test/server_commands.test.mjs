@@ -85,6 +85,17 @@ test('concurrent requests refuse busy and disconnect releases the request slot',
     assert.equal((await send(bot,{command:'/mycli help'},{timeoutMs:20,quietMs:2})).status,'received');
 });
 
+test('protection and land inspection are read-only; land mutations remain forbidden', async () => {
+    const send = await bridge(), bot = fakeBot(b => b.emit('messagestr', 'MC_PROTECTION {"status":"deny"}', 'system'));
+    for (const command of ['/mycli protect break -574 73 -505', '/mycli protect place 1 2 3',
+        '/mycli protect container 1 2 3', '/mycli protect use 1 2 3', '/mycli land here', '/mycli land list', '/mycli land info abc123']) {
+        assert.equal((await send(bot, { command, readOnly: true }, { quietMs: 2, timeoutMs: 20 })).status, 'received', command);
+    }
+    for (const command of ['/mycli land claim', '/mycli land delete abc123', '/mycli protect break 1 2 3 extra', '/mycli protect break 1.5 2 3']) {
+        assert.equal((await send(bot, { command, readOnly: true })).status, 'failed', command);
+    }
+});
+
 test('reply collection is bounded and preserves an explicit truncation indicator',async()=>{
     const send=await bridge();
     const bot=fakeBot(b=>{for(let i=0;i<200;i++) b.emit('messagestr',`MC_TEST {"i":${i},"text":"${'x'.repeat(900)}"}`,'system');});
