@@ -4,7 +4,7 @@ import { VisionInterpreter } from './vision/vision_interpreter.js';
 import { Prompter } from '../models/prompter.js';
 import { initModes } from './modes.js';
 import { initBot } from '../utils/mcdata.js';
-import { containsCommand, commandExists, executeCommand, truncCommandMessage, truncCommandMessageMulti, parseCommandStrings, isAction, blacklistCommands } from './commands/index.js';
+import { containsCommand, commandInvocationIndex, commandExists, executeCommand, truncCommandMessage, truncCommandMessageMulti, parseCommandStrings, isAction, blacklistCommands } from './commands/index.js';
 import { ActionManager } from './action_manager.js';
 import { NPCContoller } from './npc/controller.js';
 import { MemoryBank } from './memory_bank.js';
@@ -1142,7 +1142,7 @@ export class Agent {
                     if (cmd_batch && cmd_batch.length > 1) {
                         const trimmed = truncCommandMessageMulti(res); // 保留到末条命令, 丢弃其后散文
                         this.history.add(this.name, trimmed);
-                        let pre_message = res.substring(0, res.indexOf(cmd_batch[0])).trim();
+                        let pre_message = res.substring(0, commandInvocationIndex(res)).trim();
 
                         if (settings.show_command_syntax === "full") {
                             this.routeResponse(source, trimmed);
@@ -1172,8 +1172,8 @@ export class Agent {
                                 continue;   // 跳过坏命令, 不中断整批
                             }
                             if (checkInterrupt()) { batch_broke = true; break; }
-                            this.self_prompter.handleUserPromptedCmd(self_prompt, isAction(cname));
-                            let execute_res = await executeCommand(this, cstr);
+                            let execute_res = await executeCommand(this, cstr, () =>
+                                this.self_prompter.handleUserPromptedCmd(self_prompt, isAction(cname)));
                             console.log('Agent executed (batch):', cname, 'and got:', execute_res);
                             used_command = true;
                             if (execute_res)
@@ -1195,9 +1195,8 @@ export class Agent {
                         }
 
                         if (checkInterrupt()) break;
-                        this.self_prompter.handleUserPromptedCmd(self_prompt, isAction(command_name));
 
-                        let pre_message = res.substring(0, res.indexOf(command_name)).trim();
+                        let pre_message = res.substring(0, commandInvocationIndex(res)).trim();
 
                         if (settings.show_command_syntax === "full") {
                             this.routeResponse(source, res);
@@ -1223,7 +1222,8 @@ export class Agent {
                             lastConversationReply = pre_message;
                         }
 
-                        let execute_res = await executeCommand(this, res);
+                        let execute_res = await executeCommand(this, res, () =>
+                            this.self_prompter.handleUserPromptedCmd(self_prompt, isAction(command_name)));
 
                         console.log('Agent executed:', command_name, 'and got:', execute_res);
                         used_command = true;

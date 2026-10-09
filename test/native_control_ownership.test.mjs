@@ -15,6 +15,7 @@ function fixture({ owner = true, managed = false, translate = async text => text
         convoManager: { isOtherAgent: () => false, responseScheduledFor: () => false },
         handleEnglishTranslation: translate,
         containsCommand: text => /![A-Za-z_]\w*/.exec(text)?.[0] || null,
+        commandInvocationIndex: text => /![A-Za-z_]\w*/.exec(text)?.index ?? -1,
         commandExists: () => true, isAction: () => true, truncCommandMessage: text => text,
         executeCommand: async (_agent, text) => { calls.commands.push(text); return 'complete'; },
     });

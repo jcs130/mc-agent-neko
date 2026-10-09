@@ -26,14 +26,65 @@ export function blacklistCommands(commands) {
     }
 }
 
-const commandRegex = /!(\w+)(?:\(((?:-?\d+(?:\.\d+)?|true|false|"[^"]*")(?:\s*,\s*(?:-?\d+(?:\.\d+)?|true|false|"[^"]*"))*)\))?/
+const commandRegex = /!(\w+)(?:[ \t]*\(((?:-?\d+(?:\.\d+)?|true|false|"[^"]*")(?:\s*,\s*(?:-?\d+(?:\.\d+)?|true|false|"[^"]*"))*)?\))?/
 const argRegex = /-?\d+(?:\.\d+)?|true|false|"[^"]*"/g;
 
+function invocationMatches(message) {
+    // Mentioning a command while reasoning is not invoking it. Keep positions so
+    // parsing, truncation and batch execution all select the same actual calls.
+    const text = String(message || '');
+    const masked = text.replace(/<(think|analysis|reasoning)\b[^>]*>[\s\S]*?(?:<\/\1>|$)/gi,
+        value => ' '.repeat(value.length))
+        .replace(/```[\s\S]*?(?:```|$)|~~~[\s\S]*?(?:~~~|$)/g,
+            value => ' '.repeat(value.length))
+        .replace(/`[^`\n]*(?:`|$)|"(?:\\.|[^"\\\n])*(?:"|$)|'![^'\n]*'|“[^”]*”|「[^」]*」|『[^』]*』/gm,
+            value => ' '.repeat(value.length));
+    const names = /!(\w+)/g;
+    const matches = [];
+    let token;
+    while ((token = names.exec(masked))) {
+        const tail = text.slice(token.index);
+        const match = tail.match(commandRegex);
+        if (!match || match.index !== 0) continue;
+        const name = '!' + match[1];
+        const hasCall = /^[ \t]*\(/.test(tail.slice(name.length));
+        if (hasCall && !match[0].endsWith(')')) {
+            // A malformed example must not degrade to a bare invocation, nor
+            // expose a nested token inside its invalid arguments as an action.
+            const newline = text.indexOf('\n', token.index);
+            const close = text.indexOf(')', token.index);
+            names.lastIndex = close >= 0 && (newline < 0 || close < newline)
+                ? close + 1 : newline >= 0 ? newline : text.length;
+            continue;
+        }
+        const command = getCommand(name);
+        if (!hasCall && command && numParams(command) > 0) continue;
+        const end = token.index + match[0].length;
+        const lineStart = text.lastIndexOf('\n', token.index - 1) + 1;
+        const newline = text.indexOf('\n', end);
+        const ownLine = !text.slice(lineStart, token.index).trim()
+            && !text.slice(end, newline < 0 ? text.length : newline).trim();
+        const lifecycle = /^(?:!endGoal|!cannotComplete|!goal|!stop)$/.test(name);
+        // Bare read-only queries remain compatible with existing inline usage.
+        // Lifecycle controls need an unambiguous command line, including calls.
+        if (lifecycle && !ownLine) continue;
+        if (!hasCall && !queryList.some(query => query.name === name) && !ownLine) continue;
+        match.index = token.index;
+        matches.push(match);
+        names.lastIndex = end;
+    }
+    return matches;
+}
+
 export function containsCommand(message) {
-    const commandMatch = message.match(commandRegex);
+    const commandMatch = invocationMatches(message)[0];
     if (commandMatch)
         return "!" + commandMatch[1];
     return null;
+}
+
+export function commandInvocationIndex(message) {
+    return invocationMatches(message)[0]?.index ?? -1;
 }
 
 export function commandExists(commandName) {
@@ -95,7 +146,7 @@ function checkInInterval(number, lowerBound, upperBound, endpointType) {
  * @returns {string | Object}
  */
 export function parseCommandMessage(message) {
-    const commandMatch = message.match(commandRegex);
+    const commandMatch = invocationMatches(message)[0];
     if (!commandMatch) return `Command is incorrectly formatted`;
 
     const commandName = "!"+commandMatch[1];
@@ -174,37 +225,23 @@ export function parseCommandMessage(message) {
 }
 
 export function truncCommandMessage(message) {
-    const commandMatch = message.match(commandRegex);
+    const commandMatch = invocationMatches(message)[0];
     if (commandMatch) {
         return message.substring(0, commandMatch.index + commandMatch[0].length);
     }
     return message;
 }
 
-// ★2026-07-08 (用户令: admin/mission 回合允许多命令一回合) —— 抽出一条回复里【全部】命令(按序),
-//   如 "先看看 !inventory 再 !getWood(20)" → ['!inventory', '!getWood(20)']。每个元素都是单条命令
-//   子串, 可直接喂给 executeCommand (它内部用非全局 commandRegex 只解析首条)。默认单命令路径不用它,
-//   语义不变; 仅 handleMessage 的外部意图独占回合按序执行本数组。
+// Collect actual invocations in order, using the same reference/syntax rules
+// as the single-command parser. Each result can be passed to executeCommand.
 export function parseCommandStrings(message) {
-    const g = new RegExp(commandRegex.source, 'g');
-    const out = [];
-    let m;
-    while ((m = g.exec(message)) !== null) {
-        out.push(m[0]);
-        if (m.index === g.lastIndex) g.lastIndex++;   // 防零长匹配死循环
-    }
-    return out;
+    return invocationMatches(message).map(match => match[0]);
 }
 
 // truncCommandMessage 的多命令版: 保留到【最后】一条命令结束(只丢弃末条命令之后的散文/注释),
 // 用作多命令回合里写回 history 的 assistant 文本。
 export function truncCommandMessageMulti(message) {
-    const g = new RegExp(commandRegex.source, 'g');
-    let last = null, m;
-    while ((m = g.exec(message)) !== null) {
-        last = m;
-        if (m.index === g.lastIndex) g.lastIndex++;
-    }
+    const last = invocationMatches(message).at(-1);
     if (last) return message.substring(0, last.index + last[0].length);
     return message;
 }
@@ -237,7 +274,7 @@ function numParams(command) {
     return commandParams(command).length;
 }
 
-export async function executeCommand(agent, message) {
+export async function executeCommand(agent, message, beforeExecute = null) {
     let parsed = parseCommandMessage(message);
     if (typeof parsed === 'string')
         return parsed; //The command was incorrectly formatted or an invalid input was given.
@@ -251,6 +288,9 @@ export async function executeCommand(agent, message) {
         if (numArgs !== numParams(command))
             return `Command ${command.name} was given ${numArgs} args, but requires ${numParams(command)} args.`;
         else {
+            // Goal interruption belongs after syntax/arity/type/domain validation.
+            // A malformed model example must never stop a running self-prompt loop.
+            if (beforeExecute) beforeExecute(parsed);
             const mission = agent._missionEnabled && agent.adminMission?.isActive()
                 ? agent.adminMission.mission : null;
             const result = await command.perform(agent, ...parsed.args);
@@ -277,6 +317,11 @@ export function getCommandDocs(agent) {
     Use the commands with the syntax: !commandName or !commandName("arg1", 1.2, ...) if the command takes arguments.\n
     Do not use codeblocks. Use double quotes for strings.
     Normally use ONE command per response and wait for its result. BUT when you are working on a commanded task and are certain of a short fixed sequence of steps (e.g. gather then craft then smelt), you MAY chain several commands in one response — they run in order — to finish faster. If you must SEE a command's result before deciding the next step, use just one. Trailing prose after the last command is ignored.\n`;
+    const lifecycle = ['!stop', '!goal', '!endGoal', '!cannotComplete']
+        .filter(name => commandMap[name] && !agent.blocked_actions.includes(name));
+    docs += '\nCommands requiring arguments need complete calls. Quoted/backtick mentions and thinking blocks are not executed.';
+    if (lifecycle.length) docs += ` Put lifecycle controls (${lifecycle.join(', ')}) alone on their own line, without surrounding prose.`;
+    docs += '\n';
     const recovery = [
         ['!inventory', 'Read current base IDs, custom labels/lore and tools.'],
         ['!equip', 'Equip the base item ID identified in inventory.'],
