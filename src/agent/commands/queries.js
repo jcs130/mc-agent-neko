@@ -16,6 +16,11 @@ const pad = (str) => {
 // queries are commands that just return strings and don't affect anything in the world
 export const queryList = [
     {
+        name: '!lookAround',
+        description: 'Use the configured vision model to analyze one current rendered game frame without moving or turning. On demand for terrain/structure uncertainty, not a heartbeat. Visual appearance cannot prove inventory, break permission or server rules; check actual game/server data.',
+        perform: async agent => pad(await agent.vision_interpreter.lookAround()),
+    },
+    {
         name: '!serverQuery',
         description: 'Query actual server gameplay rules/spells, distinct from local runSkill scripts. Send /mycli help, /mycli spells list 1 (follow MC_SPELL_NEXT), /mycli spells explain selfheal, /mycli protect break <x> <y> <z>, or /mycli land here. Protection deny means avoid that target; unknown needs a fresh nearby check. Use returned IDs and syntax. A local skill list cannot prove a server spell is absent.',
         params: { command: { type: 'string', description: 'One read-only /mycli discovery/status command.' } },

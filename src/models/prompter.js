@@ -10,7 +10,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { selectAPI, createModel } from './_model_map.js';
 import { withTimeout, EMBED_TIMEOUT_MS } from '../utils/timeout.js';
-import { executionPromptTemplate, executionPromptHistory, sanitizeMemorySummary } from '../agent/context_budget.js';
+import { executionPromptTemplate, executionPromptHistory, sanitizeMemorySummary, boundedPromptHistory } from '../agent/context_budget.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -302,20 +302,35 @@ export class Prompter {
         }
     }
 
-    async promptCoding(messages) {
+    async promptCoding(messages, timeoutMs = 45000) {
         if (this.awaiting_coding) {
             console.warn('Already awaiting coding response, returning no response.');
             return '```//no response```';
         }
         this.awaiting_coding = true;
-        await this.checkCooldown();
-        let prompt = this.profile.coding;
-        prompt = await this.replaceStrings(prompt, messages, this.coding_examples);
-
-        let resp = await this.code_model.sendRequest(messages, prompt);
-        this.awaiting_coding = false;
-        await this._saveLog(prompt, messages, resp, 'coding');
-        return resp;
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(new Error('Coding request timed out.')), timeoutMs);
+        try {
+            await this.checkCooldown();
+            messages = boundedPromptHistory(executionPromptHistory(messages, this.agent));
+            let prompt = executionPromptTemplate(this.profile.coding, this.agent);
+            prompt += '\nExecution contract: only documented skills/world functions, Vec3, private log(bot,text), '
+                + 'bot.inventory.items() and observed bot fields are available. Always pass bot first. '
+                + 'No raw bot methods, chat, imports, filesystem, network, timers or callbacks to native functions. '
+                + 'Calls run serially; await skills calls. Use exact observed base item IDs (stick, not sticks). '
+                + 'Always privately log the actual result or the reason a condition skipped work. A false result aborts dependent steps. '
+                + 'Use a short finite procedure (at most 64 calls, 120 seconds execution); prefer existing commands/skills.';
+            prompt = await this.replaceStrings(prompt, messages, this.coding_examples);
+            const request = this.code_model.sendRequest(messages, prompt, '***', {
+                signal: controller.signal, timeout: timeoutMs, maxRetries: 0,
+            });
+            const resp = await withTimeout(request, timeoutMs, 'Coding request');
+            await this._saveLog(prompt, messages, resp, 'coding');
+            return resp;
+        } finally {
+            clearTimeout(timer);
+            this.awaiting_coding = false;
+        }
     }
 
     async promptMemSaving(to_summarize, oldMemory = this.agent.history.memory) {
@@ -344,11 +359,11 @@ export class Prompter {
         return res.trim().toLowerCase() === 'respond';
     }
 
-    async promptVision(messages, imageBuffer) {
+    async promptVision(messages, imageBuffer, { signal } = {}) {
         await this.checkCooldown();
         let prompt = this.profile.image_analysis;
         prompt = await this.replaceStrings(prompt, messages, null, null, null);
-        return await this.vision_model.sendVisionRequest(messages, prompt, imageBuffer);
+        return await this.vision_model.sendVisionRequest(messages, prompt, imageBuffer, 'image/jpeg', { signal });
     }
 
     async promptGoalSetting(messages, last_goals) {

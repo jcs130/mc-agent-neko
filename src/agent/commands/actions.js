@@ -190,7 +190,7 @@ export const actionsList = [
     },
     {
         name: '!newAction',
-        description: 'Perform new and unknown custom behaviors that are not available as a command.', 
+        description: 'Write and execute a short custom JavaScript procedure when existing commands and runnable skills cannot express the task. Runs documented skills/world APIs in an isolated worker (64 calls, 120s execution), with up to 3 code attempts. Prefer existing commands; generated scripts do not automatically become permanent skills.',
         params: {
             'prompt': { type: 'string', description: 'A natural language prompt to guide code generation. Make a detailed step-by-step plan.' }
         },
@@ -205,11 +205,12 @@ export const actionsList = [
                 try {
                     result = await agent.coder.generateCode(agent.history);
                 } catch (e) {
-                    result = 'Error generating code: ' + e.toString();
+                    result = 'Action failed: error generating code: ' + e.toString();
                 }
             };
-            await agent.actions.runAction('action:newAction', actionFn, {timeout: settings.code_timeout_mins});
-            return result;
+            const receipt = await agent.actions.runAction('action:newAction', actionFn, {timeout: 3});
+            if (receipt.timedout || receipt.interrupted) return 'Action failed: generated action timed out or was interrupted.';
+            return result || 'Action failed: generated action produced no result.';
         }
     },
     {

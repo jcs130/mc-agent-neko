@@ -33,8 +33,8 @@ const _CUSTOM_SKILLS_DIR = path.resolve(process.cwd(), 'bots', '_supervisor', 's
 //   LLM-facing catalog — the low-effort, advertised path. It is NOT enforced inside
 //   skills.customSkill itself, deliberately: ws_server.js:685 and framework/kernel.js:591
 //   launch the sticky top-level dispatcher (kernelDriver) and its children THROUGH customSkill,
-//   so a name-check there would kill live dispatch. !newAction code is arbitrary JS anyway
-//   (could dynamic-import the file directly) — its real boundary is allow_insecure_coding.
+//   so a name-check there would kill live dispatch. Generated !newAction scripts now
+//   enforce this same catalog at the isolated executor's customSkill RPC boundary.
 const _CUSTOM_SKILLS_BLOCKLIST = new Set([
     'diagBusy', 'crafttest', 'botstate', 'giveKit', 'prepNether',
     'kernelDriver', 'devGive', 'giveBed', 'devTool', 'forceReset', 'digReset',

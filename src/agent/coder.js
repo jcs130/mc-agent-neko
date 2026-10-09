@@ -1,11 +1,10 @@
-import { writeFile, readFile, mkdirSync } from 'fs';
+import { writeFile, promises as fs, mkdirSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { makeCompartment, lockdown } from './library/lockdown.js';
+import { Script } from 'node:vm';
+import { executeGeneratedCode } from './code_executor.js';
 import * as skills from './library/skills.js';
 import * as world from './library/world.js';
-import * as tick_confirm from './library/tick_confirm.js';
-import { Vec3 } from 'vec3';
 import {ESLint} from "eslint";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -18,14 +17,10 @@ export class Coder {
         this.code_template = '';
         this.code_lint_template = '';
 
-        readFile(path.join(__dirname, '../../bots/execTemplate.js'), 'utf8', (err, data) => {
-            if (err) throw err;
-            this.code_template = data;
-        });
-        readFile(path.join(__dirname, '../../bots/lintTemplate.js'), 'utf8', (err, data) => {
-            if (err) throw err;
-            this.code_lint_template = data;
-        });
+        this._templatesReady = Promise.all([
+            fs.readFile(path.join(__dirname, '../../bots/execTemplate.js'), 'utf8'),
+            fs.readFile(path.join(__dirname, '../../bots/lintTemplate.js'), 'utf8'),
+        ]).then(([execution, lint]) => { this.code_template = execution; this.code_lint_template = lint; });
         mkdirSync('.' + this.fp, { recursive: true });
     }
 
@@ -36,32 +31,38 @@ export class Coder {
     //   真·终止仍走各自的确凿证据: 任务完成/失败/被新指令覆盖/code_timeout(真卡死)。
     async generateCode(agent_history) {
         const bot = this.agent.bot;
+        if (bot._newActionActive) return 'Action not started: another generated action is still active.';
+        const token = {};
+        bot._newActionInvocation = token;
         try { bot._newActionActive = true; } catch (e) {}
         try {
-            return await this._generateCode(agent_history);
+            return await this._generateCode(agent_history, bot);
         } finally {
-            try { bot._newActionActive = false; } catch (e) {}
+            if (bot._newActionInvocation === token) {
+                try { bot._newActionActive = false; delete bot._newActionInvocation; } catch (e) {}
+            }
         }
     }
 
-    async _generateCode(agent_history) {
-        this.agent.bot.modes.pause('unstuck');
-        lockdown();
+    async _generateCode(agent_history, bot = this.agent.bot) {
+        bot.modes.pause('unstuck');
+        const deadline = Date.now() + 180000;
         // this message history is transient and only maintained in this function
         let messages = agent_history.getHistory(); 
         messages.push({role: 'system', content: 'Code generation started. Write code in codeblock in your response:'});
 
-        const MAX_ATTEMPTS = 5;
+        const MAX_ATTEMPTS = 3;
         const MAX_NO_CODE = 3;
 
         let code = null;
         let no_code_failures = 0;
         for (let i=0; i<MAX_ATTEMPTS; i++) {
-            if (this.agent.bot.interrupt_code)
+            if (this.agent.bot !== bot || bot.interrupt_code)
                 return null;
+            if (Date.now() >= deadline) return 'Action failed: code generation exceeded its time budget.';
             const messages_copy = JSON.parse(JSON.stringify(messages));
-            let res = await this.agent.prompter.promptCoding(messages_copy);
-            if (this.agent.bot.interrupt_code)
+            let res = await this.agent.prompter.promptCoding(messages_copy, Math.min(45000, deadline - Date.now()));
+            if (this.agent.bot !== bot || bot.interrupt_code)
                 return null;
             let contains_code = res.indexOf('```') !== -1;
             if (!contains_code) {
@@ -86,7 +87,7 @@ export class Coder {
                 continue;
             }
             code = res.substring(res.indexOf('```')+3, res.lastIndexOf('```'));
-            const result = await this._stageCode(code);
+            const result = await this._stageCode(code, Math.min(120000, deadline - Date.now()));
             if (!result) {
                 console.warn("Failed to stage code, something is wrong.");
                 return 'Failed to stage code, something is wrong.';
@@ -115,13 +116,14 @@ export class Coder {
 
             try {
                 console.log('Executing code...');
-                await executionModule.main(this.agent.bot);
+                const receipt = await executionModule.main(bot);
 
                 const code_output = this.agent.actions.getBotOutputSummary();
-                const summary = "Agent wrote this code: \n```" + this._sanitizeCode(code) + "```\nCode Output:\n" + code_output;
+                const summary = "Agent wrote this code: \n```" + this._sanitizeCode(code) + "```\nCode Output:\n" + code_output
+                    + `\nExecution receipt: ${JSON.stringify(receipt)} (calls are execution evidence; verify goal postconditions separately).`;
                 return summary;
             } catch (e) {
-                if (this.agent.bot.interrupt_code)
+                if (this.agent.bot !== bot || bot.interrupt_code)
                     return null;
                 
                 console.warn('Generated code threw error: ' + e.toString());
@@ -157,6 +159,7 @@ export class Coder {
         }
         const allDocs = await this.agent.prompter.skill_libary.getAllSkillDocs();
         const knownSkills = new Set(allDocs.map(doc => doc.split('\n')[0]));
+        knownSkills.add('skills.log');
         const missingSkills = skills.filter(skill => !knownSkills.has(skill));
         if (missingSkills.length > 0) {
             result += 'These functions do not exist:\n';
@@ -187,9 +190,9 @@ export class Coder {
 
         return result ;
     }
-    // write custom code to file and import it
-    // write custom code to file and prepare for evaluation
-    async _stageCode(code) {
+    // Save an audit artifact and parse without evaluating in the game process.
+    async _stageCode(code, timeoutMs = 120000) {
+        await this._templatesReady;
         code = this._sanitizeCode(code);
         let src = '';
         code = code.replaceAll('console.log(', 'log(bot,');
@@ -205,7 +208,7 @@ export class Coder {
         let src_lint_copy = this.code_lint_template.replace('/* CODE HERE */', src);
         src = this.code_template.replace('/* CODE HERE */', src);
 
-        let filename = this.file_counter + '.js';
+        let filename = Date.now() + '-' + this.file_counter + '.js';
         // if (this.file_counter > 0) {
         //     let prev_filename = this.fp + (this.file_counter-1) + '.js';
         //     unlink(prev_filename, (err) => {
@@ -216,24 +219,12 @@ export class Coder {
         this.file_counter++;
         
         let write_result = await this._writeFilePromise('.' + this.fp + filename, src);
-        // This is where we determine the environment the agent's code should be exposed to.
-        // It will only have access to these things, (in addition to basic javascript objects like Array, Object, etc.)
-        // Note that the code may be able to modify the exposed objects.
-        const compartment = makeCompartment({
-            skills,
-            log: skills.log,
-            world,
-            tick_confirm,
-            Vec3,
-        });
-        // ★2026-07-09: evaluate 抛的语法错误(如残留 `export` / 括号不配)以前直接冒泡出
-        //   _generateCode 无 try/catch → 整条 newAction 一次性夭折, 不重试。改为捕获成可反馈的
-        //   syntaxError, 让上层当作 lint 错误喂回模型, 用掉剩余 attempt 自我纠正。
-        let mainFn = null;
+        // Syntax failures go back to the coding model for a bounded correction.
         try {
-            mainFn = compartment.evaluate(src);
+            // Parse only here. Generated code is never evaluated in Mineflayer.
+            new Script(src);
         } catch (e) {
-            console.warn('Compartment evaluate (syntax) error: ' + (e && e.message || e));
+            console.warn('Generated-code syntax error: ' + (e && e.message || e));
             return { syntaxError: (e && e.message) ? e.message : String(e), src_lint_copy };
         }
 
@@ -241,7 +232,14 @@ export class Coder {
             console.error('Error writing code execution file: ' + write_result);
             return null;
         }
-        return { func:{main: mainFn}, src_lint_copy: src_lint_copy };
+        const docs = await this.agent.prompter.skill_libary.getAllSkillDocs();
+        const allowed = docs.map(doc => doc.split('\n')[0]);
+        allowed.push('skills.customSkill');
+        return { func: { main: body => {
+            if (body !== this.agent.bot) throw new Error('Generated code cancelled: game body changed.');
+            if (timeoutMs <= 0) throw new Error('Generated-code time budget exhausted.');
+            return executeGeneratedCode(this.agent, code, { skills, world }, { allowed, timeoutMs });
+        } }, src_lint_copy };
     }
 
     _sanitizeCode(code) {

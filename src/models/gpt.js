@@ -21,7 +21,7 @@ export class GPT {
         this.openai = new OpenAIApi(config);
     }
 
-    async sendRequest(turns, systemMessage, stop_seq='***') {
+    async sendRequest(turns, systemMessage, stop_seq='***', options = {}) {
         let messages = strictFormat(turns);
         messages = messages.map(message => {
             message.content += stop_seq;
@@ -47,7 +47,7 @@ export class GPT {
                 if (model.includes('o1') || model.includes('o3') || model.includes('5')) {
                     delete pack.stop;
                 }
-                let completion = await this.openai.chat.completions.create(pack);
+                let completion = await this.openai.chat.completions.create(pack, options);
                 if (completion.choices[0].finish_reason == 'length')
                     throw new Error('Context length exceeded'); 
                 console.log('Received.');
@@ -65,7 +65,7 @@ export class GPT {
                     instructions: systemMessage,
                     input: messages,
                     ...(this.params || {})
-                });
+                }, options);
                 console.log('Received.');
                 res = response.output_text;
                 let stop_seq_index = res.indexOf(stop_seq);
@@ -75,7 +75,7 @@ export class GPT {
         catch (err) {
             if ((err.message == 'Context length exceeded' || err.code == 'context_length_exceeded') && turns.length > 1) {
                 console.log('Context length exceeded, trying again with shorter context.');
-                return await this.sendRequest(turns.slice(1), systemMessage, stop_seq);
+                return await this.sendRequest(turns.slice(1), systemMessage, stop_seq, options);
             } else if (err.message.includes('image_url')) {
                 console.log(err);
                 res = 'Vision is only supported by certain models.';
@@ -87,20 +87,40 @@ export class GPT {
         return res;
     }
 
-    async sendVisionRequest(messages, systemMessage, imageBuffer) {
-        const imageMessages = [...messages];
-        imageMessages.push({
-            role: "user",
-            content: [
-                { type: "input_text", text: systemMessage },
-                {
-                    type: "input_image",
-                    image_url: `data:image/jpeg;base64,${imageBuffer.toString('base64')}`
-                }
-            ]
-        });
-        
-        return this.sendRequest(imageMessages, systemMessage);
+    async sendVisionRequest(messages, systemMessage, imageBuffer, mimeType = 'image/jpeg', { signal } = {}) {
+        if (!Buffer.isBuffer(imageBuffer) || !imageBuffer.length || imageBuffer.length > 12 * 1024 * 1024)
+            throw new Error('Vision requires a nonempty image of at most 12 MiB.');
+        if (!['image/jpeg', 'image/png', 'image/webp'].includes(mimeType))
+            throw new Error('Unsupported vision image format.');
+        // strictFormat is a text-only legacy formatter: adjacent user turns coerce
+        // image arrays to "[object Object]". Keep the image in its own typed turn.
+        const recent = messages.filter(m => typeof m.content === 'string').slice(-6)
+            .map(m => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content.slice(-1000) }));
+        const url = `data:${mimeType};base64,${imageBuffer.toString('base64')}`;
+        const options = { timeout: 45000, maxRetries: 0, signal };
+        if (this.url) {
+            const completion = await this.openai.chat.completions.create({
+                ...(this.params || {}), model: this.model_name,
+                messages: [{ role: 'system', content: systemMessage }, ...recent, {
+                    role: 'user', content: [
+                        { type: 'text', text: 'Describe the attached current game view.' },
+                        { type: 'image_url', image_url: { url } },
+                    ],
+                }],
+            }, options);
+            const result = completion.choices?.[0]?.message?.content;
+            if (!result) throw new Error('Vision endpoint returned no image analysis.');
+            return result;
+        }
+        const response = await this.openai.responses.create({
+            ...(this.params || {}), model: this.model_name, instructions: systemMessage,
+            input: [...recent, { role: 'user', content: [
+                { type: 'input_text', text: 'Describe the attached current game view.' },
+                { type: 'input_image', image_url: url },
+            ] }],
+        }, options);
+        if (!response.output_text) throw new Error('Vision endpoint returned no image analysis.');
+        return response.output_text;
     }
 
     async embed(text) {
