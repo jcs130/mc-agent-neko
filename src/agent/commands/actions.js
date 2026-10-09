@@ -210,7 +210,9 @@ export const actionsList = [
             };
             const receipt = await agent.actions.runAction('action:newAction', actionFn, {timeout: 3});
             if (receipt.timedout || receipt.interrupted) return 'Action failed: generated action timed out or was interrupted.';
-            return result || 'Action failed: generated action produced no result.';
+            if (!result?.startsWith('Agent wrote this code:'))
+                return `Action failed: ${result || 'generated action produced no result.'}`;
+            return result;
         }
     },
     {

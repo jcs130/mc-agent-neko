@@ -10,7 +10,7 @@ function fixture({ discard = false, advanceMs = 0, interrupted = false, equip = 
         console: { log() {}, warn() {}, error() {} },
         Date: class extends Date { static now() { return now; } }, setTimeout, clearTimeout,
         process: { env: { DEBUG_CHAT: '0' } },
-        settings: { max_commands: 3, show_command_syntax: 'none' },
+        settings: { max_commands: 3, show_command_syntax: 'none', allow_insecure_coding: true },
         skills: {
             discardAway: async (_bot, name) => { calls.skills.push(name); now += advanceMs; return discard; },
             equip: async (_bot, name) => { calls.skills.push(name); return equip; },
@@ -56,6 +56,18 @@ function fixture({ discard = false, advanceMs = 0, interrupted = false, equip = 
 test('discard false reaches the model as explicit action failure instead of navigation success', async () => {
     const f = fixture();
     assert.match(await f.execute('!discard("rotten_flesh", 7)'), /^Action failed:/);
+});
+
+test('exhausted code attempts are explicit action failure, even with a nonempty error result', async () => {
+    const f = fixture();
+    f.agent.coder = { generateCode: async () => 'Code generation failed after 3 attempts.' };
+    assert.match(await f.execute('!newAction("offline fixture")'), /^Action failed: Code generation failed/);
+});
+
+test('successful code execution preserves its actual receipt and private output', async () => {
+    const f = fixture();
+    f.agent.coder = { generateCode: async () => 'Agent wrote this code:\nCode Output: crafted one pickaxe.' };
+    assert.match(await f.execute('!newAction("offline fixture")'), /^Agent wrote this code:/);
 });
 
 for (const command of ['!equip("stone_pickaxe")', '!goToCoordinates(1, 65, 2, 1)',
