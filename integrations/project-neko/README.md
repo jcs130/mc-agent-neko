@@ -267,3 +267,13 @@ escalation requirement. It was applied and the host restarted. Passive capture
 confirmed complete 759- and 858-token Minecraft cues in the actual model input,
 including tool durability, resources and custom-item identity. Plugin-only
 installation leaves the earlier transport bug unresolved.
+
+## Merchant offers after custom NPC menus
+
+Patch 0056 keeps received merchant status, offer count and a small quote sample
+in planning context, with a full-window observation route when quotes are
+omitted. The matching native changes decode `trade_list`, render real offers
+in `!window`, and expose `!tradeWindow` for the current merchant without reopening
+its NPC. Empty ingredient slots no longer imply an empty offer list. See
+[the merchant repair report](../../docs/neko-merchant-offers-2026-10-10.md)
+for packet handling, server inventory confirmation and verification limits.

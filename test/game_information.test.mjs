@@ -9,6 +9,8 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { GameInformation, collectGameState, boundedGameValue } from '../src/websocket/game_information.js';
 import { sendServerCommand } from '../src/websocket/server_commands.js';
 import { sendGameChat } from '../src/websocket/chat_bridge.js';
+import minecraftData from 'minecraft-data';
+import ItemFactory from 'prismarine-item';
 
 function fixture(t, options = {}) {
     const slots = Array(46).fill(null);
@@ -56,6 +58,37 @@ test('snapshot retains body, world, inventory, menu, scoreboard and loaded surro
     assert.equal(state.window.slots[0].components[0].pages[0], '寻找村庄并与向导交谈');
     assert.equal(state.server.scoreboards[0].items[0].name, '铁矿进度');
     assert.equal(state.server.tablist.footer, '输入 /help 查看功能');
+});
+
+test('actual trade packets survive a custom-menu transition and expose normalized merchant offers', t => {
+    const { bot, information } = fixture(t);
+    bot.registry = minecraftData('1.20.6');
+    const Item = ItemFactory(bot.registry);
+    const notch = (name, count) => Item.toNotch(new Item(bot.registry.itemsByName[name].id, count));
+    const window = { id: 3, type: 'minecraft:merchant', title: '机关师·小铜', inventoryStart: 3, inventoryEnd: 39,
+        slots: Array(39).fill(null) };
+    bot.currentWindow = window;
+    const packet = { windowId: 3, trades: [{ inputItem1: notch('coal', 15), outputItem: notch('emerald', 1),
+        tradeDisabled: false, nbTradeUses: 2, maximumNbTradeUses: 16, demand: 0, specialPrice: 0, priceMultiplier: 0.05 }] };
+    // The protocol can send quotes before Mineflayer emits windowOpen on slots.
+    bot._client.emit('trade_list', packet);
+    bot.emit('windowOpen', window);
+    const state = information.snapshot().state;
+    assert.equal(state.window.trades.windowId, 3);
+    assert.equal(state.window.merchantOffers.status, 'ready');
+    assert.deepEqual(state.window.merchantOffers.offers[0].costs, [{ item: 'coal', count: 15 }]);
+    assert.equal(state.window.merchantOffers.offers[0].maxUses, 16);
+    window.slots = Array.from({ length: 39 }, () => ({ name: 'written_book', count: 1,
+        components: [{ type: 'written_book_content', data: 'long book '.repeat(4000) }] }));
+    assert.equal(information.snapshot().state.window.merchantOffers.receivedCount, 1,
+        'normalized quotes must precede potentially large player slots/raw packets in the section budget');
+    bot._client.emit('trade_list', { windowId: 2, trades: [] });
+    assert.equal(information.snapshot().state.window.merchantOffers.offers.length, 1);
+    window.slots = Array(39).fill(null);
+    bot.currentWindow = { ...window, id: 4, type: 'minecraft:generic_9x1' };
+    bot.emit('windowOpen', bot.currentWindow);
+    assert.equal(information.snapshot().state.window.trades, null);
+    assert.equal(information.snapshot().state.window.merchantOffers, null);
 });
 
 test('modern NBT-wrapped custom names survive snapshot clipping as readable identity', t => {

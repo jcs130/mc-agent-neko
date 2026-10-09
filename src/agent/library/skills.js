@@ -6,7 +6,8 @@ import * as tickConfirm from "./tick_confirm.js";
 import pf from 'mineflayer-pathfinder';
 import Vec3 from 'vec3';
 import { unclimbVines } from './vine_unstick.js';
-import { openNpcTradingInterface } from './menus.js';
+import { describeMenu, openNpcTradingInterface } from './menus.js';
+import { tradeAtWindow } from './merchant_trades.js';
 import { threatCanReachBot } from '../combat_policy.js';
 import settings from "../../../settings.js";
 import path from 'path';
@@ -5901,23 +5902,8 @@ export async function showVillagerTrades(bot, id) {
             log(bot, opened.description);
             return true;
         }
-        const villager = opened.window;
-        
-        if (!villager.trades || villager.trades.length === 0) {
-            log(bot, 'This villager has no trades available - might be sleeping, a baby, or jobless');
-            villager.close();
-            return false;
-        }
-        
-        log(bot, `Villager has ${villager.trades.length} available trades:`);
-        stringifyTrades(bot, villager.trades).forEach((trade, i) => {
-            const tradeInfo = `${i + 1}: ${trade}`;
-            console.log(tradeInfo);
-            log(bot, tradeInfo);
-        });
-        
-        villager.close();
-        return true;
+        log(bot, describeMenu(bot));
+        return opened.window.trades.length > 0;
     } catch (err) {
         log(bot, `Failed to inspect villager interface: ${err.message}`);
         console.log('Villager trading error:', err.message);
@@ -5935,7 +5921,7 @@ export async function showVillagerTrades(bot, id) {
  * @example
  * await skills.tradeWithVillager(bot, "123", "1", "2");
  */
-export async function tradeWithVillager(bot, id, index, count) {
+export async function tradeWithVillager(bot, id, index, count = 1) {
     const villagerEntity = await findAndGoToVillager(bot, id);
     if (!villagerEntity) {
         return false;
@@ -5947,114 +5933,14 @@ export async function tradeWithVillager(bot, id, index, count) {
             log(bot, opened.description + '\nNo trade was executed. The requested vanilla trade index cannot identify a custom menu slot.');
             return false;
         }
-        const villager = opened.window;
-        
-        if (!villager.trades || villager.trades.length === 0) {
-            log(bot, 'This villager has no trades available - might be sleeping, a baby, or jobless');
-            villager.close();
-            return false;
-        }
-        
-        const tradeIndex = parseInt(index) - 1; // Convert to 0-based index
-        const trade = villager.trades[tradeIndex];
-        
-        if (!trade) {
-            log(bot, `Trade ${index} not found. This villager has ${villager.trades.length} trades available.`);
-            villager.close();
-            return false;
-        }
-        
-        if (trade.disabled) {
-            log(bot, `Trade ${index} is currently disabled`);
-            villager.close();
-            return false;
-        }
-
-        const item_2 = trade.inputItem2 ? stringifyItem(bot, trade.inputItem2)+' ' : '';
-        log(bot, `Trading ${stringifyItem(bot, trade.inputItem1)} ${item_2}for ${stringifyItem(bot, trade.outputItem)}...`);
-        
-        const maxPossibleTrades = trade.maximumNbTradeUses - trade.nbTradeUses;
-        const requestedCount = count;
-        const actualCount = Math.min(requestedCount, maxPossibleTrades);
-        
-        if (actualCount <= 0) {
-            log(bot, `Trade ${index} has been used to its maximum limit`);
-            villager.close();
-            return false;
-        }
-        
-        if (!hasResources(villager.slots, trade, actualCount)) {
-            log(bot, `Don't have enough resources to execute trade ${index} ${actualCount} time(s)`);
-            villager.close();
-            return false;
-        }
-        
-        log(bot, `Executing trade ${index} ${actualCount} time(s)...`);
-        
-        try {
-            await bot.trade(villager, tradeIndex, actualCount);
-            log(bot, `Successfully traded ${actualCount} time(s)`);
-            villager.close();
-            return true;
-        } catch (tradeErr) {
-            log(bot, 'An error occurred while trying to execute the trade');
-            console.log('Trade execution error:', tradeErr.message);
-            villager.close();
-            return false;
-        }
+        const result = await tradeAtWindow(bot, opened.window.id, Number(index), Number(count));
+        log(bot, result.message);
+        return result.success;
     } catch (err) {
         log(bot, `Failed to open villager trading interface: ${err.message}`);
         console.log('Villager interface error:', err.message);
         return false;
     }
-}
-
-function hasResources(window, trade, count) {
-    const first = enough(trade.inputItem1, count);
-    const second = !trade.inputItem2 || enough(trade.inputItem2, count);
-    return first && second;
-
-    function enough(item, count) {
-        let c = 0;
-        window.forEach((element) => {
-            if (element && element.type === item.type && element.metadata === item.metadata) {
-                c += element.count;
-            }
-        });
-        return c >= item.count * count;
-    }
-}
-
-function stringifyTrades(bot, trades) {
-    return trades.map((trade) => {
-        let text = stringifyItem(bot, trade.inputItem1);
-        if (trade.inputItem2) text += ` & ${stringifyItem(bot, trade.inputItem2)}`;
-        if (trade.disabled) text += ' x '; else text += ' » ';
-        text += stringifyItem(bot, trade.outputItem);
-        return `(${trade.nbTradeUses}/${trade.maximumNbTradeUses}) ${text}`;
-    });
-}
-
-function stringifyItem(bot, item) {
-    if (!item) return 'nothing';
-    let text = `${item.count} ${item.displayName}`;
-    if (item.nbt && item.nbt.value) {
-        const ench = item.nbt.value.ench;
-        const StoredEnchantments = item.nbt.value.StoredEnchantments;
-        const Potion = item.nbt.value.Potion;
-        const display = item.nbt.value.display;
-
-        if (Potion) text += ` of ${Potion.value.replace(/_/g, ' ').split(':')[1] || 'unknown type'}`;
-        if (display) text += ` named ${display.value.Name.value}`;
-        if (ench || StoredEnchantments) {
-            text += ` enchanted with ${(ench || StoredEnchantments).value.value.map((e) => {
-                const lvl = e.lvl.value;
-                const id = e.id.value;
-                return bot.registry.enchantments[id].displayName + ' ' + lvl;
-            }).join(' ')}`;
-        }
-    }
-    return text;
 }
 
 const SHAFT_FLUIDS = new Set(['water', 'flowing_water', 'lava', 'flowing_lava']);

@@ -1,0 +1,147 @@
+From 8f57b0d7757b3381e3e3e15787c343b7f8e2771f Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Sat, 10 Oct 2026 02:11:45 +0800
+Subject: [PATCH] fix: retain received merchant offers in Neko planning context
+
+---
+ .../game_agent_minecraft/decision_context.py  | 39 ++++++++++++
+ .../test_merchant_context.py                  | 63 +++++++++++++++++++
+ 2 files changed, 102 insertions(+)
+ create mode 100644 plugin/plugins/game_agent_minecraft/test_merchant_context.py
+
+diff --git a/plugin/plugins/game_agent_minecraft/decision_context.py b/plugin/plugins/game_agent_minecraft/decision_context.py
+index f7193da..16e33b6 100644
+--- a/plugin/plugins/game_agent_minecraft/decision_context.py
++++ b/plugin/plugins/game_agent_minecraft/decision_context.py
+@@ -28,6 +28,37 @@ def _select(value, keys):
+     return {key: value[key] for key in keys if key in value} if isinstance(value, dict) else {}
+ 
+ 
++def _merchant_summary(window):
++    if not isinstance(window, dict) or window.get('type') not in ('minecraft:merchant', 'minecraft:villager', 'merchant', 'villager'):
++        return None
++    received = window.get('merchantOffers') or {}
++    received = received if isinstance(received, dict) else {}
++    status = received.get('status', 'pending')
++    brief = {'windowId': window.get('id'), 'status': status,
++             'details': 'minecraft_observe(detail="full",sections=["window"])',
++             'action': 'minecraft_task: use observed !tradeWindow; keep this NPC window open.'}
++    if status != 'ready':
++        brief['note'] = 'Empty ingredient slots do not prove empty offers.'
++        return brief
++    offers = received.get('offers') or []
++    offers = offers if isinstance(offers, list) else []
++    total = received.get('receivedCount')
++    if type(total) is int and total >= 0:
++        brief['receivedCount'] = total
++    brief['offers'] = []
++    def item(value):
++        fact = _select(value, ('item', 'count', 'name'))
++        return {key: _short(child, 48) if isinstance(child, str) else child for key, child in fact.items()}
++    for offer in offers[:3]:
++        if isinstance(offer, dict):
++            brief['offers'].append({**_select(offer, ('index', 'uses', 'maxUses', 'disabled')),
++                'costs': [item(value) for value in (offer.get('costs') or [])[:2] if isinstance(value, dict)],
++                'result': item(offer.get('result'))})
++    if len(offers) > len(brief['offers']) or received.get('omitted'):
++        brief['partial'] = True
++    return brief
++
++
+ def _permission(value, now):
+     fact = _select(value, ('action', 'world', 'x', 'y', 'z', 'status', 'allowed', 'reason'))
+     fact = {key: _short(child, 64) if isinstance(child, str) else child for key, child in fact.items()}
+@@ -193,6 +224,10 @@ def build_focused_view(info, *, mode='decision', max_events=6, max_tokens=1600,
+             window = state.get('window') or {}
+             if window:
+                 compact['window'] = {'id': window.get('id'), 'title': _short(window.get('title'), 64)}
++                if mode == 'decision':
++                    merchant = _merchant_summary(window)
++                    if merchant:
++                        value['merchant'] = merchant
+             titles = [_short(board.get('title'), 64) for board in (server.get('scoreboards') or [])[:2]
+                       if isinstance(board, dict)]
+             if titles:
+@@ -221,6 +256,10 @@ def build_focused_view(info, *, mode='decision', max_events=6, max_tokens=1600,
+ 
+     if count_tokens(render()) > max_tokens and value['state']:
+         remove(value['state'].get('inventory', {}), 'counts', 'inventory.counts')
++    merchant = value.get('merchant') or {}
++    while count_tokens(render()) > max_tokens and merchant.get('offers'):
++        merchant['offers'].pop()
++        merchant['partial'] = True
+     if count_tokens(render()) > max_tokens:
+         value['details'] = 'minecraft_observe(detail="full",sections=[...]) for full received facts/books/server/messages.'
+     for event in value['recentEvents']:
+diff --git a/plugin/plugins/game_agent_minecraft/test_merchant_context.py b/plugin/plugins/game_agent_minecraft/test_merchant_context.py
+new file mode 100644
+index 0000000..61ae2cd
+--- /dev/null
++++ b/plugin/plugins/game_agent_minecraft/test_merchant_context.py
+@@ -0,0 +1,63 @@
++import copy
++import json
++import unittest
++
++from utils.tokenize import count_tokens
++from .observations import GameObservations
++from .test_observations import frame
++from .test_grounded_recovery import crowded_frame
++
++
++class MerchantContextTests(unittest.TestCase):
++    def observations(self, *, status='ready', crowded=False, offers=None):
++        data = crowded_frame() if crowded else frame()
++        quotes = [{'index': 1, 'costs': [{'item': 'coal', 'count': 15}],
++                   'result': {'item': 'emerald', 'count': 1, 'name': '公会货币'},
++                   'uses': 2, 'maxUses': 16, 'disabled': False}] if offers is None else offers
++        data['state']['window'] = {'id': 3, 'type': 'minecraft:merchant', 'title': '机关师·小铜',
++            'slots': [], 'merchantOffers': {'status': status,
++                **({'receivedCount': len(quotes), 'offers': quotes} if status == 'ready' else {})}}
++        observations = GameObservations()
++        self.assertTrue(observations.ingest_state(data))
++        return observations
++
++    def test_decision_keeps_received_quotes_price_stock_and_current_window_action(self):
++        observations = self.observations()
++        before = copy.deepcopy(observations.state)
++        view = observations.focused_view(mode='decision', max_tokens=1200)
++        merchant = view['merchant']
++        self.assertEqual(merchant['windowId'], 3)
++        self.assertEqual(merchant['receivedCount'], 1)
++        self.assertEqual(merchant['offers'][0]['costs'], [{'item': 'coal', 'count': 15}])
++        self.assertEqual(merchant['offers'][0]['maxUses'], 16)
++        self.assertIn('!tradeWindow', merchant['action'])
++        self.assertEqual(observations.state, before)
++
++    def test_unreceived_quotes_do_not_become_a_zero_offer_claim(self):
++        for status in ('pending', 'decode_error'):
++            view = self.observations(status=status).focused_view(max_tokens=1200)
++            self.assertEqual(view['merchant']['status'], status)
++            self.assertNotIn('receivedCount', view['merchant'])
++            self.assertIn('do not prove', view['merchant']['note'])
++        empty = self.observations(offers=[]).focused_view(max_tokens=1200)['merchant']
++        self.assertEqual(empty['receivedCount'], 0)
++        self.assertEqual(empty['status'], 'ready')
++
++    def test_small_callback_keeps_merchant_status_and_a_detail_route_without_overflow(self):
++        observations = self.observations(crowded=True)
++        for budget in (400, 700):
++            text = observations.focused_context(mode='decision', max_tokens=budget)
++            self.assertLessEqual(count_tokens(text), budget)
++            view = json.loads(text.split('\n', 1)[1])
++            self.assertEqual(view['merchant']['status'], 'ready')
++            self.assertEqual(view['merchant']['receivedCount'], 1)
++            self.assertIn('window', view['merchant']['details'])
++            if not view['merchant'].get('offers'):
++                self.assertTrue(view['merchant']['partial'])
++
++    def test_running_and_offline_do_not_add_merchant_planning_or_stale_quotes(self):
++        observations = self.observations()
++        self.assertNotIn('merchant', observations.focused_view(mode='running'))
++        self.assertEqual(observations.view(['window'], 0)['state']['window']['merchantOffers']['receivedCount'], 1)
++        observations.online = False
++        self.assertNotIn('merchant', observations.focused_view())
+-- 
+2.55.0.windows.5
+

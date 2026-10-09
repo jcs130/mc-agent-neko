@@ -2,6 +2,7 @@ import { randomUUID, createHash } from 'node:crypto';
 import { plainText } from '../agent/library/books.js';
 import { readItemIdentity } from '../agent/library/item_identity.js';
 import { activeServerCommand } from './server_commands.js';
+import { applyMerchantTrades, merchantOffers } from '../agent/library/merchant_trades.js';
 
 // Observation only: this module never sends game packets, chat or actions.
 const finite = value => typeof value === 'number' && Number.isFinite(value) ? value : null;
@@ -179,6 +180,7 @@ export function collectGameState(agent, presentation = {}) {
             signs: presentation.signs ?? [] },
         window: window ? { id: window.id, type: window.type, title: gameText(window.title),
             inventoryStart: window.inventoryStart, inventoryEnd: window.inventoryEnd,
+            merchantOffers: merchantOffers(window),
             selectedItem: itemState(window.selectedItem), slots: window.slots?.map(itemState).filter(Boolean),
             properties: presentation.windowProperties ?? {}, trades: presentation.trades ?? null } : null,
         activity: { action: agent.actions?.currentActionLabel ?? null, skill: bot._currentSkill ?? null,
@@ -276,7 +278,8 @@ export class GameInformation {
             if (entity.id === this.bot.entity?.id) this.event('damage', { source: 'game', data: { health: finite(this.bot.health) } });
         });
         this.on(this.bot, 'windowOpen', window => {
-            this.presentation.trades = null; this.presentation.windowProperties = {};
+            if (this.presentation.trades?.windowId !== window.id) this.presentation.trades = null;
+            this.presentation.windowProperties = {};
             this.event('window_open', { source: 'game', text: gameText(window.title), data: { type: window.type, id: window.id } });
         });
         this.on(this.bot, 'windowClose', () => { this.presentation.trades = null; this.presentation.windowProperties = {}; });
@@ -317,7 +320,10 @@ export class GameInformation {
             this.event('advancement', { source: 'server', data: boundedGameValue({ progress: packet.progressMapping }, 4000).value });
         });
         for (const name of ['trade_list', 'window_items', 'craft_progress_bar', 'unlock_recipes']) this.on(this.bot._client, name, packet => {
-            if (name === 'trade_list') this.presentation.trades = boundedGameValue(packet, 12000).value;
+            if (name === 'trade_list' && packet.windowId === this.bot.currentWindow?.id) {
+                this.presentation.trades = boundedGameValue(packet, 12000).value;
+                applyMerchantTrades(this.bot, packet);
+            }
             if (name === 'unlock_recipes') this.presentation.recipeBook = boundedGameValue(packet, 6000).value;
             if (name === 'craft_progress_bar') {
                 this.presentation.windowProperties ??= {};

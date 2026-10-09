@@ -1,9 +1,9 @@
 {
   "upstreamRepository": "https://github.com/Project-N-E-K-O/N.E.K.O",
   "baseCommit": "fb2a2e731a8c954478d08678b0c8cf40e8145a54",
-  "sourceCommit": "13681e1e9d6802ad674940f4408a956d5a9ea98e",
+  "sourceCommit": "8f57b0d7757b3381e3e3e15787c343b7f8e2771f",
   "scope": "plugin/plugins/game_agent_minecraft",
-  "resultPluginTree": "8a9c8464d03d86731cfecd6dbd2faf7f871c7185",
+  "resultPluginTree": "d1cd780249274ae257b4b52e2ffd055a9d264f79",
   "patches": [
     {
       "file": "0001-chore-configure-text-only-local-Qwen-Minecraft-trial.patch",
@@ -224,6 +224,10 @@
     {
       "file": "0055-fix-minecraft-retain-combat-equipment-for-survival-p.patch",
       "sha256": "c6cfd8d51ac0969759aa33a2a4af50c3fb466b485cad99875ff6c8c72e8009c4"
+    },
+    {
+      "file": "0056-fix-retain-received-merchant-offers-in-Neko-planning.patch",
+      "sha256": "792df5372f4372ac944bd5c5da01c9cd471d503a4c35da68efbbf79d6163193c"
     }
   ],
   "verification": {
@@ -385,5 +389,17 @@
     "actualSwordCraftObserved": true,
     "actualZombieKillObserved": false,
     "continuedAutonomousDispatchObserved": true
+  },
+  "merchantOffersRepairVerification": {
+    "date": "2026-10-10",
+    "nativeTestsPassed": 525,
+    "pluginTestsPassed": 176,
+    "merchantTestsAdded": 13,
+    "pluginMerchantTestsAdded": 4,
+    "pluginPatchCount": 56,
+    "pluginSeriesReplayMatchesSource": true,
+    "actualLiveOffersObserved": false,
+    "actualLivePurchaseObserved": false,
+    "longRunSurvivalProven": false
   }
 }

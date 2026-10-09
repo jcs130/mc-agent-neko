@@ -1,6 +1,7 @@
 import * as skills from '../library/skills.js';
 import { sendServerCommand } from '../../websocket/server_commands.js';
 import { clickMenuSlot, describeMenu } from '../library/menus.js';
+import { tradeAtWindow } from '../library/merchant_trades.js';
 import settings from '../settings.js';
 import convoManager from '../conversation.js';
 
@@ -776,23 +777,37 @@ export const actionsList = [
     },
     {
         name: '!showVillagerTrades',
-        description: 'Inspect a villager NPC. Shows vanilla trades or the actual custom server menu; custom menus stay open for !window / !clickWindow.',
+        description: 'Inspect a villager NPC and keep its actual window open. Merchant offers/prices use !window / !tradeWindow; custom menu slots use !clickWindow.',
         params: {'id': { type: 'int', description: 'The id number of the villager that you want to trade with.' }},
         perform: runAsAction(async (agent, id) => {
-            await skills.showVillagerTrades(agent.bot, id);
+            return await skills.showVillagerTrades(agent.bot, id);
         })
     },
     {
         name: '!tradeWithVillager',
-        description: 'Execute a vanilla villager trade. Custom server menus require !window / !clickWindow with an observed slot; trade indices cannot select their offers.',
+        description: 'Open a villager and execute a vanilla trade. If a merchant is ALREADY open (including after a custom NPC menu), use !window / !tradeWindow instead of reopening the NPC. Generic menu slots require !clickWindow.',
         params: {
             'id': { type: 'int', description: 'The id number of the villager that you want to trade with.' },
             'index': { type: 'int', description: 'The index of the trade you want executed (1-indexed).', domain: [1, Number.MAX_SAFE_INTEGER] },
             'count': { type: 'int', description: 'How many times that trade should be executed.', domain: [1, Number.MAX_SAFE_INTEGER] },
         },
         perform: runAsAction(async (agent, id, index, count) => {
-            await skills.tradeWithVillager(agent.bot, id, index, count);
+            return await skills.tradeWithVillager(agent.bot, id, index, count);
         })
+    },
+    {
+        name: '!tradeWindow',
+        description: 'Execute an observed vanilla merchant offer in the CURRENT window, including one opened by a custom NPC menu. Query !window first; keeps this window open and verifies payment/output. Never use generic menu slot numbers as trade numbers.',
+        params: {
+            window_id: { type: 'int', description: 'Current merchant window ID from !window.', domain: [1, Number.MAX_SAFE_INTEGER] },
+            index: { type: 'int', description: 'Observed 1-based trade number from !window.', domain: [1, Number.MAX_SAFE_INTEGER] },
+            count: { type: 'int', description: 'How many times to execute this offer.', domain: [1, Number.MAX_SAFE_INTEGER] },
+        },
+        perform: runAsAction(async (agent, windowId, index, count) => {
+            const result = await tradeAtWindow(agent.bot, windowId, index, count);
+            skills.log(agent.bot, result.message);
+            return result.success;
+        }),
     },
     {
         name: '!startConversation',
