@@ -3,7 +3,9 @@
 The latest survival repair retains actual melee equipment in bounded planning
 and emergency context, including unknown inventory states. It pairs with the
 body's corrected combat/retreat handoff for unarmed players, swarms and nearby
-wall-blocked mobs. See [the evidence and verification report](../../docs/neko-survival-combat-2026-10-10.md).
+wall-blocked mobs. Task inventory deltas and real action receipts also preserve
+evidence when the native model forgets a successful craft.
+See [the evidence and verification report](../../docs/neko-survival-combat-2026-10-10.md).
 
 This directory carries the matching Project N.E.K.O. Minecraft plugin changes
 alongside the Minecraft body in this fork. The ordered plugin series includes

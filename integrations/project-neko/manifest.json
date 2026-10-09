@@ -374,12 +374,16 @@
   },
   "survivalCombatRepairVerification": {
     "date": "2026-10-10",
-    "nativeTestsPassed": 507,
+    "nativeTestsPassed": 512,
     "pluginTestsPassed": 172,
     "combatHandoffTestsPassed": 11,
     "pluginSeriesReplayMatchesSource": true,
     "pluginPatchCount": 55,
     "addedLintErrors": 0,
-    "longRunSurvivalProven": false
+    "longRunSurvivalProven": false,
+    "taskInventoryEvidenceTestsAdded": 5,
+    "actualSwordCraftObserved": true,
+    "actualZombieKillObserved": false,
+    "continuedAutonomousDispatchObserved": true
   }
 }

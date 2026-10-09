@@ -333,7 +333,7 @@ export async function executeCommand(agent, message, beforeExecute = null) {
             const mission = agent._missionEnabled && agent.adminMission?.isActive()
                 ? agent.adminMission.mission : null;
             const result = await command.perform(agent, ...parsed.args);
-            if (mission && !isAction(parsed.commandName)) {
+            if (mission) {
                 agent.adminMission.recordObservation(mission, parsed.commandName, result);
             }
             return result;

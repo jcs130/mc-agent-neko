@@ -16,6 +16,7 @@ export function executionPromptTemplate(template, agent) {
         prompt += '\n\nCURRENT TASK — native controller authority:\n'
             + `taskId: ${mission.taskId || '(unassigned)'}\ngoal: ${mission.text}\n`
             + 'Only this task is active. Goals, actions, positions and vitals in historical memory or earlier turns are not current instructions or current state.\n';
+        prompt += agent.adminMission.progressEvidence?.(mission) || '';
     }
     if (status.length) prompt += '\nFRESH OBSERVED STATE — prefer these live query results over historical memory; missing data is unknown:\n'
         + status.join('\n');

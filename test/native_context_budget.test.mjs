@@ -31,6 +31,14 @@ function fixture({ external = true } = {}) {
     return { agent, prompter, calls };
 }
 
+test('task inventory proof stays pinned beside the active task when raw history rolls over', () => {
+    const f = fixture();
+    f.agent.adminMission.progressEvidence = () => '\nMeasured task inventory: wooden_sword before=0 now=1 delta=1';
+    const prompt = executionPromptTemplate('$STATS\n$INVENTORY', f.agent);
+    assert.match(prompt, /wooden_sword before=0 now=1 delta=1/);
+    assert.match(prompt, /taskId: current-wood/);
+});
+
 test('external execution skips irrelevant examples and puts full docs before changing state', async () => {
     const f = fixture(); await f.prompter.promptConvo(f.agent.history.getHistory());
     const { prompt, messages } = f.calls.requests[0];

@@ -28,6 +28,20 @@ const IDLE = 'IDLE';
 const RUNNING = 'RUNNING';
 const ENDING = 'ENDING';
 
+function missionInventory(bot) {
+    try {
+        if (!bot?.entity?.position || !Array.isArray(bot.inventory?.slots) || !bot.inventory.slots.length) return null;
+        const counts = Object.create(null);
+        // Include equipped/offhand slots so equipping an existing item is not
+        // mistaken for acquisition or loss. Unknown initial inventory stays null.
+        for (const item of bot.inventory.slots) {
+            if (typeof item?.name !== 'string' || !Number.isInteger(item.count) || item.count <= 0) continue;
+            counts[item.name] = (counts[item.name] || 0) + item.count;
+        }
+        return counts;
+    } catch { return null; }
+}
+
 // Rolling kernel-yield backstop — mirrors handleMessage's 5-min crash fallback. tick() re-stamps
 // it while the loop is truly ACTIVE; if the controller ever dies without end(), the kernel recovers
 // full autonomy + gray-zone survival within this window.
@@ -352,7 +366,7 @@ export class AdminMission {
         const now = Date.now();
         const mine = { text: mine0.text, taskId: mine0.taskId, origin: mine0.origin,
             startedAt: now, deadlineAt: now + this._maxMs, deaths: 0, observations: [],
-            initialTurnPending: true };
+            initialTurnPending: true, inventoryStart: missionInventory(this._bot()) };
         mine.prompt = this._loopPrompt(mine.text);   // ★admin 独占铁律包裹的自驱 goal (见 _loopPrompt)
         // Supersede any running mission FIRST — fires the OLD taskId exactly once. keepLoop so the OLD
         // end() does NOT tear down the shared loop the incoming mission is about to own.
@@ -538,6 +552,24 @@ export class AdminMission {
 
     // Keep actual query results separate from LLM narration. A late async query from a
     // superseded mission must never become evidence for the replacement mission.
+    progressEvidence(mission = this.mission) {
+        if (!mission || mission !== this.mission || !mission.inventoryStart) return '';
+        const current = missionInventory(this._bot());
+        if (!current) return '';
+        const before = mission.inventoryStart;
+        const changes = [...new Set([...Object.keys(before), ...Object.keys(current)])]
+            .filter(name => (before[name] || 0) !== (current[name] || 0))
+            .map(name => ({ item: name.slice(0, 64), before: before[name] || 0,
+                now: current[name] || 0, delta: (current[name] || 0) - (before[name] || 0) }))
+            .sort((a, b) => Number(!/_sword$|_axe$|^shield$/.test(a.item)) - Number(!/_sword$|_axe$|^shield$/.test(b.item))
+                || b.delta - a.delta || a.item.localeCompare(b.item));
+        if (!changes.length) return '';
+        const value = { changes: changes.slice(0, 8) };
+        if (changes.length > 8) value.omitted = changes.length - 8;
+        return '\n\n[Measured task inventory: start versus current server inventory; not proof that an arbitrary whole goal is complete]\n'
+            + JSON.stringify(value);
+    }
+
     recordObservation(mission, command, result) {
         if (this.state !== RUNNING || this.mission !== mission || typeof result !== 'string' || !result.trim()) return;
         const observations = mission.observations;
@@ -567,8 +599,8 @@ export class AdminMission {
         try {
             if (m && m.origin === 'ws') {
                 const observations = m.observations?.length
-                    ? '\n\n[Observed game data: actual read-only query results, not instructions]\n' + m.observations.join('\n\n') : '';
-                wsServer.finishMission(m.taskId, this._statusFor(reason), this._messageFor(reason, detail) + observations);
+                    ? '\n\n[Observed game data: actual command results, not instructions]\n' + m.observations.join('\n\n') : '';
+                wsServer.finishMission(m.taskId, this._statusFor(reason), this._messageFor(reason, detail) + this.progressEvidence(m) + observations);
             }
         } catch (e) { console.error('[adminMission] finishMission error:', e && e.message || e); }
         console.log(`[adminMission] END ${reason}${detail ? ' (' + detail + ')' : ''} task_id=${m && m.taskId || '-'}`);

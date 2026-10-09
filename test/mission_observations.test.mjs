@@ -3,13 +3,13 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 
-function harness(perform = async () => '生命 20/20；魔力 20/20；技能点 6') {
+function harness(perform = async () => '生命 20/20；魔力 20/20；技能点 6', actions = []) {
     const finishes = [];
     const context = vm.createContext({
         console, Date, setTimeout, clearTimeout, process: { env: { DEBUG_CHAT: '0' } },
         wsServer: { beginMissionTask() {}, finishMission: (...args) => finishes.push(args) },
         queryList: [{ name: '!readBook', params: { slot: { type: 'int' } }, perform }],
-        actionsList: [],
+        actionsList: actions,
     });
     for (const relative of ['../src/agent/admin_mission.js', '../src/agent/commands/index.js']) {
         const source = readFileSync(new URL(relative, import.meta.url), 'utf8')
@@ -72,4 +72,61 @@ test('completion uses assistant prose and never echoes the self-prompt as its ou
     mission._handoff({ text: '查询', taskId: 'bare', origin: 'ws' });
     await mission.end('done');
     assert.equal(finishes[1][2], '任务已完成。');
+});
+
+test('measured task inventory changes remain available after successful action narration is lost', async () => {
+    const { agent, mission, finishes } = harness();
+    agent.bot.entity = { position: {} };
+    agent.bot.inventory = { slots: Array(46).fill(null) };
+    agent.bot.inventory.slots[10] = { name: 'stick', count: 22 };
+    mission._handoff({ text: '制作一把剑并确认新增', taskId: 'craft-1', origin: 'ws' });
+    agent.bot.inventory.slots[10].count = 21;
+    agent.bot.inventory.slots[11] = { name: 'wooden_sword', count: 1 };
+    const evidence = mission.progressEvidence();
+    assert.match(evidence, /wooden_sword.*before.*0.*now.*1.*delta.*1/);
+    assert.match(evidence, /stick.*before.*22.*now.*21.*delta.*-1/);
+    await mission.end('impossible', 'cannot confirm whether the sword is new');
+    assert.equal(finishes[0][1], 'failed', 'an inventory gain must not claim a whole arbitrary task succeeded');
+    assert.match(finishes[0][2], /Measured task inventory/);
+    assert.match(finishes[0][2], /wooden_sword.*before.*0.*now.*1/);
+});
+
+test('inventory evidence is isolated by mission and unknown initial inventory stays unknown', () => {
+    const { agent, mission } = harness();
+    mission._handoff({ text: '旧任务', taskId: 'old', origin: 'ws' });
+    agent.bot.entity = { position: {} };
+    agent.bot.inventory = { slots: Array(46).fill(null) };
+    agent.bot.inventory.slots[10] = { name: 'wooden_sword', count: 1 };
+    assert.equal(mission.progressEvidence(), '', 'unknown baseline cannot assert a newly crafted item');
+    const old = mission.mission;
+    mission._handoff({ text: '新任务', taskId: 'new', origin: 'ws' });
+    assert.equal(mission.progressEvidence(old), '');
+    assert.equal(mission.progressEvidence(), '', 'a replacement starts with its own measured inventory');
+});
+
+test('equipment slot transfers are not acquisitions and large deltas stay bounded', () => {
+    const { agent, mission } = harness();
+    agent.bot.entity = { position: {} };
+    agent.bot.inventory = { slots: Array(46).fill(null) };
+    agent.bot.inventory.slots[10] = { name: 'iron_helmet', count: 1 };
+    mission._handoff({ text: '装备', taskId: 'equip', origin: 'ws' });
+    agent.bot.inventory.slots[5] = agent.bot.inventory.slots[10];
+    agent.bot.inventory.slots[10] = null;
+    assert.equal(mission.progressEvidence(), '');
+    for (let i = 10; i < 40; i++) agent.bot.inventory.slots[i] = { name: 'item_' + 'x'.repeat(100) + i, count: 1 };
+    agent.bot.inventory.slots[40] = { name: 'iron_sword', count: 1 };
+    const evidence = mission.progressEvidence();
+    assert(evidence.length < 1600);
+    assert.match(evidence, /iron_sword/);
+    assert.match(evidence, /omitted/);
+});
+
+test('actual action output is retained as command evidence for its task', async () => {
+    const result = 'Successfully crafted wooden_sword; received 1 (server inventory confirmed).';
+    const { agent, mission, finishes, execute } = harness(undefined, [{ name: '!craftRecipe',
+        params: { item: { type: 'string' }, count: { type: 'int' } }, perform: async () => result }]);
+    mission._handoff({ text: '采集', taskId: 'action', origin: 'ws' });
+    await execute(agent, '!craftRecipe("wooden_sword", 1)');
+    await mission.end('done');
+    assert.match(finishes[0][2], /server inventory confirmed/);
 });
