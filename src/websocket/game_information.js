@@ -186,7 +186,14 @@ export class GameInformation {
             if (this.closed || (json && typeof json === 'object' && structured.has(json))) return;
             if (sender && sender === this.bot.player?.uuid) return;
             const text = gameText(json);
-            if (text.startsWith(`<${this.bot.username}>`) || /^MC_[A-Z_]+\s*\{/.test(text)) return;
+            if (text.startsWith(`<${this.bot.username}>`)) return;
+            const record = position === 'system' && !sender && /^(MC_[A-Z_]+)\s+(\{.*\})$/.exec(text);
+            if (record) {
+                try {
+                    this.event('server_record', { text, source: 'server', data: { kind: record[1], value: JSON.parse(record[2]) } });
+                    return;
+                } catch { /* malformed JSON remains observable text */ }
+            }
             this.event(position === 'game_info' ? 'actionbar' : position === 'chat' ? 'chat' : 'system',
                 { text, source: position === 'chat' ? 'received_chat' : 'server', data: { sender, verified, translation: json?.translate } });
         } catch { /* malformed text is not a game failure */ } }));

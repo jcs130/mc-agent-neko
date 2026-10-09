@@ -1,4 +1,5 @@
 import * as skills from '../library/skills.js';
+import { sendServerCommand } from '../../websocket/server_commands.js';
 import { clickMenuSlot, describeMenu } from '../library/menus.js';
 import settings from '../settings.js';
 import convoManager from '../conversation.js';
@@ -160,6 +161,12 @@ export function decodeRunSkillArgs(entry, raw) {   // exported for tests
 }
 
 export const actionsList = [
+    {
+        name: '!serverCommand',
+        description: 'Execute one actual server /mycli gameplay command, such as learning a server spell or casting it. First discover/explain the ID with !serverQuery. Server spells are not local !runSkill scripts. Read the actual reply and verify points/abilities/mana/effects; sending or receiving a reply alone is not success.',
+        params: { command: { type: 'string', description: 'Exact /mycli syntax discovered from the server, including any required arguments.' } },
+        perform: async (agent, command) => JSON.stringify(await sendServerCommand(agent.bot, { command })),
+    },
     {
         name: '!newAction',
         description: 'Perform new and unknown custom behaviors that are not available as a command.', 

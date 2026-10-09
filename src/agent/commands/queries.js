@@ -6,6 +6,7 @@ import { checkLevelBlueprint, checkBlueprint } from '../tasks/construction_tasks
 import { load } from 'cheerio';
 import { readInventoryBook } from '../library/books.js';
 import { describeMenu } from '../library/menus.js';
+import { sendServerCommand } from '../../websocket/server_commands.js';
 
 const pad = (str) => {
     return '\n' + str + '\n';
@@ -13,6 +14,12 @@ const pad = (str) => {
 
 // queries are commands that just return strings and don't affect anything in the world
 export const queryList = [
+    {
+        name: '!serverQuery',
+        description: 'Query actual server gameplay rules/spells, distinct from local runSkill scripts. Send /mycli help, /mycli spells list 1 (follow MC_SPELL_NEXT), /mycli spells explain selfheal, or /mycli mastery. Use the returned stable ID and syntax. A local skill list cannot prove a server spell is absent.',
+        params: { command: { type: 'string', description: 'One read-only /mycli discovery/status command.' } },
+        perform: async (agent, command) => pad(JSON.stringify(await sendServerCommand(agent.bot, { command, readOnly: true }))),
+    },
     {
         name: '!window',
         description: 'Read the open server menu, including its ID, slot numbers, item names and descriptions. No click is performed.',

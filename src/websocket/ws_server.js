@@ -1,6 +1,7 @@
 import { WebSocketServer } from 'ws';
 import fs from 'fs';
 import { sendGameChat } from './chat_bridge.js';
+import { sendServerCommand } from './server_commands.js';
 import { GameInformation } from './game_information.js';
 import settings from '../agent/settings.js';
 import { serverProxy } from '../agent/mindserver_proxy.js';
@@ -544,6 +545,13 @@ class WSMessageServer {
         } catch (e) { /* incoming chat mirror must never hurt the agent */ }
 
         switch (data.type) {
+            case 'server_command':
+                void sendServerCommand(this.agent.bot, data).then(result => {
+                    if (client?.readyState === 1) client.send(JSON.stringify({
+                        type: 'server_command_result', request_id: data.request_id, ...result,
+                    }));
+                });
+                break;
             case 'chat':
                 void sendGameChat(this.agent.bot, data).then(result => {
                     this.broadcast({ type: 'chat_result', request_id: data.request_id, ...result });

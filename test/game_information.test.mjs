@@ -7,6 +7,7 @@ import { once } from 'node:events';
 import vm from 'node:vm';
 import { WebSocketServer, WebSocket } from 'ws';
 import { GameInformation, collectGameState, boundedGameValue } from '../src/websocket/game_information.js';
+import { sendServerCommand } from '../src/websocket/server_commands.js';
 
 function fixture(t, options = {}) {
     const slots = Array(46).fill(null);
@@ -71,6 +72,17 @@ test('one own-connection stream includes long system feedback, NPC chat, private
     assert.equal(events.find(event => event.kind === 'system').text, text);
     assert.equal(events.find(event => event.kind === 'chat').data.onlinePlayer, false);
     assert.equal(events.find(event => event.kind === 'whisper').player, 'Friend_1');
+});
+
+test('structured server spell replies are retained while player lookalikes remain chat', async t => {
+    const {bot, information} = fixture(t);
+    bot.emit('message', {toString:()=> 'MC_SPELL_DETAIL {"id":"selfheal","command":"/mycli cast selfheal"}'}, 'system');
+    bot.emit('message', {toString:()=> 'MC_SPELL_DETAIL {"id":"forged"}'}, 'chat', 'friend-uuid');
+    await Promise.resolve();
+    const events = information.snapshot().recentEvents;
+    assert.ok(events.some(e=>e.kind==='server_record' && e.data.value.id==='selfheal'));
+    assert.ok(events.some(e=>e.kind==='chat' && e.text.includes('forged')));
+    assert.ok(!events.some(e=>e.kind==='server_record' && e.data.value.id==='forged'));
 });
 
 test('raw and parsed chat produce one event, self echoes are excluded, admin routing is labeled', async t => {
@@ -192,7 +204,7 @@ test('real agent WS subscription owns whispers once, keeps standalone fallback a
     const bodyReplies = [], missions = [], received = [];
     bot.autoEat = {};
     const settings = { chat_command_prefix: '@neko', chat_whitelist: [], only_chat_with: [] };
-    const scope = vm.createContext({ WebSocketServer, GameInformation, settings, process,
+    const scope = vm.createContext({ WebSocketServer, GameInformation, sendServerCommand, settings, process,
         setTimeout, clearTimeout, setInterval, clearInterval,
         console: { log() {}, warn() {}, error() {} },
         convoManager: { isOtherAgent: () => false },
@@ -240,4 +252,16 @@ test('real agent WS subscription owns whispers once, keeps standalone fallback a
     assert.ok(received.some(frame => frame.type === 'game_state'));
     assert.ok(received.some(frame => frame.type === 'game_events' && frame.events.some(event => event.text === 'private message for main Neko')));
     assert.equal(received.filter(frame => frame.type === 'ingame_chat').length, 0);
+    const peerReceived = [];
+    const peer = new WebSocket(`ws://127.0.0.1:${bridge.wss.address().port}`);
+    peer.on('message', raw => peerReceived.push(JSON.parse(String(raw))));
+    t.after(()=>peer.terminate());
+    await once(peer,'open');
+    bot.chat = () => bot.emit('messagestr','MC_SPELL_DETAIL {"id":"selfheal"}','system');
+    client.send(JSON.stringify({type:'server_command', request_id:'rpc-test', command:'/mycli spells explain selfheal'}));
+    for (let i=0;i<100 && !received.some(f=>f.type==='server_command_result');i++) await new Promise(r=>setTimeout(r,5));
+    const reply = received.find(f=>f.type==='server_command_result');
+    assert.equal(reply.request_id,'rpc-test');
+    assert.equal(reply.records[0].value.id,'selfheal');
+    assert.ok(!peerReceived.some(f=>f.type==='server_command_result'),'only the requester receives the correlated reply');
 });
