@@ -10,6 +10,7 @@ import settings from "../../../settings.js";
 import path from 'path';
 import { pathToFileURL } from 'url';
 import { safeToDigBlock } from '../framework/tools/lava_guard.js';   // 岩浆/水裁判 (试装 into safeDig)
+import { maroonedNavigationSuppressed } from '../framework/mobility_ownership.js';
 import { corridorSafety, orderedMiningDetours, selectMiningDetour } from '../framework/tools/mining_detour.js';
 import { STALL_INTENT, beginStallIntent, touchStallIntent, endStallIntent, recoveryDisplacement } from '../stall_recovery.js';
 import { appendTelemetry } from '../../utils/telemetry.js';
@@ -1507,7 +1508,7 @@ async function tunnelToOre(bot, oreBlock, { maxSteps = 30, budgetMs = 25000, max
     try {
         if (process.env.MC_ORE_TUNNEL === '0') return false;
         if (!oreBlock || !oreBlock.position) return false;
-        if (bot._mobility && bot._mobility.state === 'MAROONED') return false;   // 行军独占移动, 让位
+        if (maroonedNavigationSuppressed(bot)) return false;   // Yield to an eligible/active march.
         const orePos = new Vec3(oreBlock.position.x, oreBlock.position.y, oreBlock.position.z);
         const oreCtr = orePos.offset(0.5, 0.5, 0.5);
         const isDead = (b) => !b || b.boundingBox === 'empty' || b.name === 'air';
@@ -4664,7 +4665,7 @@ export async function goToGoal(bot, goal) {
     // act_trace 实拍: 行军把 bot 修路推进 x112→x123,任务层 unstick 的 moveAway 20 秒
     // 又拉回 x112,两控制流拔河。被困态下一切寻路注定 NoPath 还干扰行军 — 在公共入口
     // 一刀拦掉。例外: 6 格内有敌对时放行(逃命寻路优先,与 sp 让位判定对称)。)
-    if (bot._mobility && bot._mobility.state === 'MAROONED') {
+    if (maroonedNavigationSuppressed(bot)) {
         let closeThreat = false;
         try {
             closeThreat = Object.values(bot.entities || {}).some(e =>
@@ -5209,7 +5210,7 @@ export async function goToPosition(bot, x, y, z, min_distance=2) {
     // ★MAROONED = the engineered march owns ALL movement (打转机理之二: 任务层寻路
     // 目标在西、行军向东开路,两个系统拔河,bot 被来回拖。被困状态下任务层的每次
     // goToPosition 注定 NoPath 还干扰行军 — 快速让位,等状态机宣布自由再恢复寻路。)
-    if (bot._mobility && bot._mobility.state === 'MAROONED') {
+    if (maroonedNavigationSuppressed(bot)) {
         log(bot, `goToPosition suppressed: MAROONED (march owns movement)`);
         return false;
     }

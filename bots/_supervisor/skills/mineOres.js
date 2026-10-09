@@ -16,6 +16,7 @@ import {
     targetCleared,
 } from './oracleGuard.js';
 import { collectLiveOreBlock } from './descentOreSweep.js';
+import { maroonedNavigationSuppressed } from '../../../src/agent/framework/mobility_ownership.js';
 
 const PROG = path.resolve(process.cwd(), 'bots', '_supervisor', 'progress.txt');
 function prog(line) {
@@ -59,12 +60,10 @@ export default async function mineOres(bot, ctx, opts = {}) {
         prog(`ABORT ore=${ore} — 无合格镐(需 ${pickRe}), 失败让 TOOL_UPKEEP 先修`);
         return false;
     }
-    // ★死57前实录: MAROONED 态下 goToPosition 无条件秒返 false → collectBlock 全瞬败,
-    //   13 轮 7s 空转白磨镐; 而能解 MAROONED 的 mobility 被本技能身体令牌挡住 = 死锁。
-    //   让位: 诚实 false, kernel 记账冷却, mobility 拿身体脱困后下个窗口再来。
-    const marooned = () => {
-        try { return /MAROONED/.test((bot._mobility && bot._mobility.state) || ''); } catch (e) { return false; }
-    };
+    // Yield only when the same shared navigation gate reserves movement for
+    // mobility. A fresh external task freezes soft MAROONED marches; yielding
+    // to that frozen rescue would block both mining and ordinary navigation.
+    const marooned = () => maroonedNavigationSuppressed(bot);
     if (marooned()) { prog(`ABORT ore=${ore} — MAROONED 态(寻路全被压制), 让位 mobility 脱困`); return false; }
     bot._svnOreZeroRounds = 0;   // ★跨 run 残留 bug (20:36 实录: 上 run 攒 2 + 本 run 第 1 轮 = 秒收工 46s 白跑)
     if (bot.armorManager) try { await bot.armorManager.equipAll(); } catch (e) {}
