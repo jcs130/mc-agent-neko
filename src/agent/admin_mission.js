@@ -625,7 +625,7 @@ export class AdminMission {
         this._lastBanner = { text: String(text), at: Date.now() };
         try {
             const bot = this._bot();
-            if (bot && typeof bot.chat === 'function' && bot.entity && String(process.env.DEBUG_CHAT || '1') !== '0') {
+            if (bot && typeof bot.chat === 'function' && bot.entity && process.env.DEBUG_CHAT === '1') {
                 let s = String(text).replace(/[\r\n]+/g, ' ').trim();
                 if (s.length > 250) s = s.slice(0, 247) + '...';
                 bot.chat(s);

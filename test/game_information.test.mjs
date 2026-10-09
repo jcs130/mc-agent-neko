@@ -8,6 +8,7 @@ import vm from 'node:vm';
 import { WebSocketServer, WebSocket } from 'ws';
 import { GameInformation, collectGameState, boundedGameValue } from '../src/websocket/game_information.js';
 import { sendServerCommand } from '../src/websocket/server_commands.js';
+import { sendGameChat } from '../src/websocket/chat_bridge.js';
 
 function fixture(t, options = {}) {
     const slots = Array(46).fill(null);
@@ -235,8 +236,8 @@ test('real agent WS subscription owns whispers once, keeps standalone fallback a
     const { agent, bot } = fixture(t);
     const bodyReplies = [], missions = [], received = [];
     bot.autoEat = {};
-    const settings = { chat_command_prefix: '@neko', chat_whitelist: [], only_chat_with: [] };
-    const scope = vm.createContext({ WebSocketServer, GameInformation, sendServerCommand, settings, process,
+    const settings = { chat_command_prefix: '@neko', chat_whitelist: [], only_chat_with: [], chat_ingame: false };
+    const scope = vm.createContext({ WebSocketServer, GameInformation, sendServerCommand, sendGameChat, settings, process,
         setTimeout, clearTimeout, setInterval, clearInterval,
         console: { log() {}, warn() {}, error() {} },
         convoManager: { isOtherAgent: () => false },
@@ -296,4 +297,15 @@ test('real agent WS subscription owns whispers once, keeps standalone fallback a
     assert.equal(reply.request_id,'rpc-test');
     assert.equal(reply.records[0].value.id,'selfheal');
     assert.ok(!peerReceived.some(f=>f.type==='server_command_result'),'only the requester receives the correlated reply');
+    const privateMessages = [], publicMessages = [];
+    bot.chat = text => publicMessages.push(text);
+    bot.players.Friend_1 = {};
+    bot.whisper = (player, text) => { privateMessages.push({ player, text }); bot.emit('messagestr', `ag_NEKO -> ${player}: ${text}`); };
+    client.send(JSON.stringify({ type: 'chat', request_id: 'private-rpc', player: 'Friend_1', text: '你好，想一起探索吗？' }));
+    for (let i=0;i<100 && !received.some(f=>f.request_id==='private-rpc');i++) await new Promise(r=>setTimeout(r,5));
+    const privateReply = received.find(f=>f.request_id==='private-rpc');
+    assert.equal(privateReply.status, 'echoed');
+    assert.equal(privateReply.channel, 'whisper');
+    assert.deepEqual(privateMessages, [{ player: 'Friend_1', text: '你好，想一起探索吗？' }]);
+    assert.deepEqual(publicMessages, [], 'disabled automatic body chat does not disable explicit whispers or cause a public fallback');
 });

@@ -197,7 +197,7 @@ class WSMessageServer {
     //   入口=收到的外部指令 task/run_skill/cancel(handleMessage 调用)。不再周期性刷原始字段。
     //   env DEBUG_CHAT=0 整体关闭。MC chat 单条上限 256, 超长截断; 全 try/catch, 聊天镜像绝不伤 agent。
     _chatToMC(text) {
-        if (String(process.env.DEBUG_CHAT || '1') === '0') return;
+        if (process.env.DEBUG_CHAT !== '1') return;
         try {
             const bot = this.agent && this.agent.bot;
             if (!bot || typeof bot.chat !== 'function' || !bot.entity) return;

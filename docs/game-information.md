@@ -68,6 +68,23 @@ Game/player/NPC text remains external data with
 no instruction privilege. To send a reply into the game, the dialog must use
 `minecraft_chat`; speaking or replying in the web UI does not send Minecraft chat.
 
+When an external client owns conversation, `Agent.openChat` retains body tool
+calls and action narration in local output/WS frames and never publishes them
+to public chat or automatic whisper recipients. `chat_ingame=false` additionally
+disables that automatic output when the external client is disconnected. This
+setting does not disable deliberate `minecraft_chat` communication. Standalone
+automatic conversation excludes the command suffix. Debug chat, status mirrors
+and mission banners require explicit `DEBUG_CHAT=1`; the default is off.
+
+The explicit chat bridge accepts genuine plain player conversation and rejects
+tool-call syntax/raw diagnostic records. Optional `player` selects a real online
+recipient for a whisper; unavailable/self recipients fail without public
+fallback. The existing two-second send interval remains, and identical text to
+the same channel/recipient has a sixty-second duplicate cooldown. Neko receives
+the same communication policy in decision/attention prompts: keep plans and
+progress local, use public chat for useful player communication, and prefer
+private messages for individual contact, including politely initiating it.
+
 Servers implementing `MC_PROTECTION` can enable `server_protection: "mycli"`
 in the MC settings. A real server advertisement of `/mycli protect` also enables
 the adapter. Every actual dig, including path excavation and local scripts,

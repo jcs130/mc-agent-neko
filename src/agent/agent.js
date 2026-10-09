@@ -1005,7 +1005,7 @@ export class Agent {
             try { this.bot._extIntentUntil = Date.now() + 300000; } catch (e) {}
             // ★2026-07-07 用户令: 游戏聊天里提示"开始执行指令", 让人一眼知道 bot 正在跑 LLM/chat 任务(而非自主)。
             //   env DEBUG_CHAT=0 可关。self 消息会被 bot.on('chat') 的 self 过滤挡掉, 不回灌。
-            try { if (message && String(process.env.DEBUG_CHAT || '1') !== '0') this.bot.chat('🎯 开始执行指令：' + String(message).replace(/\n/g, ' ').slice(0, 80)); } catch (e) {}
+            try { if (message && process.env.DEBUG_CHAT === '1') this.bot.chat('🎯 开始执行指令：' + String(message).replace(/\n/g, ' ').slice(0, 80)); } catch (e) {}
             // ★2026-07-07 AUTO-PREEMPT for admin commands (用户实观 bug: 游戏内命"挖原木"但 bot 一直挖煤/
             //   状态显示挖煤矿). WS 路的 preempt 在 ws_server, 但游戏内 chat 不经 ws_server → 没打断在跑的技能,
             //   内核挖煤 skill 占着身体不让位 → LLM 的 !getWood 抢不到体。这里补上: admin 指令一进来就打断当前
@@ -1237,7 +1237,7 @@ export class Agent {
                 // ★外部意图独占: 本 admin chat-loop 结束(gpt-5.4-mini 判定完成)→ 释放让位戳, 内核恢复自主派发。
                 try { this.bot._extIntentUntil = 0; } catch (e) {}
                 // ★用户令: 提示指令回合结束、回到自主行动。
-                try { if (String(process.env.DEBUG_CHAT || '1') !== '0') this.bot.chat('✅ 指令完成，回到自主行动'); } catch (e) {}
+                try { if (process.env.DEBUG_CHAT === '1') this.bot.chat('✅ 指令完成，回到自主行动'); } catch (e) {}
                 try {
                     // The mini LLM often emits just '\t' when it has no
                     // narrative to add (see neko.json's "respond with just
@@ -1306,23 +1306,28 @@ export class Agent {
             to_translate = to_translate.substring(0, translate_up_to);
             remaining = message.substring(translate_up_to);
         }
-        message = (await handleTranslation(to_translate)).trim() + " " + remaining;
+        const conversation = (await handleTranslation(to_translate)).replace(/[\r\n]+/g, ' ').trim();
+        message = conversation + " " + remaining;
         // newlines are interpreted as separate chats, which triggers spam filters. replace them with spaces
         message = message.replaceAll('\n', ' ');
 
         // ★2026-07-09 死连接兜底 (实录 unhandledRejection: bot._client.chat is not a function —
         //   whisper/chat 打在已断开/半拆除的连接上)。try/catch 包住, 断线窗口的聊天丢弃即可, 别炸日志。
+        // With Neko owning conversation, body responses are action diagnostics.
+        // They still reach the local UI, while only sendGameChat publishes player
+        // communication. Even standalone chat must exclude the tool-call suffix.
+        const publishConversation = settings.chat_ingame && conversation && !wsServer.hasGameInformationClient();
         if (settings.only_chat_with.length > 0) {
-            for (let username of settings.only_chat_with) {
-                try { this.bot.whisper(username, message); } catch (e) { console.warn(`openChat: whisper dropped (bot connection dead): ${e.message}`); }
+            for (let username of publishConversation ? settings.only_chat_with : []) {
+                try { this.bot.whisper(username, conversation); } catch (e) { console.warn(`openChat: whisper dropped (bot connection dead): ${e.message}`); }
             }
         }
         else {
             if (settings.speak) {
                 speak(to_translate, this.prompter.profile.speak_model);
             }
-            if (settings.chat_ingame) {
-                try { this.bot.chat(message); } catch (e) { console.warn(`openChat: chat dropped (bot connection dead): ${e.message}`); }
+            if (publishConversation) {
+                try { this.bot.chat(conversation); } catch (e) { console.warn(`openChat: chat dropped (bot connection dead): ${e.message}`); }
             }
             sendOutputToServer(this.name, message);
         }
@@ -1868,7 +1873,7 @@ export class Agent {
         }
         
         this.history.add('system', msg);
-        this.bot.chat(code > 1 ? 'Restarting.': 'Exiting.');
+        console.log(code > 1 ? 'Restarting.' : 'Exiting.');
         this.history.save();
         process.exit(code);
     }
