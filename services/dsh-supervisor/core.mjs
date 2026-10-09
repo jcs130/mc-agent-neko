@@ -5,8 +5,8 @@ import { fileURLToPath } from 'node:url';
 export const MODEL = 'qwen3.8-flash-next-iq3_xxs';
 export const MODEL_URL = 'http://127.0.0.1:18030/v1';
 
-export function roleSchema(role) {
-    const text = { type: 'string' }, ids = { type: 'array', items: text };
+export function roleSchema(role, evidenceIds = []) {
+    const text = { type: 'string' }, ids = { type: 'array', items: evidenceIds.length ? { ...text, enum: evidenceIds } : text };
     const object = properties => ({ type: 'object', properties, required: Object.keys(properties), additionalProperties: false });
     if (role === 'observer') return object({ summary: text, issues: { type: 'array', items: object({
         key: text, title: text, severity: text, detail: text, evidenceIds: ids,
@@ -29,15 +29,15 @@ const bounded = (value, limit) => {
     return text.length <= limit ? value ?? null : { truncated: true, excerpt: text.slice(0, limit) };
 };
 
-export function buildEvidence(frame, worldModel, sentinel, now = Date.now()) {
+export function buildEvidence(frame, worldModel, sentinel, now = Date.now(), extras = {}) {
     const age = Number.isFinite(frame?.observedAt) ? Math.max(0, now - frame.observedAt) : Infinity;
     const fresh = frame?.online === true && age < 45000;
     const state = frame?.state ?? {};
     const facts = [];
-    const add = (id, value, budget, timestamp = frame?.observedAt) => {
+    const add = (id, value, budget, timestamp = frame?.observedAt, kind = 'observation') => {
         if (value == null) return;
         const ageMs = Number.isFinite(timestamp) ? Math.max(0, now - timestamp) : null;
-        facts.push({ id, stale: ageMs === null || ageMs > 90000, ageMs, value: bounded(value, budget) });
+        facts.push({ id, kind, stale: ageMs === null || ageMs > 90000, ageMs, value: bounded(value, budget) });
     };
     add('game.self', state.self, 700);
     add('game.activity', state.activity, 1000);
@@ -56,6 +56,18 @@ export function buildEvidence(frame, worldModel, sentinel, now = Date.now()) {
     if (sentinel) add('sentinel', { realProgress: sentinel.realProgress,
         activeDetectors: sentinel.activeDetectors, telemetryAgeS: sentinel.telemetryAgeS }, 700,
     Number.isFinite(sentinel.telemetryAgeS) ? sentinel.ts - Math.max(0, sentinel.telemetryAgeS) * 1000 : sentinel.ts);
+    const history = (extras.nativeEvents ?? []).filter(event => now - event.at < 3600000);
+    const failures = history.filter(event => event.value.ok === false || ['failed', 'timeout'].includes(event.value.status)).slice(-3);
+    const selected = [...new Set([...failures, ...history.slice(-4)])];
+    for (const [index, event] of selected.entries()) {
+        const value = event.value;
+        add(`native.execution.${event.at}.${index}`, { at: event.at, type: value.type, status: value.status,
+            ok: value.ok, taskId: value.task_id, message: String(value.message ?? value.error ?? '').slice(0, 650) }, 950, event.at);
+    }
+    const ticket = extras.ticket;
+    if (ticket) add('ticket:' + ticket.id, { id: ticket.id, createdAt: ticket.createdAt, updatedAt: ticket.updatedAt,
+        status: ticket.status, title: ticket.title, detail: ticket.detail, evidence: ticket.evidence }, 1600,
+    Date.parse(ticket.updatedAt ?? ticket.createdAt), 'record');
     return { observedAt: frame?.observedAt ?? null, sessionId: frame?.sessionId ?? null, fresh, facts };
 }
 
@@ -69,7 +81,7 @@ export function parseReport(text) {
 export function validateIssue(issue, evidence) {
     if (!evidence.fresh || typeof issue?.key !== 'string' || !/^[a-z0-9_-]{1,64}$/.test(issue.key)
         || typeof issue.title !== 'string' || !issue.title.trim()) return null;
-    const available = new Set(evidence.facts.filter(x => !x.stale).map(x => x.id));
+    const available = new Set(evidence.facts.filter(x => !x.stale && x.kind !== 'record').map(x => x.id));
     const ids = Array.isArray(issue.evidenceIds) ? [...new Set(issue.evidenceIds)] : [];
     if (!ids.length || ids.some(id => !available.has(id))) return null;
     return { key: issue.key, title: issue.title.slice(0, 140),
@@ -87,8 +99,15 @@ export function auditDue(state, tickets, now = Date.now()) {
 export function selectTicket(tickets, ledger) {
     const pending = tickets.filter(ticket => ledger.reviewed?.[ticket.id] !== ticket.updatedAt);
     // Old recurring tickets must not starve tickets that have never been inspected.
-    pending.sort((a, b) => (ledger.reviewedAt?.[a.id] ?? 0) - (ledger.reviewedAt?.[b.id] ?? 0));
+    pending.sort((a, b) => (ledger.attemptedAt?.[a.id] ?? ledger.reviewedAt?.[a.id] ?? 0)
+        - (ledger.attemptedAt?.[b.id] ?? ledger.reviewedAt?.[b.id] ?? 0));
     return pending[0] ?? tickets[0] ?? null;
+}
+
+export function migrateLedger(previous = {}) {
+    if (previous.schemaVersion === 2) return previous;
+    // Version 1 marked tickets reviewed even when no diagnosis reached the API.
+    return { ...previous, schemaVersion: 2, reviewed: {}, reviewedAt: {}, attemptedAt: {}, baselineComplete: false };
 }
 
 export const canStartInference = metrics => metrics?.live?.state === 'idle' && metrics.live.queued === 0;
@@ -97,6 +116,49 @@ export const canStartInference = metrics => metrics?.live?.state === 'idle' && m
 // periodic telemetry must not make a frozen game loop appear to be making progress.
 export const isActivityEvent = value => ['log', 'task_finished', 'skill_result', 'server_command_result',
     'chat_result', 'cancel_result', 'error', 'agent_status'].includes(value?.type);
+
+export function parseExecutionLog(text) {
+    const events = [];
+    for (const line of String(text).split('\n')) {
+        const match = /^\[([^\]]+)\]\s*(\{.*\})$/.exec(line.trim());
+        if (!match) continue;
+        try {
+            const at = Date.parse(match[1]), value = JSON.parse(match[2]);
+            if (Number.isFinite(at) && isActivityEvent(value)) events.push({ at, value });
+        } catch { /* partial or unrelated log entry */ }
+    }
+    return events;
+}
+
+export function readExecutionHistory(file) {
+    let fd;
+    try {
+        fd = fs.openSync(file, 'r');
+        const length = fs.fstatSync(fd).size;
+        const tail = Buffer.alloc(Math.min(length, 256 * 1024));
+        fs.readSync(fd, tail, 0, tail.length, length - tail.length);
+        return parseExecutionLog(tail.toString('utf8'));
+    } catch { return []; }
+    finally { if (fd !== undefined) fs.closeSync(fd); }
+}
+
+// A diagnosis may explain a historical failure, but must label old evidence.
+// Only a confirmed API write acknowledges a revision; failure stays retryable.
+export async function writeDiagnosis({ ticket, evidence, diagnosis, read, post }) {
+    const pending = reason => ({ state: 'pending', ticketId: ticket?.id, reason });
+    if (!ticket) return { state: 'not_needed' };
+    const ids = Array.isArray(diagnosis?.evidenceIds) ? [...new Set(diagnosis.evidenceIds)] : [];
+    const known = new Map(evidence.facts.map(item => [item.id, item]));
+    if (!diagnosis?.summary?.trim() || !ids.length || ids.some(id => !known.has(id))) return pending('invalid citation or missing diagnosis');
+    const historical = ids.filter(id => known.get(id).stale || known.get(id).kind === 'record');
+    try {
+        if (read && (await read(ticket.id)).updatedAt !== ticket.updatedAt) return pending('ticket changed during diagnosis');
+        const result = await post(ticket.id, { actor: 'dsh-diagnoser', note:
+            `诊断假设（未修复${historical.length ? '；含历史证据，不代表故障仍持续' : ''}）：${diagnosis.summary.slice(0, 230)}；证据 ${ids.join(',')}`.slice(0, 500) });
+        if (result?.id !== ticket.id || typeof result.updatedAt !== 'string') return pending('writeback unconfirmed');
+        return { state: 'written', ticketId: ticket.id, updatedAt: result.updatedAt, historicalIds: historical };
+    } catch (error) { return pending('writeback failed: ' + error.message); }
+}
 
 export function approvedIssues(issues, reviewer, evidence, current, now = Date.now()) {
     if (!current.fresh || current.sessionId !== evidence.sessionId || !evidence.fresh

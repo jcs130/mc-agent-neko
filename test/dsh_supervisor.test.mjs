@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildEvidence, parseReport, validateIssue, auditDue, assertLocalModel, makeProfile, canStartInference, approvedIssues, selectTicket, isActivityEvent } from '../services/dsh-supervisor/core.mjs';
+import { buildEvidence, parseReport, validateIssue, auditDue, assertLocalModel, makeProfile, canStartInference, approvedIssues, selectTicket, isActivityEvent, parseExecutionLog, writeDiagnosis, roleSchema, migrateLedger } from '../services/dsh-supervisor/core.mjs';
 
 const NOW = 1791562000000;
 const frame = { sessionId: 'live-session', observedAt: NOW, online: true, state: {
@@ -121,4 +121,62 @@ test('independent review cannot publish unsupported, expired, or previous-sessio
     ]) assert.equal(approvedIssues([issue], invalid, evidence, evidence, NOW).length, 0);
     assert.equal(approvedIssues([issue], reviewer, evidence, { ...evidence, sessionId: 'next-session' }, NOW).length, 0);
     assert.equal(approvedIssues([issue], reviewer, evidence, evidence, NOW + 91000).length, 0);
+});
+
+test('native failure history and original ticket evidence survive a fresh snapshot', () => {
+    const text = `[${new Date(NOW - 600000).toISOString()}] ${JSON.stringify({ type: 'task_finished', status: 'failed', task_id: 'trade', message: '任务超时；Expected merchant but got generic_9x1' })}\ninvalid\n`;
+    const events = parseExecutionLog(text);
+    assert.equal(events.length, 1);
+    const ticket = { id: 'T-0003', createdAt: new Date(NOW - 1000).toISOString(), updatedAt: new Date(NOW - 1000).toISOString(),
+        title: 'self-reported stall', status: 'open', evidence: { pinnedMin: 15, actualFailure: 'merchant mismatch' } };
+    const evidence = buildEvidence(frame, null, null, NOW, { nativeEvents: events, ticket });
+    const failure = evidence.facts.find(x => x.id.startsWith('native.execution.'));
+    assert.equal(failure.stale, true);
+    assert.match(JSON.stringify(failure.value), /generic_9x1/);
+    const record = evidence.facts.find(x => x.id === 'ticket:T-0003');
+    assert.match(JSON.stringify(record.value), /merchant mismatch/);
+    assert.ok(record.value.createdAt);
+    assert.equal(validateIssue({ key: 'duplicate', title: 'duplicate', evidenceIds: [record.id] }, evidence), null);
+});
+
+test('DSH role schemas limit citations to actual supplied facts', () => {
+    const schema = roleSchema('diagnoser', ['game.activity', 'ticket:T-0003']);
+    assert.deepEqual(schema.properties.evidenceIds.items.enum, ['game.activity', 'ticket:T-0003']);
+});
+
+test('historical diagnosis can be written with its age; unknown references stay pending', async () => {
+    const ticket = { id: 'T-0003', updatedAt: 'revision-1' };
+    const evidence = { fresh: true, facts: [{ id: 'native.failure', stale: true }, { id: 'game.activity', stale: false }] };
+    let writes = 0;
+    const post = (_id, body) => { writes++; assert.match(body.note, /历史/); return Promise.resolve({ id: ticket.id, updatedAt: 'revision-2' }); };
+    const result = await writeDiagnosis({ ticket, evidence, diagnosis: { summary: 'Past trade failure needs menu inspection.', evidenceIds: ['native.failure'] }, post });
+    assert.equal(result.state, 'written');
+    assert.equal(result.updatedAt, 'revision-2');
+    const blocked = await writeDiagnosis({ ticket, evidence, diagnosis: { summary: 'unknown', evidenceIds: ['invented'] }, post });
+    assert.equal(blocked.state, 'pending');
+    assert.match(blocked.reason, /citation/);
+    assert.equal(writes, 1);
+});
+
+test('failed or concurrent writeback never acknowledges the ticket revision', async () => {
+    const input = { ticket: { id: 'T-0003', updatedAt: 'revision-1' }, evidence: { fresh: true, facts: [{ id: 'game.activity', stale: false }] },
+        diagnosis: { summary: 'hypothesis', evidenceIds: ['game.activity'] } };
+    for (const post of [() => Promise.reject(new Error('HTTP 500')), () => Promise.resolve({})]) {
+        const result = await writeDiagnosis({ ...input, post });
+        assert.equal(result.state, 'pending');
+        assert.equal(result.updatedAt, undefined);
+    }
+    const result = await writeDiagnosis({ ...input, read: () => Promise.resolve({ ...input.ticket, updatedAt: 'unseen-recurrence' }),
+        post: () => assert.fail('must re-read changed evidence before posting') });
+    assert.equal(result.state, 'pending');
+    assert.match(result.reason, /changed/);
+});
+
+test('legacy review marks without confirmed writeback are reopened for diagnosis', () => {
+    const old = { baselineComplete: true, lastAuditAt: NOW, reviewed: { 'T-0003': 'old-revision' } };
+    const migrated = migrateLedger(old);
+    assert.equal(migrated.baselineComplete, false);
+    assert.deepEqual(migrated.reviewed, {});
+    assert.equal(old.reviewed['T-0003'], 'old-revision');
+    assert.equal(migrateLedger(migrated), migrated);
 });
