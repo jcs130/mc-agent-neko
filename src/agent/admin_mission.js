@@ -577,6 +577,16 @@ export class AdminMission {
         while (observations.length > 8 || observations.reduce((size, text) => size + text.length, 0) > 12000) observations.shift();
     }
 
+    completionFeedback() {
+        if (!this.isActive() || this.mission.observations?.length || this.progressEvidence()) return null;
+        // A new task can otherwise be marked done on the model's first reply,
+        // solely from old narration. This is a minimum grounding check, not a
+        // semantic verifier for every goal. Read-only tasks remain valid.
+        return 'Action not started: !endGoal has no current task game observation or action result, and no measured inventory change. '
+            + 'The task remains active. Read a relevant current !inventory, !stats, !window or other game query, or execute the requested action, '
+            + 'then verify the actual goal before reporting completion. Previous task narration is not execution evidence.';
+    }
+
     // ── the single idempotent termination funnel ────────────────────────────────────────────────
     async end(reason, detail, opts = {}) {
         if (this.state !== RUNNING) return;   // first cause wins; any racing second cause no-ops

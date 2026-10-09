@@ -748,7 +748,7 @@ export const actionsList = [
     },
     {
         name: '!endGoal',
-        description: 'Call when you have accomplished your goal / assigned task. It will stop self-prompting and the current action. ',
+        description: 'Report completion only after verifying the current goal with actual game results. A new assigned task without a game query/action result or measured inventory change cannot be ended by model narration alone. Read-only goals can finish after their query. Stops self-prompting and the current action.',
         perform: async function (agent) {
             // ★2026-07-07 ADMIN MISSION: this is the DONE signal. End the mission (fires exactly one
             //   task_finished status=ok). Falls back to legacy self-prompt stop for a plain !goal.

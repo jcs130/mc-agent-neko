@@ -9,7 +9,10 @@ function harness(perform = async () => '生命 20/20；魔力 20/20；技能点 
         console, Date, setTimeout, clearTimeout, process: { env: { DEBUG_CHAT: '0' } },
         wsServer: { beginMissionTask() {}, finishMission: (...args) => finishes.push(args) },
         queryList: [{ name: '!readBook', params: { slot: { type: 'int' } }, perform }],
-        actionsList: actions,
+        actionsList: [{ name: '!endGoal', perform: async agent => {
+            await agent.adminMission.end('done');
+            return 'Mission complete.';
+        } }, ...actions],
     });
     for (const relative of ['../src/agent/admin_mission.js', '../src/agent/commands/index.js']) {
         const source = readFileSync(new URL(relative, import.meta.url), 'utf8')
@@ -23,6 +26,61 @@ function harness(perform = async () => '生命 20/20；魔力 20/20；技能点 
     const execute = vm.runInContext('executeCommand', context);
     return { agent, mission: agent.adminMission, finishes, execute };
 }
+
+test('model cannot finish a fresh task before any game result or measured change', async () => {
+    const { agent, mission, finishes, execute } = harness();
+    mission._handoff({ text: '存入泥土', taskId: 'unobserved', origin: 'ws' });
+    let interrupts = 0;
+    const result = await execute(agent, '!endGoal', () => { interrupts++; });
+    assert.match(result, /Action not started:.*endGoal/);
+    assert.match(result, /current task.*(?:observation|result)/i);
+    assert.equal(interrupts, 0, 'rejection must precede the lifecycle interruption callback');
+    assert.equal(finishes.length, 0);
+    assert.equal(mission.isActive(), true);
+});
+
+test('a read-only task can finish after receiving its actual query result', async () => {
+    const { agent, mission, finishes, execute } = harness();
+    mission._handoff({ text: '读书', taskId: 'observed', origin: 'ws' });
+    await execute(agent, '!readBook(-1)');
+    let interrupts = 0;
+    assert.equal(await execute(agent, '!endGoal', () => { interrupts++; }), 'Mission complete.');
+    assert.equal(interrupts, 1);
+    assert.equal(finishes.length, 1);
+    assert.match(finishes[0][2], /技能点 6/);
+});
+
+test('old or late query results do not authorize finishing a replacement task', async () => {
+    let release;
+    const { agent, mission, finishes, execute } = harness(() => new Promise(resolve => { release = resolve; }));
+    mission._handoff({ text: '旧查询', taskId: 'old-proof', origin: 'ws' });
+    const pending = execute(agent, '!readBook(-1)');
+    mission._handoff({ text: '新存储任务', taskId: 'new-proof', origin: 'ws' });
+    release('Old task data');
+    await pending;
+    const count = finishes.length;
+    assert.match(await execute(agent, '!endGoal', () => assert.fail('must not interrupt')), /Action not started:/);
+    assert.equal(finishes.length, count);
+    assert.equal(mission.mission.taskId, 'new-proof');
+});
+
+test('a measured inventory change permits reporting without requiring a redundant query', async () => {
+    const { agent, mission, finishes, execute } = harness();
+    agent.bot.entity = { position: {} };
+    agent.bot.inventory = { slots: Array(46).fill(null) };
+    mission._handoff({ text: '拾取木棍', taskId: 'measured', origin: 'ws' });
+    agent.bot.inventory.slots[10] = { name: 'stick', count: 1 };
+    assert.equal(await execute(agent, '!endGoal', () => {}), 'Mission complete.');
+    assert.match(finishes[0][2], /stick.*before.*0.*now.*1/);
+});
+
+test('an explicit user lifecycle command retains its termination authority', async () => {
+    const { agent, mission, finishes, execute } = harness();
+    mission._handoff({ text: '仍可由玩家结束', taskId: 'human-end', origin: 'ws' });
+    assert.equal(await execute(agent, '!endGoal'), 'Mission complete.');
+    assert.equal(finishes.length, 1);
+    assert.equal(mission.isActive(), false);
+});
 
 test('actual query data reaches the task completion even when narration is empty', async () => {
     const { agent, mission, finishes, execute } = harness();
