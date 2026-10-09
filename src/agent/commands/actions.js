@@ -47,7 +47,7 @@ function runAsAction (actionFn, resume = false, timeout = -1, preflight = null) 
     const wrappedAction = async function (agent, ...args) {
         if (preflight) {
             const refusal = preflight(agent, ...args);
-            if (refusal) return refusal;
+            if (refusal) return `Action not started: ${refusal}`;
         }
         // Set actionLabel only once, when the action is first created
         if (!actionLabel) {
@@ -55,12 +55,15 @@ function runAsAction (actionFn, resume = false, timeout = -1, preflight = null) 
             actionLabel = actionObj.name.substring(1); // Remove the ! prefix
         }
 
+        let skillResult;
         const actionFnWithAgent = async () => {
-            await actionFn(agent, ...args);
+            skillResult = await actionFn(agent, ...args);
         };
         const code_return = await agent.actions.runAction(`action:${actionLabel}`, actionFnWithAgent, { timeout, resume });
         if (code_return.interrupted && !code_return.timedout)
             return;
+        if (skillResult === false || code_return.success === false || code_return.timedout)
+            return `Action failed: !${actionLabel} did not complete successfully.\n${code_return.message || ''}`;
         return code_return.message;
     }
 
@@ -311,7 +314,7 @@ export const actionsList = [
             'closeness': {type: 'float', description: 'How close to get to the location.', domain: [0, Infinity]}
         },
         perform: runAsAction(async (agent, x, y, z, closeness) => {
-            await skills.goToPosition(agent.bot, x, y, z, closeness);
+            return await skills.goToPosition(agent.bot, x, y, z, closeness);
         })
     },
     {
@@ -397,7 +400,7 @@ export const actionsList = [
         description: 'Equip an inventory item using its base Minecraft ID. For custom server items, read !inventory labels/lore to identify the matching base ID first.',
         params: {'item_name': { type: 'ItemName', description: 'The base item ID shown by !inventory, not its custom display label.' }},
         perform: runAsAction(async (agent, item_name) => {
-            await skills.equip(agent.bot, item_name);
+            return await skills.equip(agent.bot, item_name);
         })
     },
     {
@@ -408,7 +411,7 @@ export const actionsList = [
             'num': { type: 'int', description: 'The number of items to put in the chest.', domain: [1, Number.MAX_SAFE_INTEGER] }
         },
         perform: runAsAction(async (agent, item_name, num) => {
-            await skills.putInChest(agent.bot, item_name, num);
+            return await skills.putInChest(agent.bot, item_name, num);
         })
     },
     {
@@ -419,7 +422,7 @@ export const actionsList = [
             'num': { type: 'int', description: 'The number of items to take.', domain: [1, Number.MAX_SAFE_INTEGER] }
         },
         perform: runAsAction(async (agent, item_name, num) => {
-            await skills.takeFromChest(agent.bot, item_name, num);
+            return await skills.takeFromChest(agent.bot, item_name, num);
         })
     },
     {
@@ -438,7 +441,7 @@ export const actionsList = [
             'num': { type: 'int', description: 'The number of items to discard.', domain: [1, Number.MAX_SAFE_INTEGER] }
         },
         perform: runAsAction(async (agent, item_name, num) => {
-            await skills.discardAway(agent.bot, item_name, num);
+            return await skills.discardAway(agent.bot, item_name, num);
         })
     },
     {
@@ -613,7 +616,7 @@ export const actionsList = [
             'num': { type: 'int', description: 'The number of times to craft the recipe. This is NOT the number of output items, as it may craft many more items depending on the recipe.', domain: [1, Number.MAX_SAFE_INTEGER] }
         },
         perform: runAsAction(async (agent, recipe_name, num) => {
-            await skills.craftRecipeLocal(agent.bot, recipe_name, num);
+            return await skills.craftRecipeLocal(agent.bot, recipe_name, num);
         })
     },
     {
@@ -643,7 +646,7 @@ export const actionsList = [
         description: 'Place one block beside the bot without walking away or pillaring. May clear at most a two-block niche in a cramped pocket. Use for "place here", "原地放置", crafting tables, furnaces, and other single blocks; do not use for structures.',
         params: {'type': { type: 'BlockOrItemName', description: 'The block type to place.' }},
         perform: runAsAction(async (agent, type) => {
-            await skills.placeBlockNearby(agent.bot, type, {
+            return await skills.placeBlockNearby(agent.bot, type, {
                 maxTries: 1,
                 relocate: false,
                 pillar: false,
@@ -871,7 +874,7 @@ export const actionsList = [
         description: 'Moves the bot to the highest block above it (usually the surface).',
         params: {},
         perform: runAsAction(async (agent) => {
-            await skills.goToSurface(agent.bot);
+            return await skills.goToSurface(agent.bot);
         })
     },
     {

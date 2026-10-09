@@ -297,7 +297,7 @@ export class Agent {
     }
     _adminMultiCmdMax() {
         const n = parseInt(process.env.MC_ADMIN_MULTICMD_MAX, 10);
-        return (Number.isFinite(n) && n > 0) ? n : 6;   // 单回合执行命令上限, 防失控连发
+        return (Number.isFinite(n) && n > 0) ? n : 3;
     }
 
     shutUp() {
@@ -1162,25 +1162,43 @@ export class Agent {
                             lastConversationReply = pre_message;
 
                         const MAX_BATCH = this._adminMultiCmdMax();
+                        const batchStartedAt = Date.now();
                         let batch_broke = false;
+                        let batch_stopped = false;
                         for (let ci = 0; ci < cmd_batch.length && ci < MAX_BATCH; ci++) {
                             const cstr = cmd_batch[ci];
                             const cname = containsCommand(cstr);
                             if (!cname || !commandExists(cname)) {
                                 this.history.add('system', `Command ${cname || cstr} does not exist.`);
                                 console.warn('Agent hallucinated command:', cname || cstr);
-                                continue;   // 跳过坏命令, 不中断整批
+                                this.history.add('system', 'Batch stopped: invalid command. Remaining commands were not executed. Reobserve and choose a fresh short step.');
+                                batch_stopped = true;
+                                break;
                             }
                             if (checkInterrupt()) { batch_broke = true; break; }
-                            let execute_res = await executeCommand(this, cstr, () =>
-                                this.self_prompter.handleUserPromptedCmd(self_prompt, isAction(cname)));
+                            let validated = false;
+                            let execute_res = await executeCommand(this, cstr, () => {
+                                validated = true;
+                                this.self_prompter.handleUserPromptedCmd(self_prompt, isAction(cname));
+                            });
                             console.log('Agent executed (batch):', cname, 'and got:', execute_res);
                             used_command = true;
                             if (execute_res)
                                 this.history.add('system', execute_res);
                             else { batch_broke = true; break; }   // 动作被打断(falsy) → 停批, 交回上层
+                            // Only local explicit outcomes affect batch control. Do not
+                            // infer failure from warning words in server/player text.
+                            const failed = !validated || /^Action (?:failed|not started):/.test(execute_res);
+                            const budgetReached = Date.now() - batchStartedAt >= 30000;
+                            if (failed || budgetReached) {
+                                this.history.add('system', `Batch stopped: ${failed ? 'action failed or was rejected' : 'completed action reached the 30s batch budget'}. `
+                                    + `${cmd_batch.length - ci - 1} remaining command(s) were not executed. `
+                                    + 'Use the actual result above, reobserve changed state if needed, and choose a fresh short step. Do not replay the same failed batch.');
+                                batch_stopped = true;
+                                break;
+                            }
                         }
-                        if (cmd_batch.length > MAX_BATCH)
+                        if (!batch_stopped && !batch_broke && cmd_batch.length > MAX_BATCH)
                             this.history.add('system', `(Only the first ${MAX_BATCH} commands ran this turn; re-issue the rest if still needed.)`);
                         if (batch_broke) break;
                     }

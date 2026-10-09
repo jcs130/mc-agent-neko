@@ -359,6 +359,7 @@ export function getCommandDocs(agent) {
     const lifecycle = ['!stop', '!goal', '!endGoal', '!cannotComplete']
         .filter(name => commandMap[name] && !agent.blocked_actions.includes(name));
     docs += '\nCommands requiring arguments need complete calls. Quoted/backtick mentions and thinking blocks are not executed.';
+    docs += '\nKeep fixed batches to at most three commands. Explicit action failure/rejection cancels the remainder; a completed action reaching 30s also yields for a fresh decision. Unexecuted commands are not automatically retried. Do not use a long discard list when the first item might rebound: check one result, then choose another method if it fails.';
     if (lifecycle.length) docs += ` Put lifecycle controls (${lifecycle.join(', ')}) alone on their own line, without surrounding prose.`;
     docs += '\n';
     const recovery = [
