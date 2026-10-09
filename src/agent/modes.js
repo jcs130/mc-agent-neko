@@ -7245,6 +7245,11 @@ const modes_list = [
 ];
 
 async function execute(mode, agent, func, timeout=-1) {
+    const body = agent.bot;
+    if (!body || body._poisoned) return;
+    // Watchdogs may clear mode.active before an awaited action has exited.
+    // Coalesce that same invocation rather than stopping it with itself.
+    if (mode._executionToken?.body === body) return;
     // ★2026-07-08 用户令 (admin 意志 = 独占 / 绝对 · 冻结所有非致命本能): admin 任务 (bot._extIntentUntil
     //   新鲜) 执行期间, 只有【致命 / 保命本能】能抢身体 —— arbiter.vitalNow 致命地板, 以及 self_preservation /
     //   self_defense (二者内含 creeper 闪避 / 贴脸死战 / shouldFlee 逃跑的自门, 是真·反应式保命) 与 auto_eat
@@ -7283,22 +7288,30 @@ async function execute(mode, agent, func, timeout=-1) {
             if (_enforce && _verdict.winner !== 'claimant') return;
         }
     } catch (e) {}
+    const executionToken = { body };
+    mode._executionToken = executionToken;
     if (agent.self_prompter.isActive())
         agent.self_prompter.stopLoop();
     let interrupted_action = agent.actions.currentActionLabel;
     mode.active = true;
     // ★所有权令牌: 与 mode.active 同生同灭; finally 只释放自己的 (owner-tag 语义 —
     // 若期间被后来者覆写, release 是 no-op)。
-    setBodyOwner(agent.bot, `mode:${mode.name}`, 'mode');
+    setBodyOwner(body, `mode:${mode.name}`, 'mode');
     let code_return;
+    let invocationCurrent = false;
     try {
         code_return = await agent.actions.runAction(`mode:${mode.name}`, async () => {
             await func();
         }, { timeout });
     } finally {
-        mode.active = false;
-        releaseBodyOwner(agent.bot, `mode:${mode.name}`);
+        invocationCurrent = mode._executionToken === executionToken;
+        if (invocationCurrent) {
+            mode.active = false;
+            mode._executionToken = null;
+        }
+        releaseBodyOwner(body, `mode:${mode.name}`);
     }
+    if (!invocationCurrent || agent.bot !== body || body._poisoned) return;
     
     // Only log mode completion for non-interrupted actions or when there's meaningful output
     if (!code_return.interrupted) {
@@ -7460,6 +7473,14 @@ class ModeController {
 
 export function initModes(agent) {
     _agent = agent;
+    // Reconnect replaces the body. A promise left on the retired body must
+    // neither latch its mode on the new body nor clear a newer invocation.
+    for (const mode of modes_list) {
+        if (mode._executionToken && mode._executionToken.body !== agent.bot) {
+            mode._executionToken = null;
+            mode.active = false;
+        }
+    }
     // the mode controller is added to the bot object so it is accessible from anywhere the bot is used
     agent.bot.modes = new ModeController();
     if (agent.task) {
