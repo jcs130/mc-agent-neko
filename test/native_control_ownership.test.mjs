@@ -3,12 +3,13 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 
-function fixture({ owner = true, translate = async text => text } = {}) {
+function fixture({ owner = true, managed = false, translate = async text => text } = {}) {
     const calls = { prompts: 0, commands: [], replies: [], finishes: [] };
     const state = { owner };
     const context = vm.createContext({
         console: { log() {}, warn() {}, error() {} }, Date, setTimeout, clearTimeout,
-        process: { env: { DEBUG_CHAT: '0' } }, settings: { max_commands: 1, show_command_syntax: 'full' },
+        process: { env: { DEBUG_CHAT: '0' } }, settings: { max_commands: 1, show_command_syntax: 'full',
+            external_autonomy_owner: managed ? 'neko' : null },
         wsServer: { hasGameInformationClient: () => state.owner, beginMissionTask() {},
             finishMission: (...args) => calls.finishes.push(args), markChatTaskComplete() {} },
         convoManager: { isOtherAgent: () => false, responseScheduledFor: () => false },
@@ -92,6 +93,19 @@ test('standalone native autonomy remains available', async () => {
     const f = fixture({ owner: false });
     assert.equal(await f.agent.handleMessage('system', 'Continue mining.'), true);
     assert.equal(f.calls.commands.length, 1);
+});
+
+test('configured Neko ownership blocks native prompts before the plugin connects', async () => {
+    const f = fixture({ owner: false, managed: true });
+    assert.equal(await f.agent.handleMessage('system', 'Continue mining.'), false);
+    assert.equal(f.calls.prompts, 0);
+    assert.deepEqual(f.calls.commands, []);
+});
+
+test('configured ownership still allows explicit tasks before the plugin connects', async () => {
+    const f = fixture({ owner: false, managed: true });
+    assert.equal(await f.agent.handleMessage('admin', '!stop'), true);
+    assert.deepEqual(f.calls.commands, ['!stop']);
 });
 
 test('current Neko mission may still run its native self-prompt commands', async () => {

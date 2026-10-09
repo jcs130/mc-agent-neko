@@ -256,6 +256,13 @@ export class Agent {
         }
     }
 
+    hasExternalAutonomyOwner() {
+        // Reserve autonomy at startup too: a long kernel skill must not begin
+        // while the external controller is still connecting/reloading.
+        return settings.external_autonomy_owner === 'neko'
+            || Boolean(wsServer.hasGameInformationClient?.());
+    }
+
     requestInterrupt() {
         const bot = this.bot;
         if (!bot) return;
@@ -1010,7 +1017,7 @@ export class Agent {
         // Neko owns autonomous decisions. A system notification between kernel skills
         // must not revive an expired goal from the native conversation history.
         const nativeTurnBlocked = () => self_prompt && (this.supervised_skill
-            || (wsServer.hasGameInformationClient?.()
+            || (this.hasExternalAutonomyOwner()
                 && !(this._missionEnabled && this.adminMission?.isActive())));
         const checkInterrupt = () => nativeTurnBlocked() || this.self_prompter.shouldInterrupt(self_prompt)
             || this.shut_up || convoManager.responseScheduledFor(source)

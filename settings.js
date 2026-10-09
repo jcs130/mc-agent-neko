@@ -45,6 +45,7 @@ const settings = {
     // Works on windows and mac, but linux requires you to install the espeak package through your package manager eg: `apt install espeak` `pacman -S espeak`.
 
     "chat_ingame": false, // bot responses are shown in minecraft chat
+    "external_autonomy_owner": null, // "neko" reserves decisions even before its plugin connects; native skills/reflexes remain available
     "language": "en", // translate to/from this language. Supports these language names: https://cloud.google.com/translate/docs/languages
     "render_bot_view": false, // show bot's view in browser at localhost:3000, 3001...
     "viewer_type": "prismarine", // "modern" uses Cortico's standalone renderer
