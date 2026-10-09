@@ -1,9 +1,9 @@
 {
   "upstreamRepository": "https://github.com/Project-N-E-K-O/N.E.K.O",
   "baseCommit": "fb2a2e731a8c954478d08678b0c8cf40e8145a54",
-  "sourceCommit": "417ed6550af5e12d6a65c54cb2420d1645f1b4eb",
+  "sourceCommit": "822fac7b5468a038fa1e72580e866e62112ee3ea",
   "scope": "plugin/plugins/game_agent_minecraft",
-  "resultPluginTree": "1ea77d07fa3fbd5cd9704bd91655f2921d2a30b2",
+  "resultPluginTree": "76153519cb88b766ed9425b3ee5e8b177c6c92bc",
   "patches": [
     {
       "file": "0001-chore-configure-text-only-local-Qwen-Minecraft-trial.patch",
@@ -204,12 +204,20 @@
     {
       "file": "0050-docs-minecraft-record-final-context-budgets-and-depl.patch",
       "sha256": "58c7e5edd166d6a7e41bcb13788062f324d0abbd78e91cf6b1f765802f567455"
+    },
+    {
+      "file": "0051-fix-minecraft-preserve-server-gameplay-routes-in-aut.patch",
+      "sha256": "dffaa5b7b734480afbd6f49a331d380d6dfee9c2128a657967ddb39761ea36e7"
+    },
+    {
+      "file": "0052-fix-minecraft-distinguish-rejected-casts-from-gamepl.patch",
+      "sha256": "16109b60b8c9acbbde30c01f6c9d21bea28db72cf5d688ccaae5b653f58d9719"
     }
   ],
   "verification": {
     "appliedInOrderToBase": true,
     "resultPluginTreeMatchesSource": true,
-    "pluginTestsPassed": 155,
+    "pluginTestsPassed": 164,
     "hostCallbackTestsPassed": 195,
     "hostFileBlobsMatchSource": true,
     "nativeSourceTestsPassed": 450,
@@ -310,6 +318,34 @@
     "passiveAutonomousCraftTaskCompleted": true,
     "passiveHandoffFailures": 0,
     "automaticSkillPromotionImplemented": false,
+    "longRunReliabilityProven": false
+  },
+  "serverPlayContextVerification": {
+    "offlineCapturedStateReplays": 2,
+    "boardGuildTrialRoutesRetainedAt700And400": true,
+    "completeIdleCueTokens": [
+      835,
+      895
+    ],
+    "pluginTestsPassed": 164,
+    "injectedLiveGameActions": false,
+    "liveObservationHasAllRoutes": true,
+    "liveIdleCueTokens": [
+      892,
+      922
+    ],
+    "serverErrorCorrectionsExplicit": true,
+    "deployedPluginTreeMatchesSource": true,
+    "autonomousBoardQueryObserved": true,
+    "questAcceptanceVerified": true,
+    "verifiedQuestId": "tm_first_spell",
+    "firstQuestStageVerified": true,
+    "firstStageReceipt": "MC_MARKET_CHECK ready=true; advanced to stage 2/2",
+    "wholeQuestCompletionVerified": false,
+    "trialCompletionVerified": false,
+    "firstStageObservedBeforeCastCorrectionReload": true,
+    "finalReloadHadPendingTask": false,
+    "finalReloadBodyBusy": false,
     "longRunReliabilityProven": false
   }
 }

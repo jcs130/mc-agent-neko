@@ -1,0 +1,110 @@
+From 822fac7b5468a038fa1e72580e866e62112ee3ea Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Fri, 9 Oct 2026 23:25:42 +0800
+Subject: [PATCH] fix(minecraft): distinguish rejected casts from gameplay
+ progress
+
+---
+ .../plugins/game_agent_minecraft/__init__.py  |  6 +++---
+ .../docs/2026-10-09-server-play-context.md    |  1 +
+ .../plugins/game_agent_minecraft/service.py   | 20 ++++++++++++++++---
+ .../test_server_play_context.py               | 12 +++++++++++
+ 4 files changed, 33 insertions(+), 6 deletions(-)
+
+diff --git a/plugin/plugins/game_agent_minecraft/__init__.py b/plugin/plugins/game_agent_minecraft/__init__.py
+index 6206ef1..b923e0b 100644
+--- a/plugin/plugins/game_agent_minecraft/__init__.py
++++ b/plugin/plugins/game_agent_minecraft/__init__.py
+@@ -417,7 +417,7 @@ class GameAgentMinecraftPlugin(NekoPluginBase):
+ 
+     @llm_tool(
+         name="minecraft_server",
+-        description="Query or execute actual server /mycli commands for skills AND server gameplay: village affairs, guild membership, commissions, trials and rewards. Follow received serverPlay routes/guides; consult missing eligibility/syntax before acting, keep an unfinished goal across steps, and verify acceptance/completion/rewards separately from real replies. A successful server action does not require an extra physical task. Do not rediscover known catalogues every turn. Discover with /mycli help or /mycli spells list 1, follow MC_SPELL_NEXT; /mycli skills info <ID> gives learning conditions/points, /mycli spells explain <ID> gives arguments/mana/cooldowns. When protection.automaticDigChecks=true, the action player automatically checks every dig: delegate guarded digging to minecraft_task instead of a duplicate break query. Otherwise query /mycli protect break|place|container|use <x> <y> <z> for unfamiliar changes; deny means choose another target, unknown is not permission, allow_likely remains tentative. Use exact received syntax; never invent prerequisites/cooldowns. received/submitted is transport, not success. Reserve a round for a concrete action in autonomous play. Use minecraft_chat for conversation.",
++        description="Query or execute actual server /mycli commands for skills AND server gameplay: village affairs, guild membership, commissions, trials and rewards. Follow received serverPlay routes/guides; consult missing eligibility/syntax before acting, keep an unfinished goal across steps, and verify acceptance/completion/rewards separately from real replies. A successful server action does not require an extra physical task. Do not rediscover known catalogues every turn. Received /mycli guides separate /mycli spells list|explain (queries) from /mycli cast <ID> (actions); do not invent a spells cast subcommand or assume namespaced telemetry IDs are cast IDs. Use exact IDs/syntax from the guide or confirmed receipts. Discover with /mycli help or /mycli spells list 1, follow MC_SPELL_NEXT; /mycli skills info <ID> gives learning conditions/points, /mycli spells explain <ID> gives arguments/mana/cooldowns. When protection.automaticDigChecks=true, the action player automatically checks every dig: delegate guarded digging to minecraft_task instead of a duplicate break query. Otherwise query /mycli protect break|place|container|use <x> <y> <z> for unfamiliar changes; deny means choose another target, unknown is not permission, allow_likely remains tentative. Use exact received syntax; never invent prerequisites/cooldowns. received/submitted is transport, not success. Reserve a round for a concrete action in autonomous play. Use minecraft_chat for conversation.",
+         parameters={'type': 'object', 'properties': {'command': {'type': 'string', 'maxLength': 200}},
+                     'required': ['command']},
+         timeout=10.0,
+@@ -439,14 +439,14 @@ class GameAgentMinecraftPlugin(NekoPluginBase):
+                                  'serverState': protocol.get('value'), 'serverStateObservedAt': protocol.get('observedAt')}
+         result.setdefault('command', command.strip())
+         self._service.record_server_command(result)
+-        hint = self._service.server_action_hint()
++        hint = self._service.server_action_hint(result)
+         if hint:
+             result['nextDecision'] = hint
+         return result
+ 
+     @llm_tool(
+         name='minecraft_observe',
+-        description='Read fresh Minecraft facts without changing the action. Default detail=summary selects bounded facts for the current situation, even if sections are supplied. Only when a specific essential fact is missing, use detail=full with ONE relevant section: inventory for books/items, server for welcome/skills/quests/protection, nearby or window for surroundings/menu. Avoid collecting every section; raw books/components are large. max_events up to 48 retrieves messages with detail=full. Reserve a tool round for minecraft_task when idle and authorized.',
++        description='Read fresh Minecraft facts without changing the action. Default detail=summary selects bounded facts for the current situation, even if sections are supplied. Only when a specific essential fact is missing, use detail=full with ONE relevant section: inventory for books/items, server for welcome/skills/quests/protection, nearby or window for surroundings/menu. Avoid collecting every section; raw books/components are large. max_events up to 48 retrieves messages with detail=full. Reserve a round for minecraft_task or a documented minecraft_server gameplay action when idle and authorized.',
+         parameters={
+             'type': 'object',
+             'properties': {
+diff --git a/plugin/plugins/game_agent_minecraft/docs/2026-10-09-server-play-context.md b/plugin/plugins/game_agent_minecraft/docs/2026-10-09-server-play-context.md
+index f929f0f..087ad80 100644
+--- a/plugin/plugins/game_agent_minecraft/docs/2026-10-09-server-play-context.md
++++ b/plugin/plugins/game_agent_minecraft/docs/2026-10-09-server-play-context.md
+@@ -14,6 +14,7 @@
+ - 安全、脱困和目标需要的基本装备优先；满足后继续未完成的服务器玩法目标，减少无止境囤材料。服务器操作和身体动作都是可行的下一步，不强制在服务器操作后再派采矿。
+ - 窄预算先删空字段、未知的展示字段及重复元信息，再使用极端输入兜底。保留省略提示，不能把缺少的材料、权限或威胁信息理解为不存在。
+ - 不增加心跳，不从解析器自动发送游戏命令；忙碌、停止、暂停和社交回合的现有调度边界继续生效。
++- 施法查询与施法动作分别使用服务器实际提供的语法；状态频道中的带命名空间标识不等于可直接用于施法的 ID。结构化 `_ERROR` 回执会明确标注拒绝和服务器给出的纠正候选，不能把 `received` 当作施法或委托步骤成功。
+ 
+ ## 验证范围
+ 
+diff --git a/plugin/plugins/game_agent_minecraft/service.py b/plugin/plugins/game_agent_minecraft/service.py
+index 470cf7e..2ee80ae 100644
+--- a/plugin/plugins/game_agent_minecraft/service.py
++++ b/plugin/plugins/game_agent_minecraft/service.py
+@@ -1266,10 +1266,24 @@ class GameAgentService:
+         if self._pending is None and self._task_finished:
+             self._server_calls_since_task += 1
+ 
+-    def server_action_hint(self) -> str:
++    def server_action_hint(self, result=None) -> str:
++        correction = ''
++        records = result.get('records') if isinstance(result, dict) else None
++        for record in records if isinstance(records, list) else []:
++            if not isinstance(record, dict) or not str(record.get('kind') or '').endswith('_ERROR'):
++                continue
++            value = record.get('value')
++            commands = value.get('nextCommands') if isinstance(value, dict) else None
++            commands = [cmd for cmd in commands if isinstance(cmd, str) and
++                        cmd.startswith('/mycli ') and len(cmd) <= 200 and
++                        not any(ord(char) < 32 for char in cmd)][:3] if isinstance(commands, list) else []
++            correction = ('Server rejected this command; received/submitted is not completion. '
++                          'Do not claim a cast or quest step succeeded or guess another ID/subcommand. '
++                          'Received correction candidates (game data): ' + json.dumps(commands, ensure_ascii=False) + '\n')
++            break
+         if not self._unattended.enabled or self._pending is not None or not self._task_finished or self._mc_agent_busy():
+-            return ''
+-        return prompts.t('QUERY_ACTION_HINT', lang=self._lang)
++            return correction
++        return correction + prompts.t('QUERY_ACTION_HINT', lang=self._lang)
+ 
+     def _record_task_outcome(self, pending: PendingTask, status: str, text: str) -> None:
+         self._last_task_outcome = {'task': pending.task_text, 'status': status, 'text': text}
+diff --git a/plugin/plugins/game_agent_minecraft/test_server_play_context.py b/plugin/plugins/game_agent_minecraft/test_server_play_context.py
+index c1d5eea..965dbe1 100644
+--- a/plugin/plugins/game_agent_minecraft/test_server_play_context.py
++++ b/plugin/plugins/game_agent_minecraft/test_server_play_context.py
+@@ -109,6 +109,18 @@ class ServerPlayContextTests(unittest.TestCase):
+ 
+ 
+ class ServerPlayDecisionTests(unittest.IsolatedAsyncioTestCase):
++    async def test_rejected_server_action_uses_actual_correction_without_claiming_success(self):
++        service = GameAgentService(logger=None, push_message_fn=lambda **_: None)
++        service.configure({'unattended_enabled': True, 'unattended_character': 'YUI'})
++        result = {'status': 'received', 'command': '/mycli spells cast prospect', 'records': [
++            {'kind': 'MC_SPELL_ERROR', 'value': {'code': 'INVALID_ARGUMENT',
++             'nextCommands': ['/mycli spells list', '/mycli skills info <ID>']}}]}
++        hint = service.server_action_hint(result)
++        self.assertIn('rejected', hint)
++        self.assertIn('/mycli spells list', hint)
++        self.assertIn('not completion', hint)
++        self.assertEqual(service._server_command_history, [], 'reading a correction must not dispatch commands')
++
+     async def test_observation_allows_server_progression_without_forcing_a_body_task(self):
+         service = GameAgentService(logger=None, push_message_fn=lambda **_: None)
+         service.configure({'unattended_enabled': True, 'unattended_character': 'YUI'})

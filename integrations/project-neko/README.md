@@ -51,11 +51,11 @@ python -m unittest discover -s plugin/plugins/game_agent_minecraft -t .
 git rev-parse HEAD:plugin/plugins/game_agent_minecraft
 ```
 
-The exported plugin passed 155 tests. The manifest records the exact reproduced
+The exported plugin passed 164 tests. The manifest records the exact reproduced
 plugin tree and host-file blobs. The host callback/media regression suite passed
 195 tests, including six new Minecraft budget tests. The latest native source
 suite passed 450 tests; this contribution branch's full `node --test` discovery
-passed 476 tests. The plugin/host counts are retained from their last unchanged
+passed 476 tests. The host/native counts are retained from their last unchanged
 delivery. The existing
 mineDown contract test also passed.
 
@@ -164,6 +164,37 @@ selection can still be wrong; no diagnostic gameplay commands were injected.
 
 See the exported plugin's
 `docs/2026-10-09-decision-context-budget.md` for the scheduling table and limits.
+
+Received gameplay routes now have their own bounded `serverPlay` index. Skill
+catalogue sentences cannot displace later village-board instructions; carried
+books contribute exact guild commands and trial page locations, without treating
+historical registration or vitals as current progress. Once safe and equipped,
+autonomous decisions can continue village, guild/commission or trial goals through
+documented server actions as well as physical tasks. Server actions no longer
+require an unrelated physical task afterwards. Acceptance, completion and rewards
+each require actual server receipts.
+
+Two captured-state replays retained all three entry points at both 700 and 400
+tokens. Complete idle cues were 835 and 895 tokens; no diagnostic game commands
+were sent. See the exported plugin's `docs/2026-10-09-server-play-context.md` for
+the reproduced failure and regression scope. These checks establish information
+delivery, not successful quest acceptance or trial completion.
+
+After the initial route deployment, passive observation confirmed autonomous
+queries of the world board and `tm_first_spell` marked `in_progress`. The actual
+`guild claim` reply reported `MC_MARKET_CHECK` with `ready=true`, then advanced
+to stage 2/2, meeting the supply merchant. This establishes acceptance and the
+first stage's server verification; the complete contract and trials remain
+unverified. One earlier reload transition refused a body handoff while the old
+action was exiting; later survival feedback and fresh state showed recovery to
+20 health/20 food with a newly crafted wooden pickaxe. No diagnostic game tasks,
+chat or skill commands were injected.
+
+The final follow-up distinguishes skill queries from actual cast syntax and
+marks structured server errors as rejection, with the server's correction
+candidates. Namespaced telemetry identifiers are not assumed to be cast IDs.
+That guidance was added after the first-stage evidence above. Both patches are
+deployed; the final reload occurred with no pending task and no busy body.
 At that context-budget delivery, the plugin suite passed 155 tests, the native
 source passed 426, and the contribution branch passed 432. Current code/vision
 verification is recorded above and in the linked capability report below.
