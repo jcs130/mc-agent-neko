@@ -22,10 +22,10 @@ Files: `src/utils/server_protection.js`, `src/utils/mcdata.js`, `src/websocket/s
 
 Interface: `installServerProtection(bot, options)` installs `bot.serverProtection.check(action, position)`, `.isDenied(action, position)`, and `.snapshot()`. Check results retain exact server fields and `observedAt`. `serverProtection` events report blocked actions, not successful digging.
 
-- [ ] Add failing tests: denied target sends no dig; allow_likely permits dig; mismatched replies/unknown/timeouts block; same-target checks deduplicate; cached denials expire and remain dimension-specific; stop during preflight prevents dig; vanilla behavior remains; private protection/land queries pass read-only validation.
-- [ ] Run `node --test test/server_protection.test.mjs test/server_commands.test.mjs` and confirm failures identify the missing behavior.
-- [ ] Implement bounded caches and private preflights; install before other dig wrappers; use known-denial checks in pathfinding/collection and wood candidate selection.
-- [ ] Re-run tests and `git diff --check`, inspect staged changes, commit the body repair.
+- [x] Add failing tests: denied target sends no dig; allow_likely permits dig; mismatched replies/unknown/timeouts block; same-target checks deduplicate; cached denials expire and remain dimension-specific; stop during preflight prevents dig; vanilla behavior remains; private protection/land queries pass read-only validation.
+- [x] Run `node --test test/server_protection.test.mjs test/server_commands.test.mjs` and confirm failures identify the missing behavior.
+- [x] Implement bounded caches and private preflights; install before other dig wrappers; use known-denial checks in pathfinding/collection and wood candidate selection.
+- [x] Re-run tests and `git diff --check`, inspect staged changes, commit the body repair.
 
 ## Task 2: Deliver permission facts to Neko
 
@@ -33,8 +33,10 @@ Files: `src/websocket/game_information.js`, `test/game_information.test.mjs`; Ne
 
 Interface: `state.server.protection` carries enabled/last/denied targets; `protection` events carry the rejected action and coordinates. Neko compact context retains an instruction to avoid denied targets and a permission query entry, with one most recent failure.
 
-- [ ] Add failing tests for protection snapshots/events, compact budgets of 400/700 tokens, ordinary Chinese protection messages, and suppression of solicited query replies.
-- [ ] Run the new tests, implement within the existing plugin boundary, re-run the affected suites and commit.
+- [x] Add failing tests for protection snapshots/events, compact budgets of 400/700 tokens, ordinary Chinese protection messages, and suppression of solicited query replies.
+- [x] Run the new tests, implement within the existing plugin boundary, re-run the affected suites and commit.
+
+Verification before deployment: 128 Node tests and 57 Neko plugin tests passed; logs are `D:/neko-mc-trial/protection-node-tests-20261009.tap` and `D:/neko-mc-trial/protection-python-tests-20261009.log`. Denial behavior is currently verified with simulated server replies; live nearby permission queries returned `allow_likely` and distant ones returned `unknown_out_of_range`.
 
 ## Task 3: Deploy and verify
 

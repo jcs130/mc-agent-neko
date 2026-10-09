@@ -57,6 +57,20 @@ test('snapshot retains body, world, inventory, menu, scoreboard and loaded surro
     assert.equal(state.server.tablist.footer, '输入 /help 查看功能');
 });
 
+test('protection state and blocked dig events retain coordinates and reasons', t => {
+    const { bot, agent, information, frames } = fixture(t);
+    const denied = { action: 'break', world: 'minecraft:overworld', x: 104, y: 17, z: 203,
+        status: 'deny', allowed: false, reason: 'original_building', observedAt: Date.now() };
+    bot.serverProtection = { snapshot: () => ({ enabled: true, installed: true, lastBlocked: denied, denied: [denied] }) };
+    assert.equal(collectGameState(agent).server.protection.lastBlocked.reason, 'original_building');
+    bot.emit('serverProtection', { ...denied, text: 'Server protection deny: original_building' });
+    information.flushEvents();
+    const event = frames.flatMap(frame => frame.events || []).find(event => event.kind === 'protection');
+    assert.equal(event.data.x, 104);
+    assert.equal(event.data.allowed, false);
+    assert.equal(event.data.reason, 'original_building');
+});
+
 test('one own-connection stream includes long system feedback, NPC chat, private chat, title and actionbar', async t => {
     const { bot, information, frames } = fixture(t);
     const text = '任务说明'.repeat(150) + '最后一步领取奖励';

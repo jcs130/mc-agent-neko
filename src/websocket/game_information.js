@@ -149,6 +149,7 @@ export function collectGameState(agent, presentation = {}) {
             mobility: bot._mobility ?? null, digging: blockState(bot.targetDigBlock),
             usingHeldItem: bot.usingHeldItem ?? null },
         server: { scoreboards,
+            protection: bot.serverProtection?.snapshot() ?? null,
             bossBars: Array.isArray(bot.bossBars) ? bot.bossBars.map(bar => ({ id: bar.entityUUID,
                 title: gameText(bar.title), health: bar.health, color: bar.color, dividers: bar.dividers })) : presentation.bossBars,
             tablist: { header: gameText(bot.tablist?.header), footer: gameText(bot.tablist?.footer) },
@@ -202,6 +203,10 @@ export class GameInformation {
         } catch { /* malformed text is not a game failure */ } });
         });
         this.on(this.bot, 'actionBar', value => this.actionBar(gameText(value)));
+        this.on(this.bot, 'serverProtection', value => this.event('protection', {
+            text: value.text, source: 'server_permission_check',
+            data: boundedGameValue(Object.fromEntries(Object.entries(value).filter(([key]) => key !== 'text')), 4000).value,
+        }));
         this.on(this.bot, 'title', (value, type = 'title') => {
             this.presentation.titles[type] = { text: gameText(value), observedAt: now() };
             this.event(type, { text: gameText(value), source: 'server' });

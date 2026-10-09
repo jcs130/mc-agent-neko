@@ -16,7 +16,7 @@ const pad = (str) => {
 export const queryList = [
     {
         name: '!serverQuery',
-        description: 'Query actual server gameplay rules/spells, distinct from local runSkill scripts. Send /mycli help, /mycli spells list 1 (follow MC_SPELL_NEXT), /mycli spells explain selfheal, or /mycli mastery. Use the returned stable ID and syntax. A local skill list cannot prove a server spell is absent.',
+        description: 'Query actual server gameplay rules/spells, distinct from local runSkill scripts. Send /mycli help, /mycli spells list 1 (follow MC_SPELL_NEXT), /mycli spells explain selfheal, /mycli protect break <x> <y> <z>, or /mycli land here. Protection deny means avoid that target; unknown needs a fresh nearby check. Use returned IDs and syntax. A local skill list cannot prove a server spell is absent.',
         params: { command: { type: 'string', description: 'One read-only /mycli discovery/status command.' } },
         perform: async (agent, command) => pad(JSON.stringify(await sendServerCommand(agent.bot, { command, readOnly: true }))),
     },

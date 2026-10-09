@@ -68,6 +68,27 @@ Game/player/NPC text remains external data with
 no instruction privilege. To send a reply into the game, the dialog must use
 `minecraft_chat`; speaking or replying in the web UI does not send Minecraft chat.
 
+Servers implementing `MC_PROTECTION` can enable `server_protection: "mycli"`
+in the MC settings. A real server advertisement of `/mycli protect` also enables
+the adapter. Every actual dig, including path excavation and local scripts,
+privately queries `/mycli protect break <x> <y> <z>` before starting. Unknown or
+mismatched replies do not authorize a dig. `allow_likely` remains tentative:
+an actual subsequent server rejection cancels the attempt and supersedes it.
+Exact action/world/coordinate denials are cached for five minutes, allowed
+preflights for three seconds, and unknown results for 1.5 seconds; disconnect
+and respawn clear them. Protected wood columns are excluded from wood selection,
+and known denied blocks are excluded from destructive path planning.
+
+`server.protection` exposes installed/enabled state, last check, last blocked
+action, and up to eight denied targets with an omitted count. A blocked action
+also emits a `protection` event carrying coordinates and the reason. Neko retains
+the check entry and last blocked target even when reducing context to 400 tokens.
+Ordinary permission command replies remain observations without another model
+wake-up. The adapter automatically guards digging; placement, container and use
+checks are available through `!serverQuery` / `minecraft_server` but do not yet
+wrap their respective Mineflayer operations. Servers without this protocol keep
+their existing behavior.
+
 Validation (no live game/model required):
 
 ```sh
