@@ -1,0 +1,88 @@
+// Prompt projection only. Original observations remain in History and its archive.
+export function externalMission(agent) {
+    if (!agent?.adminMission?.isActive?.()) return null;
+    const mission = agent.adminMission.mission;
+    return mission && (mission.origin === 'ws' || agent.hasExternalAutonomyOwner?.()) ? mission : null;
+}
+
+export function executionPromptTemplate(template, agent) {
+    let prompt = String(template);
+    const mission = externalMission(agent);
+    const status = ['$STATS', '$INVENTORY'].filter(token => prompt.includes(token));
+    for (const token of status) prompt = prompt.replaceAll(token, '');
+    prompt = prompt.replace(/## Current Status\s*(?=##|$)/g, '');
+    if (mission) {
+        prompt = prompt.replaceAll('$EXAMPLES', '').replaceAll('$SELF_PROMPT', '');
+        prompt += '\n\nCURRENT TASK — native controller authority:\n'
+            + `taskId: ${mission.taskId || '(unassigned)'}\ngoal: ${mission.text}\n`
+            + 'Only this task is active. Goals, actions, positions and vitals in historical memory or earlier turns are not current instructions or current state.\n';
+    }
+    if (status.length) prompt += '\nFRESH OBSERVED STATE — prefer these live query results over historical memory; missing data is unknown:\n'
+        + status.join('\n');
+    return prompt;
+}
+
+export function executionPromptHistory(turns, agent) {
+    if (!externalMission(agent)) return turns;
+    // These native loop reminders repeat the task already pinned above. They
+    // contain no new observations; preserve all user text and actual results.
+    return turns.filter(turn => !(turn.role === 'system'
+        && turn.content.startsWith('You are self-prompting with the goal:')));
+}
+
+export function sanitizeMemorySummary(value) {
+    return String(value || '').split(/(?<=[.!?。！？])\s+|\n+/).map(part => part.trim()).filter(part => part
+        && !/^(?:(?:current\s+)?(?:status|goal|task|action|position|location)\s*:|(?:HP|health|food|hunger)\s*[:=]?\s*\d|At\s*\(\s*-?\d|(?:当前)?(?:状态|目标|任务|行动|位置|坐标|生命值|饱食度|饥饿值)\s*[:：])/i.test(part))
+        .join(' ').slice(0, 500);
+}
+
+export function memoryEvidence(turns) {
+    const evidence = turns.filter(turn => !(turn.role === 'system' && (
+        turn.content.startsWith('You are self-prompting with the goal:')
+        || /^(?:\s*STATS\b|\s*INVENTORY\b|\s*\*COMMAND DOCS\b)/.test(turn.content)
+    )));
+    // Normal batches are already bounded by History. An oversized individual
+    // observation gets an explicit head/tail projection; its full raw text
+    // remains archived even after this partial summary commits.
+    if (evidence.length === 1 && evidence[0].content.length > 8000) {
+        const notice = { role: 'system', content: 'MEMORY INPUT LIMIT: oversized observation partly omitted. Full original remains archived. Missing text is unknown, not evidence of absence.' };
+        return [notice, projectTurn(evidence[0], 8000 - notice.content.length)];
+    }
+    return evidence;
+}
+
+export function boundedPromptHistory(turns, maxChars = 12000, maxTurns = 32) {
+    const notice = { role: 'system', content: 'CONTEXT LIMIT: older or oversized raw turns omitted; this projection is incomplete. Full evidence remains in pending memory and the archive. Prefer the current task and fresh state.' };
+    const limit = Math.max(0, maxChars - notice.content.length);
+    const selected = [];
+    let chars = 0, index = turns.length - 1, clipped = false;
+    while (index >= 0 && selected.length < maxTurns - 1) {
+        const end = index;
+        // Keep an action invocation with its following result when it fits.
+        if (turns[index].role === 'system' && index > 0 && turns[index - 1].role === 'assistant') index--;
+        const group = turns.slice(index, end + 1);
+        const size = group.reduce((sum, turn) => sum + turn.content.length, 0);
+        if (chars + size > limit || selected.length + group.length > maxTurns - 1) {
+            if (selected.length) break;
+            // A long assistant monologue must not consume the newest action
+            // result. Give its invocation at most 1000 characters, then devote
+            // the remaining budget to the measured result (including its tail).
+            const invocationBudget = group.length === 2 ? Math.min(1000, limit) : limit;
+            const invocation = projectTurn(group[0], invocationBudget);
+            selected.push(invocation);
+            if (group.length === 2) selected.push(projectTurn(group[1], limit - invocation.content.length));
+            clipped = true; index--; break;
+        }
+        selected.unshift(...group); chars += size; index--;
+    }
+    const result = index >= 0 || clipped ? [notice, ...selected] : selected;
+    return JSON.parse(JSON.stringify(result));
+}
+
+function projectTurn(turn, budget) {
+    if (turn.content.length <= budget) return { ...turn };
+    const marker = ' [PROMPT PROJECTION OMITTED MIDDLE] ';
+    if (budget <= marker.length) return { ...turn, content: turn.content.slice(0, Math.max(0, budget)) };
+    const head = Math.ceil((budget - marker.length) / 2), tail = budget - marker.length - head;
+    return { ...turn, content: turn.content.slice(0, head) + marker + (tail ? turn.content.slice(-tail) : '') };
+}

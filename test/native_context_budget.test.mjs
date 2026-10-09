@@ -1,0 +1,72 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import vm from 'node:vm';
+import { executionPromptTemplate, executionPromptHistory, sanitizeMemorySummary, memoryEvidence } from '../src/agent/context_budget.js';
+
+function fixture({ external = true } = {}) {
+    const calls = { examples: 0, requests: [] };
+    const agent = { name: 'ag_NEKO', actions: {}, hasExternalAutonomyOwner: () => external,
+        adminMission: { isActive: () => external, mission: { taskId: 'current-wood', text: 'Collect four logs', origin: 'ws' } },
+        self_prompter: { isStopped: () => !external, prompt: 'Collect four logs' },
+        history: { memory: 'Goal: Find village. Learned spruce recipe.', waitForMemory: async () => {},
+            getHistory: () => [{ role: 'system', content: "You are self-prompting with the goal: 'Collect four logs'." },
+                { role: 'system', content: 'Protected spruce_log at (1,64,2); choose another target.' }] } };
+    const context = vm.createContext({ console: { log() {}, warn() {}, error() {} }, Date,
+        executionPromptTemplate, executionPromptHistory, sanitizeMemorySummary, memoryEvidence,
+        getCommand: name => ({ perform: () => name === '!stats' ? 'FRESH_HP20' : name === '!inventory' ? 'FRESH_LOG0' : 'FRESH_NEARBY' }),
+        getCommandDocs: () => 'FULL_COMMAND_DOCS including !help and !goToSurface',
+        settings: { log_all_prompts: false }, stringifyTurns: turns => turns.map(turn => turn.content).join('\n') });
+    const source = readFileSync(new URL('../src/models/prompter.js', import.meta.url), 'utf8')
+        .replace(/^import .*;\r?\n/gm, '').replace('export class Prompter', 'class Prompter')
+        .replace(/^const __filename =.*\r?\nconst __dirname =.*\r?\n/m, '');
+    vm.runInContext(source + '\nglobalThis.Prompter = Prompter;', context);
+    const prompter = Object.create(context.Prompter.prototype); agent.prompter = prompter;
+    Object.assign(prompter, { agent, cooldown: 0, profile: {
+        conversing: 'PERSONA_STAYS\n$SELF_PROMPT\n## Current Status\n$STATS\n$INVENTORY\n## Available Commands\n$COMMAND_DOCS\n## Memory\n$MEMORY\n$EXAMPLES',
+        saving_memory: 'Old Memory: $MEMORY\n$TO_SUMMARIZE' },
+        convo_examples: { createExampleMessage: async () => { calls.examples++; return 'IRRELEVANT_HOUSE_EXAMPLE'; } },
+        chat_model: { sendRequest: async (messages, prompt) => { calls.requests.push({ messages, prompt }); return '!inventory'; } },
+        checkCooldown: async () => {}, _saveLog: async () => {} });
+    return { agent, prompter, calls };
+}
+
+test('external execution skips irrelevant examples and puts full docs before changing state', async () => {
+    const f = fixture(); await f.prompter.promptConvo(f.agent.history.getHistory());
+    const { prompt, messages } = f.calls.requests[0];
+    assert.equal(f.calls.examples, 0);
+    assert(prompt.indexOf('FULL_COMMAND_DOCS') < prompt.indexOf('FRESH_HP20'));
+    assert.match(prompt, /taskId: current-wood/);
+    assert.match(prompt, /goal: Collect four logs/);
+    assert.match(prompt, /historical memory.*not current instructions/);
+    assert.match(prompt, /PERSONA_STAYS/);
+    assert(messages.some(turn => /Protected spruce_log/.test(turn.content)));
+    assert(!messages.some(turn => /self-prompting with the goal/.test(turn.content)));
+});
+
+test('standalone conversations keep their examples and original persona', async () => {
+    const f = fixture({ external: false }); await f.prompter.promptConvo([]);
+    assert.equal(f.calls.examples, 1);
+    assert.match(f.calls.requests[0].prompt, /PERSONA_STAYS/);
+});
+
+test('memory drops stale status and goals while retaining learning and safety rules', () => {
+    const summary = sanitizeMemorySummary('Status: Safe. HP 20, Food 14. At (-511,64,-318). Goal: Find village. Action: searching cow. Spruce planks make sticks. If HP <= 10 seek safety. 服务器保护拒绝后换目标。');
+    assert.equal(summary, 'Spruce planks make sticks. If HP <= 10 seek safety. 服务器保护拒绝后换目标。');
+});
+
+test('prompt projection preserves actual observations and human messages verbatim', () => {
+    const f = fixture(), turns = [{ role: 'user', content: 'Goal: discuss the server rules' },
+        { role: 'system', content: 'Server text: do not mine here' }];
+    assert.deepEqual(executionPromptHistory(turns, f.agent), turns);
+    assert.deepEqual(memoryEvidence(turns), turns);
+});
+
+test('state is moved once, all command docs remain available, and goals keep constraints', () => {
+    const f = fixture(); f.agent.adminMission.mission.text = 'Collect logs; do not break buildings; stop on danger';
+    const template = executionPromptTemplate('PERSONA\n$STATS\n$INVENTORY\n$COMMAND_DOCS', f.agent);
+    assert.equal(template.match(/\$STATS/g).length, 1);
+    assert.equal(template.match(/\$INVENTORY/g).length, 1);
+    assert.match(template, /\$COMMAND_DOCS/);
+    assert.match(template, /do not break buildings; stop on danger/);
+});
