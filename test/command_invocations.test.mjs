@@ -8,6 +8,9 @@ import { fileURLToPath } from 'node:url';
 const prose = '连续无进展就用 !cannotComplete 返回具体证据。\n'
     + '或者先尝试 `!craftRecipe("stick", ...)`？没有 `!serverQuery` 的结果。\n'
     + '任务还没完成，不能 !endGoal。\n首先尝试获取木材。 !getWood(3)';
+// Captured verbatim from mc.out.log after ff97159: the model repeated this
+// malformed named-object call without receiving any syntax feedback.
+const capturedOreAttempt = '!mineOres({ "ore": "coal" })';
 
 function fixture() {
     const calls = { performed: [], before: [], hooks: [], history: [], replies: [] };
@@ -18,6 +21,7 @@ function fixture() {
         console: { log() {}, warn() {}, error() {} }, Date, setTimeout, clearTimeout,
         process: { env: {} }, settings: { max_commands: 1, show_command_syntax: 'none' },
         actionsList: [action('!getWood', { num: { type: 'int', domain: [1, 1000] } }),
+            action('!mineOres', { ore: { type: 'string' } }),
             action('!craftRecipe', { recipe: { type: 'ItemName' }, num: { type: 'int' } }),
             action('!cannotComplete', { reason: { type: 'string' } }), action('!endGoal')],
         queryList: [action('!inventory'), action('!stats'),
@@ -33,12 +37,13 @@ function fixture() {
         vm.runInContext(source, context);
     }
     const api = vm.runInContext('({ containsCommand, parseCommandStrings, parseCommandMessage, '
-        + 'truncCommandMessage, truncCommandMessageMulti, executeCommand, getCommandDocs, Agent })', context);
+        + 'truncCommandMessage, truncCommandMessageMulti, executeCommand, getCommandDocs, '
+        + 'commandFormatFeedback: typeof commandFormatFeedback === "function" ? commandFormatFeedback : null, Agent })', context);
     const agent = Object.create(api.Agent.prototype);
     Object.assign(agent, { name: 'ag_NEKO', _missionEnabled: false, supervised_skill: false, shut_up: false,
         bot: { modes: { flushBehaviorLog: () => '' } },
         history: { add: (role, content) => calls.history.push({ role, content }),
-            save() {}, getHistory: () => [] },
+            save() {}, getHistory: () => calls.history },
         self_prompter: { isActive: () => false, isStopped: () => true, shouldInterrupt: () => false,
             handleUserPromptedCmd: (...args) => calls.hooks.push(args) },
         prompter: { promptConvo: async () => prose },
@@ -183,4 +188,63 @@ for (const batch of [false, true]) test(`invalid action never stops a goal in ${
     await agent.handleMessage('admin', '获取木材');
     assert.equal(calls.hooks.filter(([, action]) => action).length, 0);
     assert(!calls.performed.some(call => call.name === '!getWood'));
+});
+
+test('the captured named-object attempt gets exact positional feedback without becoming executable', () => {
+    const { api } = fixture();
+    assert.deepEqual([...api.parseCommandStrings(capturedOreAttempt)], []);
+    const feedback = api.commandFormatFeedback(capturedOreAttempt);
+    assert.match(feedback, /!mineOres\(ore: string\)/);
+    assert.match(feedback, /!mineOres\("coal"\)/);
+    assert.match(feedback, /not executed/);
+});
+
+test('format feedback ignores quoted, fenced, reasoning and prose references or valid trailing calls', () => {
+    const { api } = fixture();
+    for (const message of [`\`${capturedOreAttempt}\``, `"${capturedOreAttempt}"`,
+        `\`\`\`\n${capturedOreAttempt}\n\`\`\``, `<think>\n${capturedOreAttempt}\n</think>`,
+        `不要使用 ${capturedOreAttempt}`, `${capturedOreAttempt}\n!inventory`, '!unknown({})']) {
+        assert.equal(api.commandFormatFeedback(message), null, message);
+    }
+});
+
+test('missing arguments get their ordered signature without inventing missing or invalid values', () => {
+    const { api } = fixture();
+    for (const message of ['!craftRecipe', '!craftRecipe({"recipe":"stick"})',
+        '!craftRecipe({"recipe":"stick","num":"3"})', '!craftRecipe({"recipe":"stick","num":3,"extra":true})']) {
+        const feedback = api.commandFormatFeedback(message);
+        assert.match(feedback, /!craftRecipe\(recipe: ItemName, num: int\)/);
+        assert.doesNotMatch(feedback, /!craftRecipe\("stick",/);
+    }
+    assert.match(api.commandFormatFeedback('!craftRecipe({"num":3,"recipe":"stick"})'),
+        /!craftRecipe\("stick", 3\)/);
+});
+
+for (const batch of [false, true]) test(`malformed model attempt adds corrective history without interrupting in ${batch ? 'batch' : 'single'} mode`, async () => {
+    const { agent, calls } = fixture();
+    agent._adminMultiCmdActive = () => batch;
+    agent.self_prompter.isActive = () => true;
+    agent.self_prompter.isStopped = () => false;
+    agent.prompter.promptConvo = async () => capturedOreAttempt;
+    assert.equal(await agent.handleMessage('system', '继续当前目标', 1), false);
+    assert(calls.history.some(turn => turn.role === 'system'
+        && turn.content.includes('!mineOres(ore: string)') && turn.content.includes('!mineOres("coal")')));
+    assert.deepEqual(calls.performed, []);
+    assert.deepEqual(calls.hooks, []);
+    assert.deepEqual(calls.replies, []);
+    assert.equal(agent.self_prompter.isActive(), true);
+});
+
+test('the next bounded model turn sees feedback and can reissue a valid action itself', async () => {
+    const { agent, calls } = fixture();
+    let turns = 0;
+    agent.prompter.promptConvo = async history => {
+        if (++turns === 1) return capturedOreAttempt;
+        assert(history.some(turn => turn.role === 'system' && turn.content.includes('!mineOres("coal")')));
+        return '!mineOres("coal")';
+    };
+    assert.equal(await agent.handleMessage('system', '继续当前目标', 2), true);
+    assert.equal(turns, 2);
+    assert.deepEqual(calls.performed.map(call => [call.name, ...call.args]), [['!mineOres', 'coal']]);
+    assert.equal(calls.hooks.length, 1);
 });

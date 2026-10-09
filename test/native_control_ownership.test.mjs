@@ -16,6 +16,7 @@ function fixture({ owner = true, managed = false, translate = async text => text
         handleEnglishTranslation: translate,
         containsCommand: text => /![A-Za-z_]\w*/.exec(text)?.[0] || null,
         commandInvocationIndex: text => /![A-Za-z_]\w*/.exec(text)?.index ?? -1,
+        commandFormatFeedback: () => null,
         commandExists: () => true, isAction: () => true, truncCommandMessage: text => text,
         executeCommand: async (_agent, text) => { calls.commands.push(text); return 'complete'; },
     });

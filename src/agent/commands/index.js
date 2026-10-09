@@ -29,16 +29,20 @@ export function blacklistCommands(commands) {
 const commandRegex = /!(\w+)(?:[ \t]*\(((?:-?\d+(?:\.\d+)?|true|false|"[^"]*")(?:\s*,\s*(?:-?\d+(?:\.\d+)?|true|false|"[^"]*"))*)?\))?/
 const argRegex = /-?\d+(?:\.\d+)?|true|false|"[^"]*"/g;
 
-function invocationMatches(message) {
-    // Mentioning a command while reasoning is not invoking it. Keep positions so
-    // parsing, truncation and batch execution all select the same actual calls.
-    const text = String(message || '');
-    const masked = text.replace(/<(think|analysis|reasoning)\b[^>]*>[\s\S]*?(?:<\/\1>|$)/gi,
+function maskCommandReferences(text) {
+    return text.replace(/<(think|analysis|reasoning)\b[^>]*>[\s\S]*?(?:<\/\1>|$)/gi,
         value => ' '.repeat(value.length))
         .replace(/```[\s\S]*?(?:```|$)|~~~[\s\S]*?(?:~~~|$)/g,
             value => ' '.repeat(value.length))
         .replace(/`[^`\n]*(?:`|$)|"(?:\\.|[^"\\\n])*(?:"|$)|'![^'\n]*'|“[^”]*”|「[^」]*」|『[^』]*』/gm,
             value => ' '.repeat(value.length));
+}
+
+function invocationMatches(message) {
+    // Mentioning a command while reasoning is not invoking it. Keep positions so
+    // parsing, truncation and batch execution all select the same actual calls.
+    const text = String(message || '');
+    const masked = maskCommandReferences(text);
     const names = /!(\w+)/g;
     const matches = [];
     let token;
@@ -85,6 +89,41 @@ export function containsCommand(message) {
 
 export function commandInvocationIndex(message) {
     return invocationMatches(message)[0]?.index ?? -1;
+}
+
+export function commandFormatFeedback(message) {
+    if (invocationMatches(message).length) return null;
+    const text = String(message || '');
+    const masked = maskCommandReferences(text);
+    const attempts = /(?:^|\n)([ \t]*)(!\w+)([^\r\n]*)/g;
+    let attempt;
+    while ((attempt = attempts.exec(text))) {
+        const name = attempt[2], command = getCommand(name);
+        const index = attempt.index + attempt[0].indexOf(name);
+        const suffix = attempt[3].trim();
+        // Diagnose only standalone known attempts. References remain inert, and
+        // a valid invocation elsewhere takes priority over format diagnosis.
+        if (!command || masked.slice(index, index + name.length) !== name
+            || (suffix && !/^\([^\r\n]*\)$/.test(suffix))) continue;
+        const entries = Object.entries(command.params || {});
+        const signature = `${name}(${entries.map(([key, param]) => `${key}: ${param.type}`).join(', ')})`;
+        let feedback = `Command ${name} was not executed: invalid argument syntax. Required positional form: ${signature}. Use arguments in the listed order, double quotes for strings, and no JSON object.`;
+        try {
+            const values = JSON.parse(suffix.slice(1, -1));
+            const validValue = (value, type) => type === 'int' ? Number.isInteger(value)
+                : type === 'float' ? typeof value === 'number' && Number.isFinite(value)
+                : type === 'boolean' ? typeof value === 'boolean' : typeof value === 'string';
+            if (values && typeof values === 'object' && !Array.isArray(values)
+                && Object.keys(values).length === entries.length
+                && entries.every(([key, param]) => Object.hasOwn(values, key) && validValue(values[key], param.type))) {
+                const example = `${name}(${entries.map(([key]) => JSON.stringify(values[key])).join(', ')})`;
+                if (typeof parseCommandMessage(example) !== 'string')
+                    feedback += ` Correct positional form for the supplied values (not executed): ${example}.`;
+            }
+        } catch (_) { /* Invalid or incomplete JSON has no safe value-based example. */ }
+        return feedback;
+    }
+    return null;
 }
 
 export function commandExists(commandName) {

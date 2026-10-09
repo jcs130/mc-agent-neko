@@ -4,7 +4,7 @@ import { VisionInterpreter } from './vision/vision_interpreter.js';
 import { Prompter } from '../models/prompter.js';
 import { initModes } from './modes.js';
 import { initBot } from '../utils/mcdata.js';
-import { containsCommand, commandInvocationIndex, commandExists, executeCommand, truncCommandMessage, truncCommandMessageMulti, parseCommandStrings, isAction, blacklistCommands } from './commands/index.js';
+import { containsCommand, commandInvocationIndex, commandFormatFeedback, commandExists, executeCommand, truncCommandMessage, truncCommandMessageMulti, parseCommandStrings, isAction, blacklistCommands } from './commands/index.js';
 import { ActionManager } from './action_manager.js';
 import { NPCContoller } from './npc/controller.js';
 import { MemoryBank } from './memory_bank.js';
@@ -1236,9 +1236,16 @@ export class Agent {
                 }
                 else { // conversation response
                     this.history.add(this.name, res);
-                    this.routeResponse(source, res);
-                    lastConversationReply = res;
-                    break;
+                    const formatFeedback = commandFormatFeedback(res);
+                    if (formatFeedback) {
+                        // Keep the goal alive and let the model correct its own
+                        // invocation; malformed attempts never reach the body.
+                        this.history.add('system', formatFeedback);
+                    } else {
+                        this.routeResponse(source, res);
+                        lastConversationReply = res;
+                        break;
+                    }
                 }
 
                 this.history.save();
