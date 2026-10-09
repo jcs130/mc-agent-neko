@@ -123,7 +123,13 @@ export class Kernel {
         // S3-shadow observation runs INDEPENDENTLY of the decision-loop flag: it only
         // reads the world + proposeTasks and appends a line — it never dispatches.
         if (this.observe) { try { this._shadowObserve(); } catch (e) {} }
-        if (!this.enabled || this.agent?.hasExternalAutonomyOwner?.()) return;
+        if (this.agent?.hasExternalAutonomyOwner?.()) {
+            // External ownership stops decisions, not bookkeeping. Otherwise a
+            // stale skill name suppresses Neko's idle scheduler indefinitely.
+            this._busyStuckWatchdog();
+            return;
+        }
+        if (!this.enabled) return;
 
         // Companion window decays back to survival.
         if (this._companionUntil && Date.now() > this._companionUntil) {
@@ -323,6 +329,7 @@ export class Kernel {
         this.log(`[kernel] ★busy-stuck watchdog: bot._currentSkill='${name}' held ${Math.round(heldMs / 1000)}s with no supervised skill and no executing action — clearing the orphan (kernel unmutes)`);
         try { fs.appendFileSync('bots/_supervisor/progress.txt', `[${new Date().toISOString()}] [kernel] ★busy-stuck watchdog cleared orphaned _currentSkill='${name}' after ${Math.round(heldMs / 1000)}s\n`); } catch (e) {}
         this.bot._currentSkill = null;
+        this.bot._skillActivity = null;
         this._busyStuck = null;
     }
 

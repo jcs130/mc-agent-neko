@@ -6713,18 +6713,21 @@ export async function customSkill(bot, skillName, ...args) {
         return false;
     }
     const ctx = { skills: await import('./skills.js'), world, mc, Vec3, log };
-    const prevSkill = bot._currentSkill;
+    // Names are not ownership: nested/raced invocations and two calls of the
+    // same skill can finish out of order. Retire each invocation separately.
+    const invocation = { name: skillName, parent: bot._skillActivity || null, active: true };
+    bot._skillActivity = invocation;
     try {
         bot._currentSkill = skillName;
         return await fn(bot, ctx, ...args);
     } finally {
-        // Restore ONLY while we are still the holder. A Promise.race-orphaned inner skill
-        // (achieve.js races customSkill vs timeouts; the loser keeps running detached) can
-        // finish LATE — after the outer skill already returned and cleared this — and its
-        // stale prevSkill would overwrite null/newer state. That poisons ms.busy forever
-        // and MUTES the kernel (live incident 2026-07-02 00:16→00:38: a raced-out inner
-        // skill restored 'prepNether' over null; bot stood idle 22 min).
-        if (bot._currentSkill === skillName) bot._currentSkill = prevSkill;
+        invocation.active = false;
+        if (bot._skillActivity === invocation) {
+            let parent = invocation.parent;
+            while (parent && !parent.active) parent = parent.parent;
+            bot._skillActivity = parent;
+            bot._currentSkill = parent?.name ?? null;
+        }
     }
 }
 

@@ -37,6 +37,31 @@ test('standalone native kernel still schedules its normal decisions', async () =
     assert.equal(f.calls.commits, 1);
 });
 
+test('Neko ownership keeps orphan activity cleanup alive without native decisions', async () => {
+    const f = fixture();
+    let checks = 0;
+    f.kernel._busyStuckWatchdog = () => { checks++; };
+    f.kernel._survivalTick = () => { f.calls.commits++; };
+    await f.kernel.tick(300);
+    assert.equal(checks, 1, 'body activity maintenance must survive the autonomy gate');
+    assert.equal(f.calls.commits, 0);
+});
+
+test('external cleanup clears an orphan label but preserves an executing action', async () => {
+    const f = fixture();
+    f.agent.bot._currentSkill = 'chopWood';
+    f.agent.bot._skillActivity = { name: 'chopWood', active: true };
+    f.kernel._busyStuck = { name: 'chopWood', since: Date.now() - 181000 };
+    f.agent.actions.executing = true;
+    await f.kernel.tick(300);
+    assert.equal(f.agent.bot._currentSkill, 'chopWood');
+    f.agent.actions.executing = false;
+    await f.kernel.tick(300);
+    assert.equal(f.agent.bot._currentSkill, null);
+    assert.equal(f.agent.bot._skillActivity, null);
+    assert.equal(f.calls.commits, 0);
+});
+
 test('ownership arriving during a native decision prevents its late dispatch', async () => {
     const f = fixture(false); let release, started;
     const ready = new Promise(resolve => { started = resolve; });
