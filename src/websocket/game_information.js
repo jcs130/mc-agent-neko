@@ -148,7 +148,7 @@ export function collectGameState(agent, presentation = {}) {
         activity: { action: agent.actions?.currentActionLabel ?? null, skill: bot._currentSkill ?? null,
             mobility: bot._mobility ?? null, digging: blockState(bot.targetDigBlock),
             usingHeldItem: bot.usingHeldItem ?? null },
-        server: { scoreboards,
+        server: { welcome: presentation.welcome, scoreboards,
             protection: bot.serverProtection?.snapshot() ?? null,
             bossBars: Array.isArray(bot.bossBars) ? bot.bossBars.map(bar => ({ id: bar.entityUUID,
                 title: gameText(bar.title), health: bar.health, color: bar.color, dividers: bar.dividers })) : presentation.bossBars,
@@ -170,8 +170,17 @@ export class GameInformation {
         this.sessionId = randomUUID(); this.eventSeq = 0; this.stateSeq = 0;
         this.events = []; this.pending = []; this.recent = new Map(); this.listeners = [];
         this.presentation = { bossBars: {}, channels: {}, advancements: {}, titles: {}, actionBar: null, signs: [] };
+        this.presentation.welcome = { sessionId: this.sessionId, startedAt: now(), captureUntil: now() + 30000,
+            messages: [], truncated: false, omittedMessages: 0 };
+        this.welcomeKeys = new Set(); this.welcomeChars = 0;
         this.closed = false; this.dropped = 0; this.flushMs = flushMs;
         this.online = this.bot._client?.state === 'play';
+        this.on(this.bot, 'login', () => {
+            // Observation starts before login. Anchor the window to the real
+            // login while retaining any welcome text already received.
+            this.presentation.welcome.startedAt = now();
+            this.presentation.welcome.captureUntil = now() + 30000;
+        });
         const structured = new WeakSet();
         const own = player => player === this.bot.username || player === agent.name;
         const chat = (kind, player, text, _translate, json) => {
@@ -313,10 +322,30 @@ export class GameInformation {
         const bounded = boundedGameValue({ id: `${this.sessionId}:${++this.eventSeq}`, kind, observedAt: now,
             ...detail, text: text.slice(0, 8192) }, 16000);
         const event = { ...bounded.value, truncated: text.length > 8192 || bounded.truncated.length > 0 };
+        this.captureWelcome(event);
         this.events.push(event); this.pending.push(event);
         if (this.events.length > 128) { this.events.shift(); this.dropped++; }
         if (this.pending.length > 64) { this.pending.shift(); this.dropped++; }
         if (!this.flushTimer) this.flushTimer = setTimeout(() => this.flushEvents(), this.flushMs);
+    }
+
+    captureWelcome(event) {
+        const welcome = this.presentation.welcome;
+        if (event.observedAt > welcome.captureUntil || event.source !== 'server' ||
+            !['system', 'title', 'subtitle'].includes(event.kind) ||
+            event.data?.solicitedCommand || event.data?.sender || !event.text) return;
+        const key = createHash('sha256').update(event.kind + '\0' + event.text).digest('hex');
+        if (this.welcomeKeys.has(key)) return;
+        const left = 8192 - this.welcomeChars;
+        if (welcome.messages.length >= 32 || left <= 0) {
+            welcome.truncated = true; welcome.omittedMessages++;
+            return;
+        }
+        const text = event.text.slice(0, left), truncated = event.truncated || text.length < event.text.length;
+        welcome.messages.push({ id: event.id, kind: event.kind, source: 'server',
+            observedAt: event.observedAt, text, truncated });
+        welcome.truncated ||= truncated;
+        this.welcomeKeys.add(key); this.welcomeChars += text.length;
     }
 
     pluginPacket(packet) {
@@ -342,7 +371,10 @@ export class GameInformation {
     }
 
     resetPresentation() {
-        this.presentation = { bossBars: {}, channels: {}, advancements: {}, titles: {}, actionBar: null, signs: [] };
+        // Respawn/dimension changes do not create a new server connection.
+        // A new GameInformation instance owns the next connection's cache.
+        this.presentation = { welcome: this.presentation.welcome,
+            bossBars: {}, channels: {}, advancements: {}, titles: {}, actionBar: null, signs: [] };
         this.events = []; this.pending = []; this.recent.clear();
     }
 

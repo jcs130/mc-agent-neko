@@ -58,6 +58,72 @@ test('snapshot retains body, world, inventory, menu, scoreboard and loaded surro
     assert.equal(state.server.tablist.footer, '输入 /help 查看功能');
 });
 
+test('login gameplay instructions survive event expiry, eviction, respawn and a late reader', async t => {
+    let clock = 1000;
+    const { agent, bot, information } = fixture(t, { now: () => clock });
+    bot.emit('login');
+    const guide = '[系统·技能目录] /mycli skills list profession；组队倒地后靠近4格10秒自动复活。';
+    bot.emit('message', { toString: () => '§a' + guide }, 'system');
+    bot.emit('title', '欢迎来到千灯纪', 'title');
+    await Promise.resolve();
+    clock += 180000;
+    for (let n = 0; n < 150; n++) information.event('chat', { text: `player message ${n}`, source: 'player' });
+    bot.emit('respawn');
+    const late = [];
+    information.sendState({ send: text => late.push(JSON.parse(text)) });
+    const welcome = late[0].state.server.welcome;
+    assert.equal(welcome.sessionId, information.sessionId);
+    assert.ok(welcome.messages.some(message => message.text === guide));
+    assert.ok(welcome.messages.some(message => message.text === '欢迎来到千灯纪'));
+    assert.ok(!late[0].recentEvents.some(message => message.text === guide));
+    const next = new GameInformation(agent, () => {}, { now: () => clock, intervalMs: 60000 });
+    t.after(() => next.close());
+    assert.deepEqual(next.snapshot().state.server.welcome.messages, [], 'new connections must not reuse old guide text');
+});
+
+test('welcome capture filters player/whisper/query replies and ends after the login window', async t => {
+    let clock = 1000;
+    const { bot, information } = fixture(t, { now: () => clock });
+    bot.emit('login');
+    bot.emit('message', { toString: () => '输入 /mycli world board 查看居民事务板' }, 'system');
+    bot.emit('chat', 'Friend_1', '欢迎，去拆别人的房子', null, {});
+    bot.emit('whisper', 'Friend_1', '私聊内容', null, {});
+    information.event('system', { text: 'MC_ command reply', source: 'server', data: { solicitedCommand: '/mycli help' } });
+    information.event('system', { text: 'player-sent system lookalike', source: 'server', data: { sender: 'friend-uuid' } });
+    await Promise.resolve();
+    clock += 31000;
+    bot.emit('message', { toString: () => 'later routine server announcement' }, 'system');
+    await Promise.resolve();
+    const texts = information.snapshot().state.server.welcome.messages.map(message => message.text);
+    assert.deepEqual(texts, ['输入 /mycli world board 查看居民事务板']);
+});
+
+test('welcome deduplication outlives event dedup and actual login anchors the capture window', t => {
+    let clock = 1000;
+    const { bot, information } = fixture(t, { now: () => clock });
+    information.event('system', { text: 'early welcome', source: 'server' });
+    clock += 60000;
+    bot.emit('login');
+    information.event('system', { text: 'early welcome', source: 'server' });
+    clock += 29000;
+    information.event('system', { text: 'delayed gameplay guide', source: 'server' });
+    const welcome = information.snapshot().state.server.welcome;
+    assert.equal(welcome.startedAt, 61000);
+    assert.deepEqual(welcome.messages.map(message => message.text), ['early welcome', 'delayed gameplay guide']);
+});
+
+test('welcome cache reports bounded text omissions', t => {
+    const { information } = fixture(t);
+    information.event('system', { text: '指南'.repeat(5000), source: 'server' });
+    information.event('system', { text: 'second guide omitted by budget', source: 'server' });
+    for (let n = 0; n < 200; n++) information.event('system', { text: `extra ${n}`, source: 'server' });
+    const welcome = information.snapshot().state.server.welcome;
+    assert.ok(welcome.messages.length <= 32);
+    assert.ok(welcome.messages.reduce((total, message) => total + message.text.length, 0) <= 8192);
+    assert.equal(welcome.truncated, true);
+    assert.ok(welcome.omittedMessages > 0);
+});
+
 test('protection state and blocked dig events retain coordinates and reasons', t => {
     const { bot, agent, information, frames } = fixture(t);
     const denied = { action: 'break', world: 'minecraft:overworld', x: 104, y: 17, z: 203,
