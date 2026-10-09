@@ -7,10 +7,14 @@ const GENERIC_PLANK_OUTPUTS = new Set([
     'bookshelf', 'lectern', 'jukebox', 'piston', 'tripwire_hook',
 ]);
 
+export function usesInterchangeablePlanks(output) {
+    return GENERIC_PLANK_OUTPUTS.has(output) || /_bed$/.test(output || '');
+}
+
 export function makeableRecipes(bot, itemId, craftingTable = null) {
     const registry = bot.registry;
     const output = registry.items[itemId]?.name;
-    const interchangeable = GENERIC_PLANK_OUTPUTS.has(output) || /_bed$/.test(output || '');
+    const interchangeable = usesInterchangeablePlanks(output);
     // The bundled 1.20.6 data also expands each logs tag to the unstripped
     // log alone. Vanilla accepts the same species' wood/stem and stripped
     // variants as inputs for planks; never substitute a different species.

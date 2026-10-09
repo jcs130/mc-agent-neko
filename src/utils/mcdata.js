@@ -10,6 +10,7 @@ import plugin from 'mineflayer-armor-manager';
 import { installInvSync } from './inv_sync.js';
 import { repairLegacyDurability, installItemDurability } from './item_durability.js';
 import { installServerProtection } from './server_protection.js';
+import { usesInterchangeablePlanks } from './crafting_recipes.js';
 const armorManager = plugin;
 let mc_version = settings.minecraft_version;
 let mcdata = null;
@@ -602,6 +603,52 @@ function isBaseItem(item) {
     return loopingItems.has(item) || getItemCraftingRecipes(item) === null;
 }
 
+// Resolve the wood tags that minecraft-data expands to one representative.
+// This changes only planning: reserve real stocked materials, then let the
+// existing recursive planner produce each selected species and track leftovers.
+function planningIngredients(item, ingredients, batches, inventory, leftovers) {
+    const needed = Object.fromEntries(Object.entries(ingredients).map(([name, n]) => [name, n * batches]));
+    const stock = name => (inventory[name] || 0) + (leftovers[name] || 0);
+    const names = [...new Set([...Object.keys(inventory), ...Object.keys(leftovers)])];
+    const allocate = (canonical, candidates) => {
+        let remaining = needed[canonical];
+        delete needed[canonical];
+        for (const [name, capacity] of candidates) {
+            const amount = Math.min(remaining, capacity);
+            if (amount > 0) needed[name] = (needed[name] || 0) + amount;
+            remaining -= amount;
+            if (remaining <= 0) break;
+        }
+        if (remaining > 0) needed[canonical] = (needed[canonical] || 0) + remaining;
+    };
+    const plankSpecies = item.match(/^(.+)_planks$/)?.[1];
+    const sameWood = (species, name) => new RegExp(`^(?:stripped_)?${species}_(?:log|wood|stem|hyphae|block)$`).test(name);
+    if (plankSpecies) {
+        for (const canonical of Object.keys(needed)) {
+            if (sameWood(plankSpecies, canonical)) {
+                allocate(canonical, names.filter(name => sameWood(plankSpecies, name)).map(name => [name, stock(name)]));
+            }
+        }
+    }
+    if (usesInterchangeablePlanks(item) && needed.oak_planks) {
+        // Existing planks outrank logs. Afterwards provision only the deficit
+        // from real logs/stems; their own recipes keep species-specific tags.
+        const planks = names.filter(name => /_planks$/.test(name) && mcdata.itemsByName[name]);
+        const sources = new Map();
+        for (const name of names) {
+            const species = name.match(/^(?:stripped_)?(.+)_(?:log|wood|stem|hyphae|block)$/)?.[1];
+            const output = species && `${species}_planks`;
+            const recipe = output && mcdata.itemsByName[output] && getItemCraftingRecipes(output)?.[0];
+            if (!recipe) continue;
+            const [inputs, result] = recipe;
+            const canonical = Object.keys(inputs).find(input => sameWood(species, input));
+            if (canonical) sources.set(output, (sources.get(output) || 0) + stock(name) / inputs[canonical] * result.craftedCount);
+        }
+        allocate('oak_planks', [...planks.map(name => [name, stock(name)]), ...sources]);
+    }
+    return needed;
+}
+
 function craftItem(item, count, inventory, leftovers, crafted = { required: {}, steps: [], leftovers: {} }) {
     // Check available inventory and leftovers first
     const availableInv = inventory[item] || 0;
@@ -647,14 +694,17 @@ function craftItem(item, count, inventory, leftovers, crafted = { required: {}, 
     }
 
     // Process each ingredient
-    for (const [ingredientName, ingredientCount] of Object.entries(ingredients)) {
-        const totalIngredientNeeded = ingredientCount * batchCount;
-        craftItem(ingredientName, totalIngredientNeeded, inventory, leftovers, crafted);
+    const plannedIngredients = planningIngredients(item, ingredients, batchCount, inventory, leftovers);
+    // Reserve selected planks before crafting generic subingredients such as
+    // sticks; otherwise the latter can spend wood earmarked for this recipe.
+    const ingredientOrder = Object.entries(plannedIngredients).sort(([a], [b]) => Number(/_planks$/.test(b)) - Number(/_planks$/.test(a)));
+    for (const [ingredientName, ingredientCount] of ingredientOrder) {
+        craftItem(ingredientName, ingredientCount, inventory, leftovers, crafted);
     }
 
     // Add crafting step
-    const stepIngredients = Object.entries(ingredients)
-        .map(([name, amount]) => `${amount * batchCount} ${name}`)
+    const stepIngredients = Object.entries(plannedIngredients)
+        .map(([name, amount]) => `${amount} ${name}`)
         .join(' + ');
     crafted.steps.push(`Craft ${stepIngredients} -> ${totalProduced} ${item}`);
 
