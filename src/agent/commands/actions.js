@@ -444,7 +444,27 @@ export const actionsList = [
             'ore': { type: 'string', description: 'one of: iron, coal, gold, copper, diamonds' }
         },
         perform: runAsAction(async (agent, ore) => {
-            await skills.customSkill(agent.bot, 'mineOres', { ore: String(ore || 'iron').toLowerCase().trim() });
+            const target = String(ore || 'iron').toLowerCase().trim();
+            const drop = { iron: 'raw_iron', copper: 'raw_copper', gold: 'raw_gold', coal: 'coal', diamonds: 'diamond' }[target]
+                || `raw_${target}`;
+            const count = () => agent.bot.inventory.items()
+                .filter(item => item.name === drop)
+                .reduce((sum, item) => sum + item.count, 0);
+            const before = count();
+            await skills.customSkill(agent.bot, 'mineOres', { ore: target });
+            const total = count(), gained = total - before;
+            const interrupted = !!(agent.bot.interrupt_code || agent.bot.death_abort || agent.bot.health <= 0);
+            const status = interrupted ? 'interrupted' : gained >= 8 ? 'verified' : gained > 0 ? 'partial' : 'no progress';
+            const emptySlots = agent.bot.inventory.emptySlotCount?.();
+            // The custom skill's return value/telemetry does not reach the action
+            // summary. Report measured drops so success and full-inventory exits
+            // do not both look like incidental navigation and invite another run.
+            const next = interrupted ? ' Completion was not confirmed.'
+                : gained >= 8 ? ' Requested gain reached; return this short goal result before collecting more.'
+                : Number.isFinite(emptySlots) && emptySlots <= 1
+                    ? ` Inventory full or nearly full (${emptySlots} empty slots); recover space or choose another goal before retrying.`
+                    : ' Check tools, reachable ore and safety; change the plan before retrying.';
+            skills.log(agent.bot, `Ore mining ${status}: gained ${gained} ${drop} (target +8); total ${total}.${next}`);
         }, false, 10) // 10 minute timeout
     },
     {
