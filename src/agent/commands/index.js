@@ -277,6 +277,18 @@ export function getCommandDocs(agent) {
     Use the commands with the syntax: !commandName or !commandName("arg1", 1.2, ...) if the command takes arguments.\n
     Do not use codeblocks. Use double quotes for strings.
     Normally use ONE command per response and wait for its result. BUT when you are working on a commanded task and are certain of a short fixed sequence of steps (e.g. gather then craft then smelt), you MAY chain several commands in one response — they run in order — to finish faster. If you must SEE a command's result before deciding the next step, use just one. Trailing prose after the last command is ignored.\n`;
+    const recovery = [
+        ['!inventory', 'Read current base IDs, custom labels/lore and tools.'],
+        ['!equip', 'Equip the base item ID identified in inventory.'],
+        ['!craftRecipe', 'Craft from carried ingredients; check wood/sticks/workbench first.'],
+        ['!goToSurface', 'Attempt an actual route to the surface; solid rock may require a usable pickaxe.'],
+        ['!pillarUp', 'Climb in place with full blocks; requires clearable headroom.'],
+        ['!serverQuery', 'Read documented server skill/recovery conditions and exact syntax.'],
+        ['!serverCommand', 'Use a documented server action, then verify its receipt and changed state.'],
+    ].filter(([name]) => commandMap[name] && !agent.blocked_actions.includes(name));
+    if (recovery.length) docs += '\nRecovery entry points (available here; verify prerequisites):\n'
+        + recovery.map(([name, hint]) => `${name}: ${hint}`).join('\n') + '\n';
+    docs += '\nDetailed commands:\n';
     for (let command of commandList) {
         if (agent.blocked_actions.includes(command.name)) {
             continue;
