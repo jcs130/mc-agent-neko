@@ -29,3 +29,17 @@ independent kernel commit or failed body handoff. The existing local Qwen
 endpoint and LAN viewer were healthy. See trial artifacts
 `query-loop-actual-task-20261009.json` and
 `neko-stuck-final-health-20261009.json` under `D:/neko-mc-trial/`.
+
+Later trial checks found a separate 110s absolute task limit; the runtime
+budgets are now inactivity 180s, absolute 280s, and plugin wait 295s. Applied
+unattended configuration is synchronized through the existing Neko hot-update
+API and checked in the live plugin after reload. Missing mining pickaxes now
+produce explicit body-model feedback instead of empty action output. Native
+regressions: 225 passed, with 74 companion plugin tests passed.
+
+The character subsequently selected inventory/crafting/wood gathering to
+repair its prerequisites. The final observation encountered a new server
+connection timeout; an independent 8s TCP probe also failed. Automatic recovery
+remained enabled and restored login/spawn and fresh online telemetry by 10:51.
+Current connectivity must be checked separately from the earlier verified
+task progress; no successful ore collection is claimed.
