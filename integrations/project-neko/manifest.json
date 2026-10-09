@@ -1,9 +1,9 @@
 {
   "upstreamRepository": "https://github.com/Project-N-E-K-O/N.E.K.O",
   "baseCommit": "fb2a2e731a8c954478d08678b0c8cf40e8145a54",
-  "sourceCommit": "8fa5648617025debf378fed0028aca62690d54d2",
+  "sourceCommit": "37dad9a3eb14836a8c9e3a87bc6c0e19dc991bc7",
   "scope": "plugin/plugins/game_agent_minecraft",
-  "resultPluginTree": "41ccfe90eef332eeb41bfbab7a1592300f45c7db",
+  "resultPluginTree": "d36d2c2af666f3048b588140ac130f520efaeb05",
   "patches": [
     {
       "file": "0001-chore-configure-text-only-local-Qwen-Minecraft-trial.patch",
@@ -164,6 +164,10 @@
     {
       "file": "0040-docs-record-verified-survival-execution-fixes-and-li.patch",
       "sha256": "a85ad217049923b14cef2da5f8bbe18e806863f69ae875f53bcb64a772b90f5b"
+    },
+    {
+      "file": "0041-docs-record-mission-wait-budgeting-and-delivered-aut.patch",
+      "sha256": "41e3b3b6acbcb573ebbbedda1e584d2308e173c2154f5e2376589927f95802bc"
     }
   ],
   "verification": {
@@ -172,8 +176,8 @@
     "pluginTestsPassed": 118,
     "hostCallbackTestsPassed": 195,
     "hostFileBlobsMatchSource": true,
-    "nativeTestsPassed": 368,
-    "contributionTestsPassed": 374,
+    "nativeTestsPassed": 379,
+    "contributionTestsPassed": 385,
     "legacyMineDownContractTestsPassed": 1
   },
   "hostPatches": [

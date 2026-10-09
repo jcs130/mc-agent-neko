@@ -1,0 +1,29 @@
+From 37dad9a3eb14836a8c9e3a87bc6c0e19dc991bc7 Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Fri, 9 Oct 2026 19:12:37 +0800
+Subject: [PATCH] docs: record mission wait budgeting and delivered autonomous
+ recovery
+
+---
+ .../docs/2026-10-09-grounded-recovery-plan.md                 | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/plugin/plugins/game_agent_minecraft/docs/2026-10-09-grounded-recovery-plan.md b/plugin/plugins/game_agent_minecraft/docs/2026-10-09-grounded-recovery-plan.md
+index fb9551c..63777ba 100644
+--- a/plugin/plugins/game_agent_minecraft/docs/2026-10-09-grounded-recovery-plan.md
++++ b/plugin/plugins/game_agent_minecraft/docs/2026-10-09-grounded-recovery-plan.md
+@@ -72,7 +72,7 @@
+ - [x] Cherry-pick native commits into the contribution and live checkouts; export Neko plugin changes as companion patches and verify the patched plugin tree exactly matches the source tree. The final verification manifest identifies the exact exported source revision.
+ - [x] Use the existing controlled lifecycle scripts to reload only required services, preserving the local LLM and user configuration.
+ - [x] Observe Neko's own autonomous decisions and real inventory/position changes. Report separately code correctness, live progress and remaining limitations.
+-- [x] Prepare the final native fixes and verified companion bundle for the fork. Confirm the remote branch revision after publishing; the exported manifest and fork commit history identify the delivered revisions.
++- [x] Publish the verified native fixes and companion bundle to the fork and check the remote revision. The exported manifest, follow-up contribution commits and fork commit history identify the delivered revisions.
+ 
+ ## Diagnosis record
+ 
+@@ -107,3 +107,5 @@
+ - Source `ff97159` selects actual invocations instead of command-name references and moves goal interruption after validation. Lifecycle commands use their own lines; six tracked profiles and the actual default/base/trial inheritance examples were aligned with that rule. Further live replay exposed repeated standalone JSON-shaped calls (`!mineOres({"ore":"coal"})`). Source `73b4a56` keeps them non-executable but records metadata-derived positional syntax and a validated correction in internal history, so the model can correct its next call without stopping the goal or publishing debug text.
+ - Read-only logs also confirmed a circular wait: soft MAROONED blocked task navigation while an external task froze the corresponding march. Source `e4a5816` shares the ownership decision between `goToGoal`, `goToPosition`, ore tunneling and `mineOres`; a frozen march cannot reserve task navigation, while a real mobility owner, standalone recovery and vital danger retain their existing gates. Routes, line-of-sight, digging safety and protection checks remain intact. Source `f0380ce` prevents a fresh external task's mine descent from silently returning to an old bed anchor; standalone/expired leases preserve the legacy entrance behavior.
+ - Final native regression: 368 passed; contribution regression: 374 passed; legacy mineDown contract test: 1 passed. Plugin regression remains 118 passed, and host callback/media regression 195 passed. Native live revision `3a941db` includes these fixes; the established lifecycle reloaded only the Minecraft body and plugin, retaining the local model, main process and runtime arbitration data. Post-reload progress and remaining limitations are recorded in the companion contribution diagnosis.
++- Subsequent live observation confirmed autonomous use of the documented home skill, a return to the surface, a new wood task, a carried stone pickaxe, and planting a sapling about 100 blocks outside the earlier area. The model then selected `!standby(300)`, exceeding its mission budget; it actually ended at its deadline. Source `7ac117d` refuses waits before body/action/timer acquisition if they cannot fit the earlier of the current inactivity/wall deadlines plus a conservative 30-second reply/check reserve. It returns remaining time and shorter-wait/short-step advice without ending the goal or claiming the tree grew. Ordinary standalone waiting, the existing 1–1,200-second schema and human/vital interruption remain unchanged.
++- Latest regression after the wait fix: native 379 passed, contribution 385 passed; 11 new tests exercise the real AdminMission controller and actual command/action wrapper without real waits. Live body `ff345f1` loaded the fix through the existing lifecycle. Read-only log observation also confirmed automatic eating from food 15 to 19. The earlier fork bundle was pushed and its remote revision verified; the companion manifest tracks this follow-up source revision. These observed actions establish short-run autonomous progress, not a guarantee of overnight survival.

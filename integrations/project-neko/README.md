@@ -54,7 +54,7 @@ git rev-parse HEAD:plugin/plugins/game_agent_minecraft
 The exported plugin passed 118 tests. The manifest records the exact reproduced
 plugin tree and host-file blobs. The host callback/media regression suite passed
 195 tests, including six new Minecraft budget tests. The matching native body
-passed 368 tests; this contribution branch passed 374 tests. The existing
+passed 379 tests; this contribution branch passed 385 tests. The existing
 mineDown contract test also passed.
 
 Follow the patched plugin's README for the existing N.E.K.O. plugin lifecycle,
@@ -119,6 +119,12 @@ the home skill; its position returned from underground to the surface. It then
 dispatched the next wood-gathering task and the body moved 27.5 blocks with real
 inventory changes in a read-only 55-second window. Health and food were 20/20;
 that window does not establish completed log collection or overnight reliability.
+
+Mission-owned standby now refuses a wait that would exhaust the current
+inactivity or wall deadline, leaving a conservative 30 seconds for a follow-up
+decision/report. Refusal returns the available wait without starting a timer or
+claiming completion. Standalone waiting and human/vital interruption keep their
+existing behavior. The reloaded body also automatically ate carried food.
 
 ## Approved host bridge fix
 
