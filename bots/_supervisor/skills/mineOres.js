@@ -51,7 +51,14 @@ export default async function mineOres(bot, ctx, opts = {}) {
     const hasPick = () => { try { return bot.inventory.items().some(i => pickRe.test(i.name || '')); } catch (e) { return false; } };
 
     if (!bot || !bot.entity) return false;
-    if (!hasPick()) { prog(`ABORT ore=${ore} — 无合格镐(需 ${pickRe}), 失败让 TOOL_UPKEEP 先修`); return false; }
+    if (!hasPick()) {
+        const tier = /^(gold|diamonds)$/.test(ore) ? 'iron or better' : /^(iron|copper)$/.test(ore) ? 'stone or better' : 'any usable';
+        // Kernel-only telemetry is invisible to the mission LLM. Returning
+        // false alone otherwise becomes an empty "Action output" and retries.
+        ctx.log?.(bot, `Cannot mine ${ore}: no suitable pickaxe (${tier} required). Craft or replenish a pickaxe before retrying; mining has not started.`);
+        prog(`ABORT ore=${ore} — 无合格镐(需 ${pickRe}), 失败让 TOOL_UPKEEP 先修`);
+        return false;
+    }
     // ★死57前实录: MAROONED 态下 goToPosition 无条件秒返 false → collectBlock 全瞬败,
     //   13 轮 7s 空转白磨镐; 而能解 MAROONED 的 mobility 被本技能身体令牌挡住 = 死锁。
     //   让位: 诚实 false, kernel 记账冷却, mobility 拿身体脱困后下个窗口再来。
