@@ -5,6 +5,12 @@ deployment fix that waits through remote server outages without repeatedly
 recovering a healthy game process. Its isolated regression scenarios are separate
 from the source patch series and require no running game or model.
 
+The native body now exposes carried cursor items and an exact-window close
+command, avoiding repeated chest reopening when a plain click lifts an item.
+Reconnect-time action errors also survive an uninitialized output buffer. See
+[the cursor and reconnect report](../../docs/neko-cursor-reconnect-2026-10-10.md)
+for the reproduced failures, tests and deployment limits.
+
 The latest storage repair retains named backpacks and feasible material-selling
 offers in bounded planning context. Its native tools distinguish the ordinary
 Minepacks warehouse from the personal reward container and a conflicting
@@ -74,8 +80,8 @@ The exported plugin passed 189 tests. All 59 ordered plugin patches reproduce
 the committed source. The manifest records the exact reproduced
 plugin tree and host-file blobs. The host callback/media regression suite passed
 195 tests at its last unchanged delivery, including six Minecraft budget tests.
-The current native source suite passed 517 tests; this contribution branch's
-full `node --test` discovery passed 540 tests. The existing mineDown contract
+The current native source suite passed 526 tests; this contribution branch's
+full `node --test` discovery passed 549 tests. The existing mineDown contract
 test also passed.
 
 Follow the patched plugin's README for the existing N.E.K.O. plugin lifecycle,
