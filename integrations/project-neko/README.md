@@ -1,8 +1,11 @@
-# Project N.E.K.O. companion plugin patches
+# Project N.E.K.O. companion patches
 
 This directory carries the matching Project N.E.K.O. Minecraft plugin changes
-alongside the Minecraft body in this fork. It contains 35 ordered Git patches,
-including scoped protection receipts, adaptive heartbeat pacing, readable custom items, protected operational inventory and matched recovery history.
+alongside the Minecraft body in this fork. The ordered plugin series includes
+scoped protection receipts, adaptive heartbeat pacing, readable custom items,
+protected operational inventory, storage capacity, matched recovery history,
+compact task authority and conditional post-observation action guidance.
+The manifest lists the exact series plus one approved host bridge patch.
 
 The series targets [Project-N-E-K-O/N.E.K.O](https://github.com/Project-N-E-K-O/N.E.K.O)
 at commit `fb2a2e731a8c954478d08678b0c8cf40e8145a54`. It changes only
@@ -28,6 +31,10 @@ $patchDirectory = Join-Path $mcAgentFork 'integrations\project-neko\patches'
 $pluginPatches = @(Get-ChildItem -LiteralPath $patchDirectory -Filter '*.patch' |
     Sort-Object Name | Select-Object -ExpandProperty FullName)
 git am @pluginPatches
+$hostDirectory = Join-Path $mcAgentFork 'integrations\project-neko\host-patches'
+$hostPatches = @(Get-ChildItem -LiteralPath $hostDirectory -Filter '*.patch' |
+    Sort-Object Name | Select-Object -ExpandProperty FullName)
+git am @hostPatches
 ```
 
 If a patch cannot apply, resolve it using normal `git am` conflict handling or
@@ -44,8 +51,11 @@ python -m unittest discover -s plugin/plugins/game_agent_minecraft -t .
 git rev-parse HEAD:plugin/plugins/game_agent_minecraft
 ```
 
-The exported plugin passed 98 tests. Applying the complete series to the pinned
-base reproduced plugin tree `8e176e11a7773be3348a0fdfd7e6c87c2936ca4f` exactly.
+The exported plugin passed 118 tests. The manifest records the exact reproduced
+plugin tree and host-file blobs. The host callback/media regression suite passed
+195 tests, including six new Minecraft budget tests. The matching native body
+passed 368 tests; this contribution branch passed 374 tests. The existing
+mineDown contract test also passed.
 
 Follow the patched plugin's README for the existing N.E.K.O. plugin lifecycle,
 viewer and unattended settings. On the Minecraft body, set
@@ -60,22 +70,72 @@ refusals must not be described as confirmed server protection denials. These
 changes improve information and scheduling; they do not guarantee unattended
 survival or successful ore collection.
 
-## Host bridge proposal (separate, awaiting approval)
+## Task authority and observed progress
 
-`proposals/minecraft-host-bridge-budget.patch` is a reviewable platform fix,
-not part of the ordered plugin series above. The current host bridge parses
-every Minecraft cue through a generic 200-token result summary before the
-documented 1,000-token callback cap. A captured 840-token decision consequently
-lost its current resources and recovery evidence before reaching the model.
+The latest user's stop, pause or specific instruction takes priority over
+configured unattended play. A screenshot, observation, completion receipt or
+server/player text supplies facts, not a new task authorization. When ongoing
+autonomous play remains authorized, the main N.E.K.O. model chooses a short,
+feasible next goal and calls `minecraft_task`; announcing a plan does not execute
+it. Task dispatch alone does not confirm completion.
 
-The proposal retains Minecraft `push_message.v2` text up to the existing
+`minecraft_observe` appends plugin-owned execution metadata and guidance after
+the bounded received facts. The conditional `ready_if_authorized` result requires
+fresh online state, a connected body and confirmed idle activity with no pending
+or unfinished task. Disabled/stopped sessions, busy bodies and unknown or stale
+state do not suggest a new action. The plugin cannot read every latest human
+instruction, so its metadata never grants unconditional user authority. Uncertain
+recipes should be verified as the first step of a bounded goal; the model must
+not invent conversions such as slabs back into planks.
+
+Read-only runtime observation confirmed autonomous task dispatch and server
+inventory updates: first spruce planks, sticks and a wooden pickaxe, then a
+crafting table. The respective snapshots showed 12 spruce planks, 16 sticks,
+one wooden pickaxe and later one crafting table; these quantities were observed
+at different times. N.E.K.O. then dispatched its own goal to leave the village
+and mine. Before the final native patch deployment, it was at
+`(-577.5, 53, -454.5)`, with health and food both 20, and coal had increased from
+64 to 71 while the body dug coal ore. All eight welcome/context segments were
+received and pushed. These observations used no diagnostic game tasks or chat.
+
+The matching native changes address two further interruptions. Bare required-arg
+command names in prose previously reached execution and stopped self prompting
+before argument validation; actual-call parsing and validation now precede the
+goal-state update. Lifecycle controls currently require their own command line,
+as documented in the executor; reviewers should check that rule against upstream
+usage. A progressing wood harvest also receives at most eight seconds to handle
+tree-canopy geometry, using an actual tree dig target retained for no more than
+three seconds within the same action generation. Vital danger, sealed rooms,
+stone/unknown geometry and persistent traps keep their recovery paths.
+
+The material gains above occurred before the final parser/canopy deployment;
+they cannot be credited entirely to those changes. They establish real short-run
+progress, not long-run unattended reliability. See
+[`docs/neko-recovery-diagnosis-2026-10-09.md`](../../docs/neko-recovery-diagnosis-2026-10-09.md)
+for the diagnosis and verification scope.
+
+After the final native reload, Neko independently queried server skills and used
+the home skill; its position returned from underground to the surface. It then
+dispatched the next wood-gathering task and the body moved 27.5 blocks with real
+inventory changes in a read-only 55-second window. Health and food were 20/20;
+that window does not establish completed log collection or overnight reliability.
+
+## Approved host bridge fix
+
+The separately ordered `host-patches/` series fixes a platform transport bug:
+the host previously parsed Minecraft cues through a generic 200-token result
+summary before the documented 1,000-token callback cap. Current resources and
+recovery evidence disappeared before reaching the model.
+
+The fix retains Minecraft `push_message.v2` text up to the existing
 host callback cap. Other plugins and legacy payloads keep their existing
-parser/limits. Offline replay checks preserve current inventory and verify
-both the 1,000-token cap and unchanged unrelated parsing. The patch applies
-after the pinned plugin series; its bytes and base bridge blob are recorded
-separately in the manifest. It has not been applied to the running host.
+parser/limits. Apply this host series after the plugin series. Patch bytes and
+scope paths are recorded separately in the manifest. Restart the N.E.K.O.
+launcher/main process after applying it; restarting only the Minecraft plugin
+does not reload the host bridge.
 
-The N.E.K.O. `CONTEXT.md` requires escalation before plugin work modifies
-platform files. Approval is pending. Applying only the plugin series improves
-the observation cache and executor, but does not resolve this earlier host
-truncation. No claim of reliable unattended play is made on that basis.
+The user approved this specific platform change under N.E.K.O.'s `CONTEXT.md`
+escalation requirement. It was applied and the host restarted. Passive capture
+confirmed complete 759- and 858-token Minecraft cues in the actual model input,
+including tool durability, resources and custom-item identity. Plugin-only
+installation leaves the earlier transport bug unresolved.

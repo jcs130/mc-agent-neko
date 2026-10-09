@@ -1,9 +1,9 @@
 {
   "upstreamRepository": "https://github.com/Project-N-E-K-O/N.E.K.O",
   "baseCommit": "fb2a2e731a8c954478d08678b0c8cf40e8145a54",
-  "sourceCommit": "3535fe145ddd38b5eec5aa7deae6dd6efc07e21d",
+  "sourceCommit": "8fa5648617025debf378fed0028aca62690d54d2",
   "scope": "plugin/plugins/game_agent_minecraft",
-  "resultPluginTree": "8e176e11a7773be3348a0fdfd7e6c87c2936ca4f",
+  "resultPluginTree": "41ccfe90eef332eeb41bfbab7a1592300f45c7db",
   "patches": [
     {
       "file": "0001-chore-configure-text-only-local-Qwen-Minecraft-trial.patch",
@@ -144,22 +144,64 @@
     {
       "file": "0035-docs-record-verified-recovery-fixes-and-host-transpo.patch",
       "sha256": "39004fc7447bdf70f92749549d54ae31cbd2758903e36d1269dc62992b04f4ab"
+    },
+    {
+      "file": "0036-fix-preserve-inventory-capacity-in-autonomous-recove.patch",
+      "sha256": "4e3b655d07d79696ffe1edc4fa9e9f1dd74251778a8c39114066a83d6ef73aa7"
+    },
+    {
+      "file": "0037-docs-record-approved-host-fix-and-remaining-survival.patch",
+      "sha256": "0e696346c488e145336860ca64a4d0c3078fd47d7cbda6a0780da3e9c8261fe1"
+    },
+    {
+      "file": "0038-fix-separate-autonomous-recovery-authority-from-dire.patch",
+      "sha256": "45a3c9bdbf04c6700c9177541b73aceb27623e74ee459d3de9c7a2c483ecc837"
+    },
+    {
+      "file": "0039-fix-carry-authorized-next-action-guidance-after-fres.patch",
+      "sha256": "8f6b5b8370cc082c327633a5e3383cdcbc72045139fd0eb5292fc405568159c3"
+    },
+    {
+      "file": "0040-docs-record-verified-survival-execution-fixes-and-li.patch",
+      "sha256": "a85ad217049923b14cef2da5f8bbe18e806863f69ae875f53bcb64a772b90f5b"
     }
   ],
   "verification": {
     "appliedInOrderToBase": true,
     "resultPluginTreeMatchesSource": true,
-    "pluginTestsPassed": 98
+    "pluginTestsPassed": 118,
+    "hostCallbackTestsPassed": 195,
+    "hostFileBlobsMatchSource": true,
+    "nativeTestsPassed": 368,
+    "contributionTestsPassed": 374,
+    "legacyMineDownContractTestsPassed": 1
   },
-  "hostBridgeBudgetProposal": {
-    "file": "proposals/minecraft-host-bridge-budget.patch",
-    "sha256": "14adce16932eba3d0242e9d935e0f084c5346aa57876a9b8ef2a7b72e3c7908b",
-    "status": "prepared-not-applied-awaiting-escalation",
-    "path": "plugin/server/messaging/proactive_bridge.py",
-    "baseFileBlob": "4952e4d558bc872039205ff15cbdb0eb0cd61d7d",
-    "appliesAfterPluginSeries": true,
-    "replayedBeforeTokens": 200,
-    "replayedAfterTokens": 840,
-    "unrelatedPluginAndLegacyLimitsUnchanged": true
+  "hostPatches": [
+    {
+      "file": "host-patches/0001-fix-preserve-Minecraft-decision-facts-through-the-ho.patch",
+      "sha256": "04f0099ea296e8884caa8fa05b84297f640460257b0d08f4e92ef0cccde4daba",
+      "sourceCommit": "618814d3c1d9a73273d0e5344a357b28828c2972",
+      "scopePaths": [
+        "plugin/server/messaging/proactive_bridge.py",
+        "tests/unit/test_minecraft_proactive_budget.py"
+      ],
+      "status": "approved-applied-live",
+      "appliesAfterPluginSeries": true
+    }
+  ],
+  "liveBridgeVerification": {
+    "pluginCueTokens": [
+      759,
+      858
+    ],
+    "actualModelInputTokens": [
+      803,
+      902
+    ],
+    "fullPluginCueReachedModel": true,
+    "resourcesReachedModel": true,
+    "stonePickRemaining35ReachedModel": true,
+    "wandIdentityReachedModel": true,
+    "passiveCapture": true
   }
 }

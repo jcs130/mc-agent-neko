@@ -1,0 +1,45 @@
+From 8d163f702ca4c7ae2c97dc278709c8e0b550fadc Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Fri, 9 Oct 2026 18:15:04 +0800
+Subject: [PATCH 37/37] docs: record approved host fix and remaining survival
+ blockers
+
+---
+ .../docs/2026-10-09-grounded-recovery-plan.md       | 13 ++++++++++---
+ 1 file changed, 10 insertions(+), 3 deletions(-)
+
+diff --git a/plugin/plugins/game_agent_minecraft/docs/2026-10-09-grounded-recovery-plan.md b/plugin/plugins/game_agent_minecraft/docs/2026-10-09-grounded-recovery-plan.md
+index 1aae9f0..54a084d 100644
+--- a/plugin/plugins/game_agent_minecraft/docs/2026-10-09-grounded-recovery-plan.md
++++ b/plugin/plugins/game_agent_minecraft/docs/2026-10-09-grounded-recovery-plan.md
+@@ -14,7 +14,7 @@
+ 
+ - Keep `ag_NEKO`, local `http://127.0.0.1:18030/v1`, the desktop Neko and LAN viewer.
+ - Change no server code, permissions or other agents.
+-- Neko edits stay within `plugin/plugins/game_agent_minecraft/`.
++- Neko plugin edits stay within `plugin/plugins/game_agent_minecraft/`; the user explicitly approved the separately reviewed host message-bridge fix on 2026-10-09. That exception covers `plugin/server/messaging/proactive_bridge.py` and its regression test only.
+ - Do not inject diagnostic game actions, chat, commands or spells. Validate deployment through read-only observations of Neko's own actions.
+ - Preserve running state; do not overwrite the supervisor's dirty arbitration file or persona/memory unrelated to the fixes.
+ - Publish native fixes and Neko companion patches to the existing `jcs130/mc-agent-neko` fork branch.
+@@ -80,7 +80,7 @@
+ - Confirmed: the executor exposes `!goToSurface`, `!pillarUp`, `!craftRecipe`, `!serverQuery` and `!serverCommand`; none are blocked in this deployment. The local profile duplicated its Chinese execution policy and contained literal newline escapes in its protocol template.
+ - Confirmed: terminal callbacks can run before passive state and previously contained up to 12,500 feedback characters without current resource facts. Matched outcome history and bounded fresh state now accompany priority decisions.
+ - Confirmed during live verification: `plugin/server/messaging/proactive_bridge.py` calls the generic result-summary parser before the documented callback cap. A real 840-token idle decision became 200 tokens and lost `resources`; the actual conversation bus confirmed the loss. This platform-layer change requires escalation under `CONTEXT.md`.
+-- Prepared and verified a scoped host patch that preserves Minecraft v2 text up to the existing 1,000-token callback cap. Other plugin/legacy paths retain their 200-token parsing behavior. Application is pending the user's response to the escalation question; no platform source was modified.
++- The user approved the scoped host fix. It preserves Minecraft v2 text up to the existing 1,000-token callback cap. Other plugin/legacy paths retain their 200-token parsing behavior. Six host regressions cover idle/completion facts, oversized messages and unrelated paths; the surrounding callback/media suite passed 195 tests.
+ 
+ ## Verification and deployment record (2026-10-09)
+ 
+@@ -90,4 +90,11 @@
+ - Reloaded the Minecraft body and its plugin with the established lifecycle scripts, retaining the running local model and Neko main. Runtime state/arbitration was preserved.
+ - Fresh live observations correctly show the wand, compass and book labels and 8 received/pushed welcome parts. The bot was already on the surface before this deployment; do not attribute that earlier escape to these changes.
+ - Read-only sampling observed a genuine autonomous task, inventory changes and later position changes, with no injected diagnostic actions/chat. That task still attempted a long tree-growing chain and ended at its deadline. This is evidence that dispatch works, not evidence of reliable unattended survival.
+-- Remaining blocker: the host's earlier 200-token truncation prevents the new bounded context from consistently reaching the model. The companion host patch is reviewable but must not be described as applied until escalation is approved and live delivery is verified.
++- Host source `618814d` was applied to live Neko as `4b015b0` and the owned launcher process restarted. Passive message/conversation capture confirms complete 759- and 858-token plugin cues reach the actual model input (803 and 902 tokens including host framing), with pick durability, current supplies and custom-item labels intact. No diagnostic gameplay was injected.
++
++## Follow-up: unattended survival blockers
++
++- Mining completed with 18 copper drops, then repeatedly exited with no gain because inventory remained full. The action wrapper discarded the skill's result and exposed only incidental navigation/discard logs. Native source `5a12c26` now reports measured drops, partial/no progress and storage blockers; nine regressions pass.
++- The installed Mineflayer metadata handler assigns every entity's air to `bot.oxygenLevel`. Actual dependency replay proves foreign zero-air metadata can overwrite own full air. Native source `6904c3a` derives modern oxygen from the own entity before synchronous safety consumers read it; real low-air rescue remains active. The unchanged-state scheduler wakes at 10/40 seconds in replay, but false oxygen churn resets it every 10 seconds; the fix addresses that source without suppressing real oxygen changes.
++- Native inventory now reports available storage slots (unknown stays unknown), and plugin source `b5bbb8f` retains this fact in bounded recovery context. The complete plugin suite now passes 100 tests.
++- Further observed: Mineflayer can drop a crafting output when inventory is full while reporting completion, and the recipe planner can falsely request oak when spruce is carried. These require separately tested native fixes before the final deployment/observation pass.

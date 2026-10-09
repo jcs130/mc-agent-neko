@@ -1,2 +1,2 @@
 patches/*.patch -text
-proposals/*.patch -text
+host-patches/*.patch -text

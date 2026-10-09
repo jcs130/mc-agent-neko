@@ -1,0 +1,100 @@
+From 618814d3c1d9a73273d0e5344a357b28828c2972 Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Fri, 9 Oct 2026 18:08:54 +0800
+Subject: [PATCH] fix: preserve Minecraft decision facts through the host
+ message bridge
+
+---
+ plugin/server/messaging/proactive_bridge.py   | 10 ++-
+ tests/unit/test_minecraft_proactive_budget.py | 61 +++++++++++++++++++
+ 2 files changed, 70 insertions(+), 1 deletion(-)
+ create mode 100644 tests/unit/test_minecraft_proactive_budget.py
+
+diff --git a/plugin/server/messaging/proactive_bridge.py b/plugin/server/messaging/proactive_bridge.py
+index 4952e4d..fc0d881 100644
+--- a/plugin/server/messaging/proactive_bridge.py
++++ b/plugin/server/messaging/proactive_bridge.py
+@@ -482,7 +482,15 @@ class ProactiveBridge:
+             try:
+                 from utils.result_parser import parse_push_message_content
+ 
+-                text = parse_push_message_content(text)
++                if plugin_id == "game_agent_minecraft" and schema == "push_message.v2":
++                    # Minecraft decision context is already structured/bounded.
++                    # The generic 200-token result-summary cap removes its
++                    # resources and outcomes before the 1,000-token host cap.
++                    from config import AGENT_CALLBACK_TEXT_MAX_TOKENS
++                    from utils.tokenize import truncate_to_tokens
++                    text = truncate_to_tokens(text, AGENT_CALLBACK_TEXT_MAX_TOKENS)
++                else:
++                    text = parse_push_message_content(text)
+             except Exception as exc:
+                 logger.debug(
+                     "parse_push_message_content failed (fallback to raw): {}",
+diff --git a/tests/unit/test_minecraft_proactive_budget.py b/tests/unit/test_minecraft_proactive_budget.py
+new file mode 100644
+index 0000000..47c5122
+--- /dev/null
++++ b/tests/unit/test_minecraft_proactive_budget.py
+@@ -0,0 +1,61 @@
++"""Keep bounded Minecraft decision facts intact across the host bridge."""
++from __future__ import annotations
++
++import pytest
++
++from plugin.server.messaging.proactive_bridge import ProactiveBridge
++from utils.tokenize import count_tokens
++
++pytestmark = pytest.mark.unit
++
++
++def forward(text: str, *, plugin: str = "game_agent_minecraft", schema="push_message.v2"):
++    sent = []
++
++    class Socket:
++        def send_json(self, payload, _flags):
++            sent.append(payload)
++
++    parts = [{"type": "text", "text": text}]
++    ProactiveBridge()._dispatch(
++        {"plugin_id": plugin, "schema": schema, "visibility": [],
++         "ai_behavior": "respond", "parts": parts}, Socket(),
++    )
++    event = next(value for value in sent if value["event_type"] == "proactive_message")
++    assert event["parts"] == parts
++    assert event["summary"] == event["detail"] == event["text"]
++    return event["text"]
++
++
++@pytest.mark.parametrize("cue", ["idle_decision", "task_failed"])
++def test_minecraft_decision_preserves_resources_and_failure_after_policy(cue):
++    # The plugin sends policy before game facts. The old generic 200-token
++    # summary silently removed all facts although the host allows 1,000.
++    text = f"{cue}\n" + "Use current observations and avoid repeating failed actions. " * 45
++    text += '\nresources={"pickaxes":[],"sticks":0,"raw_iron":6}'
++    text += '\nrecent_outcomes=[{"status":"failed","reason":"protected block"}]'
++    assert 200 < count_tokens(text) < 1000
++    assert forward(text) == text
++
++
++def test_minecraft_oversized_decision_stays_within_host_callback_budget():
++    from config import AGENT_CALLBACK_TEXT_MAX_TOKENS
++
++    text = "observation " * 4000
++    forwarded = forward(text)
++    assert count_tokens(forwarded) > 200
++    assert count_tokens(forwarded) <= AGENT_CALLBACK_TEXT_MAX_TOKENS
++    assert len(forwarded) < len(text)
++
++
++@pytest.mark.parametrize("plugin,schema", [
++    ("another_plugin", "push_message.v2"),
++    ("game_agent_minecraft", None),
++])
++def test_unrelated_and_legacy_messages_keep_generic_summary_budget(plugin, schema):
++    forwarded = forward("word " * 4000, plugin=plugin, schema=schema)
++    assert count_tokens(forwarded) <= 200
++
++
++def test_other_plugins_still_parse_json_message_content():
++    assert forward('{"message":"clean caption"}', plugin="another_plugin") == "clean caption"

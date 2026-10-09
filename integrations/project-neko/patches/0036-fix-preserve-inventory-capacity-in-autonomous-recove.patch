@@ -1,0 +1,50 @@
+From b5bbb8f808d6c2c409730cfd5fccb7d03d90d60a Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Fri, 9 Oct 2026 18:13:31 +0800
+Subject: [PATCH 36/37] fix: preserve inventory capacity in autonomous recovery
+ context
+
+---
+ .../plugins/game_agent_minecraft/observations.py   |  3 +++
+ .../game_agent_minecraft/test_grounded_recovery.py | 14 ++++++++++++++
+ 2 files changed, 17 insertions(+)
+
+diff --git a/plugin/plugins/game_agent_minecraft/observations.py b/plugin/plugins/game_agent_minecraft/observations.py
+index 9648500..e00b6af 100644
+--- a/plugin/plugins/game_agent_minecraft/observations.py
++++ b/plugin/plugins/game_agent_minecraft/observations.py
+@@ -249,6 +249,9 @@ class GameObservations:
+             'iron': {'raw': counts.get('raw_iron', absent), 'ingots': counts.get('iron_ingot', absent)},
+             'named': named[:4],
+         }
++        empty_slots = inventory.get('emptySlots')
++        if type(empty_slots) is int and 0 <= empty_slots <= 36:
++            resources['emptySlots'] = empty_slots
+         if not complete:
+             resources['countsIncomplete'] = True
+         if len(named) > 4:
+diff --git a/plugin/plugins/game_agent_minecraft/test_grounded_recovery.py b/plugin/plugins/game_agent_minecraft/test_grounded_recovery.py
+index 49e1922..2528b7d 100644
+--- a/plugin/plugins/game_agent_minecraft/test_grounded_recovery.py
++++ b/plugin/plugins/game_agent_minecraft/test_grounded_recovery.py
+@@ -26,6 +26,20 @@ def crowded_frame(seq=1, session='resources-fixture'):
+ 
+ 
+ class OperationalInventoryTests(unittest.TestCase):
++    def test_compact_decision_preserves_reported_empty_storage_slots(self):
++        for empty in (0, 7, 36):
++            with self.subTest(empty=empty):
++                data = crowded_frame()
++                data['state']['inventory']['emptySlots'] = empty
++                self.assertEqual(self.summary(data)['resources'].get('emptySlots'), empty)
++
++    def test_unknown_or_invalid_storage_capacity_is_not_assumed_full(self):
++        for empty in (None, -1, 37, True, '0'):
++            with self.subTest(empty=empty):
++                data = crowded_frame()
++                data['state']['inventory']['emptySlots'] = empty
++                self.assertNotIn('emptySlots', self.summary(data)['resources'])
++
+     def summary(self, data, budget=400):
+         observations = GameObservations()
+         observations.ingest_state(data)
