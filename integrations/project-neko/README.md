@@ -1,5 +1,10 @@
 # Project N.E.K.O. companion patches
 
+The [Windows guardian reference](deployment/README.md) preserves the unattended
+deployment fix that waits through remote server outages without repeatedly
+recovering a healthy game process. Its isolated regression scenarios are separate
+from the source patch series and require no running game or model.
+
 The latest storage repair retains named backpacks and feasible material-selling
 offers in bounded planning context. Its native tools distinguish the ordinary
 Minepacks warehouse from the personal reward container and a conflicting
