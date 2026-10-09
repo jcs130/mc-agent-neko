@@ -1,5 +1,6 @@
 import * as mc from "../../utils/mcdata.js";
 import { makeableRecipes } from '../../utils/crafting_recipes.js';
+import { resync as resyncInventory } from '../../utils/inv_sync.js';
 import * as world from "./world.js";
 import * as tickConfirm from "./tick_confirm.js";
 import pf from 'mineflayer-pathfinder';
@@ -486,6 +487,18 @@ export async function craftRecipeLocal(bot, itemName, num=1) {
         return false;
     }
 
+    // Mineflayer's putAway silently drops the result when the backpack is full.
+    // Reserve real backpack space before moving any ingredients or placing a table;
+    // never make room by discarding a server/custom item on the caller's behalf.
+    if (typeof bot.inventory.emptySlotCount !== 'function') {
+        log(bot, `Cannot verify inventory capacity to craft ${itemName}; no materials were used.`);
+        return false;
+    }
+    if (bot.inventory.selectedItem || bot.inventory.emptySlotCount() < 1) {
+        log(bot, `Inventory is full or the cursor holds an item; free at least one backpack slot before crafting ${itemName}. No materials were used; keep custom/server items safe.`);
+        return false;
+    }
+
     let recipes = makeableRecipes(bot, itemId);
     let craftingTable = null;
     // Resolve vanilla #planks recipes from held stacks before looking for a
@@ -539,8 +552,35 @@ export async function craftRecipeLocal(bot, itemName, num=1) {
     try { bot.clearControlStates(); } catch (e) {}
     try { for (const m of guardModes) if (bot.modes && bot.modes.exists(m)) { prevModes[m] = bot.modes.isOn(m); bot.modes.setOn(m, false); } } catch (e) {}
     try {
-        await bot.craft(recipe, Math.min(craftLimit.num, num), craftingTable);
-        log(bot, `Successfully crafted ${itemName} locally, now have ${world.getInventoryCounts(bot)[itemName] || 0}.`);
+        const batches = Math.min(craftLimit.num, Math.floor(num));
+        const produced = recipe.result.count * batches;
+        const stackSize = bot.registry.items[itemId]?.stackSize || 1;
+        // Ignore space that ingredients might free and existing stacks that might have
+        // custom components. This conservative reservation also protects intermediate
+        // cursor transfers, and covers every result in a multi-craft batch.
+        const slotsNeeded = Math.ceil(produced / stackSize);
+        if (!(batches > 0) || bot.inventory.emptySlotCount() < slotsNeeded) {
+            log(bot, `Not enough inventory space to receive ${produced} ${itemName}; free ${slotsNeeded} backpack slots or request a smaller craft batch. No materials were used.`);
+            return false;
+        }
+        const beforeCount = world.getInventoryCounts(bot)[itemName] || 0;
+        await bot.craft(recipe, batches, craftingTable);
+        if (bot.inventory.selectedItem || bot.currentWindow?.selectedItem) {
+            log(bot, `Local craft ${itemName} was not confirmed: an item remains on the inventory cursor. Resolve that item before retrying; no verification click was sent.`);
+            return false;
+        }
+        // Modern Mineflayer predicts click results locally; a resolved craft promise
+        // is not an inventory acknowledgement. Reuse the existing bounded full-sync
+        // handshake and judge the server's resulting inventory, including rollbacks.
+        const confirmed = bot.supportFeature('stateIdUsed')
+            ? await resyncInventory(bot)
+            : bot.supportFeature('transactionPacketExists');
+        const afterCount = world.getInventoryCounts(bot)[itemName] || 0;
+        if (!confirmed || afterCount - beforeCount < produced) {
+            log(bot, `Local craft ${itemName} was not confirmed: expected ${produced} new items, inventory changed by ${afterCount - beforeCount} (now ${afterCount})${confirmed ? '' : '; server inventory confirmation unavailable'}. Check inventory or nearby drops before retrying; do not assume the craft succeeded.`);
+            return false;
+        }
+        log(bot, `Successfully crafted ${itemName} locally, received ${afterCount - beforeCount}; now have ${afterCount} (server inventory confirmed).`);
         return true;
     } catch (e) {
         log(bot, `Local craft ${itemName} failed: ${e.message}.`);

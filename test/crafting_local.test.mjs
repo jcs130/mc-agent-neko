@@ -10,12 +10,20 @@ const registry = data('1.20.6');
 async function localCraft(name, stock) {
     const logs = [], attempts = [];
     const bot = { registry, entity: { position: { distanceTo: () => 0 } },
+        supportFeature: name => name === 'transactionPacketExists',
         inventory: {
             items: () => Object.entries(stock).map(([name, count]) => ({ name, type: registry.itemsByName[name].id, count })),
             count: id => stock[registry.items[id]?.name] || 0,
+            emptySlotCount: () => 36 - Object.keys(stock).length,
         }, clearControlStates() {} };
     injectCraft(bot);
-    bot.craft = async (recipe, n, table) => attempts.push({recipe,n,table});
+    bot.craft = async (recipe, n, table) => {
+        attempts.push({recipe,n,table});
+        for (const delta of recipe.delta) {
+            const name = registry.items[delta.id].name;
+            stock[name] = (stock[name] || 0) + delta.count * n;
+        }
+    };
     let tableLookups = 0;
     const context = vm.createContext({ makeableRecipes, log: (_,s) => logs.push(s),
         mc: { getItemId: n => registry.itemsByName[n]?.id,

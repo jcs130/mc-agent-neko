@@ -26,7 +26,7 @@ const prog = (s) => {
 };
 
 // 全量重同步: 复位服务器容器态 + 逼服务器整包重发背包。resolve(true)=收到整包确认。
-async function resync(bot) {
+export async function resync(bot) {
     if (bot._invResyncing) return bot._invResyncing; // 并发超时共享同一次重同步
     bot._invResyncing = (async () => {
         try {
