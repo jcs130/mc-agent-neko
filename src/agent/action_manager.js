@@ -165,7 +165,19 @@ export class ActionManager {
             }
 
             // start the action
-            await actionFn();
+            // Some Mineflayer window operations never settle after disconnect.
+            // Release this action's await chain on its own body's end event so
+            // self-prompt teardown and the next mission can actually finish.
+            let disconnected;
+            try {
+                const ended = new Promise((_, reject) => {
+                    disconnected = () => reject(Object.assign(new Error('Action interrupted by game disconnect.'), { code: 'GAME_DISCONNECT' }));
+                    bot.once?.('end', disconnected);
+                });
+                await Promise.race([actionFn(), ended]);
+            } finally {
+                bot.off?.('end', disconnected);
+            }
             if (this._releaseRetiredAction(bot, actionFn)) {
                 clearTimeout(TIMEOUT);
                 return { success: false, message: 'Action interrupted by connection change; reobserve the current game state.', interrupted: true, timedout: false };
@@ -219,7 +231,8 @@ export class ActionManager {
             let message;
             if (isInterrupt) {
                 // Clean message for interrupts
-                message = this.getBotOutputSummary() + '(action interrupted)\n';
+                message = this.getBotOutputSummary() + (err.code === 'GAME_DISCONNECT'
+                    ? '(action interrupted by game disconnect)\n' : '(action interrupted)\n');
             } else {
                 message = this.getBotOutputSummary() +
                     '!!Code threw exception!!\n' +
