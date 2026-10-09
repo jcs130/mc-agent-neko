@@ -762,7 +762,7 @@ export const actionsList = [
     },
     {
         name: '!cannotComplete',
-        description: 'Call ONLY when the current assigned task is genuinely impossible to complete (e.g. a required resource does not exist anywhere reachable, or a needed tool cannot be obtained). Reports failure with your reason and stops. Do NOT use this for a task that is merely slow or hard.',
+        description: 'Call ONLY when the current assigned task is genuinely impossible to complete (e.g. a required resource does not exist anywhere reachable, or a needed tool cannot be obtained). First read a relevant current game query or receive a current action result to verify this task\'s blocker; a previous task\'s failure story is not evidence. Reports failure with your reason and stops. Do NOT use this for a task that is merely slow or hard.',
         params: {
             'reason': { type: 'string', description: 'A short reason why the task cannot be completed.' },
         },

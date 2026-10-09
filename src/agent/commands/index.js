@@ -330,9 +330,10 @@ export async function executeCommand(agent, message, beforeExecute = null) {
             // Goal interruption belongs after syntax/arity/type/domain validation.
             // A malformed model example must never stop a running self-prompt loop.
             // Model calls have the interruption callback; explicit user commands
-            // omit it and retain their lifecycle authority, including !endGoal.
-            if (beforeExecute && parsed.commandName === '!endGoal' && agent._missionEnabled) {
-                const feedback = agent.adminMission?.completionFeedback?.();
+            // omit it and retain their lifecycle authority. Neither success nor
+            // failure narration from an old task can end an unobserved new one.
+            if (beforeExecute && ['!endGoal', '!cannotComplete'].includes(parsed.commandName) && agent._missionEnabled) {
+                const feedback = agent.adminMission?.completionFeedback?.(parsed.commandName);
                 if (feedback) return feedback;
             }
             if (beforeExecute) beforeExecute(parsed);

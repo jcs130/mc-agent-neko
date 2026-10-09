@@ -13,6 +13,9 @@ function harness(perform = async () => '生命 20/20；魔力 20/20；技能点 
         actionsList: [{ name: '!endGoal', perform: async agent => {
             await agent.adminMission.end('done');
             return 'Mission complete.';
+        } }, { name: '!cannotComplete', params: { reason: { type: 'string' } }, perform: async (agent, reason) => {
+            await agent.adminMission.end('impossible', reason);
+            return 'Marked the task as impossible.';
         } }, ...actions],
     });
     for (const relative of ['../src/agent/admin_mission.js', '../src/agent/commands/index.js']) {
@@ -80,6 +83,34 @@ test('an explicit user lifecycle command retains its termination authority', asy
     mission._handoff({ text: '仍可由玩家结束', taskId: 'human-end', origin: 'ws' });
     assert.equal(await execute(agent, '!endGoal'), 'Mission complete.');
     assert.equal(finishes.length, 1);
+    assert.equal(mission.isActive(), false);
+});
+
+test('a prior failure story cannot terminate an unobserved replacement task', async () => {
+    const { agent, mission, finishes, execute } = harness();
+    agent.history.getHistory = () => [{ role: 'assistant', content: 'Not enough payment items on the old trade.' }];
+    mission._handoff({ text: '找补给商', taskId: 'new-supply', origin: 'ws' });
+    const result = await execute(agent, '!cannotComplete("Old trade failed")', () => assert.fail('must not interrupt'));
+    assert.match(result, /Action not started: !cannotComplete/);
+    assert.equal(finishes.length, 0);
+    assert.equal(mission.isActive(), true);
+});
+
+test('a current failed action permits an evidence-backed impossible report', async () => {
+    const { agent, mission, finishes, execute } = harness(undefined, [{ name: '!testAction',
+        perform: async () => 'Action failed: route is protected' }]);
+    mission._handoff({ text: '尝试路线', taskId: 'current-failure', origin: 'ws' });
+    await execute(agent, '!testAction');
+    assert.equal(await execute(agent, '!cannotComplete("route is protected")', () => {}), 'Marked the task as impossible.');
+    assert.equal(finishes[0][1], 'failed');
+    assert.match(finishes[0][2], /Action failed: route is protected/);
+});
+
+test('an explicit user impossible command keeps its lifecycle authority', async () => {
+    const { agent, mission, finishes, execute } = harness();
+    mission._handoff({ text: '玩家取消', taskId: 'human-failure', origin: 'ws' });
+    assert.equal(await execute(agent, '!cannotComplete("cancel this task")'), 'Marked the task as impossible.');
+    assert.equal(finishes[0][1], 'failed');
     assert.equal(mission.isActive(), false);
 });
 
