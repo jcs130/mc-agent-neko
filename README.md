@@ -71,8 +71,12 @@ decision fixes. See [game observations](docs/game-information.md) and
 
 Conversation, bounded generated scripts and on-demand screenshot understanding
 can share one local Qwen3.8 Flash endpoint. The verified deployment uses an RTX
-3090 for the model and CPU image encoding, with no second GPU model. See
+3090 for both the model and image encoding, with no second GPU model. See
 [configuration, execution limits and measured checks](docs/neko-local-code-and-vision-2026-10-09.md).
+The [same-card deployment report](docs/neko-same-3090-vision-2026-10-10.md)
+records current GPU encoding; the earlier report retains its CPU measurements.
+The latest [skill and inventory repairs](docs/neko-core-skill-outcomes-2026-10-10.md)
+cover explicit failure feedback, upward recovery and near-capacity observations.
 
 ## Model Customization
 
