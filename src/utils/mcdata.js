@@ -8,6 +8,7 @@ import { plugin as collectblock } from 'mineflayer-collectblock';
 import { plugin as autoEat } from 'mineflayer-auto-eat';
 import plugin from 'mineflayer-armor-manager';
 import { installInvSync } from './inv_sync.js';
+import { repairLegacyDurability, installItemDurability } from './item_durability.js';
 const armorManager = plugin;
 let mc_version = settings.minecraft_version;
 let mcdata = null;
@@ -57,6 +58,9 @@ export function initBot(username) {
     // Settings arrive asynchronously from MindServer after this module loads.
     // Read the pinned protocol now instead of auto-detecting the gateway version.
     mc_version = settings.minecraft_version || mc_version;
+    if (mc_version === '1.20.5' || mc_version === '1.20.6') {
+        repairLegacyDurability(minecraftData(mc_version));
+    }
     if (mc_version === '1.20.6') {
         // minecraft-data currently includes fields introduced after 1.20.6.
         // Remove them before minecraft-protocol compiles the shared schema.
@@ -92,6 +96,7 @@ export function initBot(username) {
     }
 
     const bot = createBot(options);
+    if (!installItemDurability(bot)) bot.once('login', () => installItemDurability(bot));
     
     // Increase max listeners to prevent EventEmitter warnings
     // Multiple systems listen to bot events: plugins, agent, proxy, viewer, etc.
