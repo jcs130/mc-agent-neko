@@ -36,11 +36,17 @@ Interface: `state.server.protection` carries enabled/last/denied targets; `prote
 - [x] Add failing tests for protection snapshots/events, compact budgets of 400/700 tokens, ordinary Chinese protection messages, and suppression of solicited query replies.
 - [x] Run the new tests, implement within the existing plugin boundary, re-run the affected suites and commit.
 
-Verification before deployment: 128 Node tests and 57 Neko plugin tests passed; logs are `D:/neko-mc-trial/protection-node-tests-20261009.tap` and `D:/neko-mc-trial/protection-python-tests-20261009.log`. Denial behavior is currently verified with simulated server replies; live nearby permission queries returned `allow_likely` and distant ones returned `unknown_out_of_range`.
+Verification before final deployment: 129 Node tests and 57 Neko plugin tests passed; logs are `D:/neko-mc-trial/protection-node-tests-20261009.tap` and `D:/neko-mc-trial/protection-python-tests-20261009.log`. Denial behavior is verified with simulated server replies; live nearby permission queries returned `allow_likely` and distant ones returned `unknown_out_of_range`.
 
 ## Task 3: Deploy and verify
 
-- [ ] Pause the owned unattended lifecycle; cherry-pick verified changes into the live branches. Set `server_protection: "mycli"` in the local trial configuration.
-- [ ] Restart only owned Minecraft/Neko processes and restore unattended mode; keep the local LLM and LAN viewer.
-- [ ] Capture fresh game state and real permission replies. Verify guard-installed status, permissions reaching Neko, HP/connectivity/viewer health, and subsequent wood progress. Do not destroy an original building to test a denial.
-- [ ] Record test counts and live evidence here, distinguishing synthetic denial tests from real server denials.
+- [x] Pause the owned unattended lifecycle; cherry-pick verified changes into the live branches. Set `server_protection: "mycli"` in the local trial configuration.
+- [x] Restart only owned Minecraft/Neko processes and restore unattended mode; keep the local LLM and LAN viewer.
+- [x] Capture fresh game state and real permission replies. Verify guard-installed status, permissions reaching Neko, HP/connectivity/viewer health. Inspect wood progress separately from permission transport. Do not destroy an original building to test a denial.
+- [x] Record test counts and live evidence here, distinguishing synthetic denial tests from real server denials.
+
+## Live verification, 08:54 Asia/Shanghai
+
+`D:/neko-mc-trial/protection-deployment-verified-20261009.json` records live body preflights, Neko's real `minecraft_observe` result and a real `minecraft_server` permission query for (-621,71,-505), which returned `allow_likely/true/no_known_protection`. Guard `enabled` and `installed` are true. Neko is online with health 20 and food 20; local Qwen, Neko main/plugin, LAN viewer and the fresh unattended guardian are healthy.
+
+No real protection denial was observed in this check. The earlier 08:36–08:38 wood action collected nine logs. Later progress also reports inventory full, hostile interruptions and navigation failures. Consequently protection integration was missing and is now repaired, but it is not proven to be the cause of the current/overnight stalls. Further wood/survival progress and overnight reliability remain separate runtime questions; no success claim is made for them.
