@@ -6418,7 +6418,11 @@ export async function goToSurface(bot) {
         }
         const targetY = block.position.y + 1;
         try {
-            await goToPosition(bot, block.position.x, targetY, block.position.z, 0);
+            const reached = await goToPosition(bot, block.position.x, targetY, block.position.z, 0);
+            if (!reached) {
+                log(bot, `Surface not reached: currentY=${bot.entity.position.y}, targetY=${targetY}.`);
+                return false;
+            }
             log(bot, `Going to the surface at y=${targetY}.`);
             return true;
         } catch (err) {
