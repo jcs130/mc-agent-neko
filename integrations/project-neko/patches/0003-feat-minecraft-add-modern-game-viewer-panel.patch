@@ -1,0 +1,500 @@
+From 8a5a0bd08d9c522c7e8eae3528a53be1c01114a1 Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Thu, 8 Oct 2026 18:35:51 +0800
+Subject: [PATCH 03/29] feat(minecraft): add modern game viewer panel
+
+---
+ plugin/plugins/game_agent_minecraft/README.md |  13 ++
+ plugin/plugins/game_agent_minecraft/client.py |  10 +-
+ .../plugins/game_agent_minecraft/i18n/en.json |  10 +-
+ .../plugins/game_agent_minecraft/i18n/es.json |  10 +-
+ .../plugins/game_agent_minecraft/i18n/ja.json |  10 +-
+ .../plugins/game_agent_minecraft/i18n/ko.json |  10 +-
+ .../plugins/game_agent_minecraft/i18n/pt.json |  10 +-
+ .../plugins/game_agent_minecraft/i18n/ru.json |  10 +-
+ .../game_agent_minecraft/i18n/zh-CN.json      |  10 +-
+ .../game_agent_minecraft/i18n/zh-TW.json      |  10 +-
+ .../plugins/game_agent_minecraft/plugin.toml  |   7 ++
+ .../plugins/game_agent_minecraft/service.py   |   1 +
+ .../game_agent_minecraft/static/index.html    |  23 ++++
+ .../game_agent_minecraft/static/viewer.css    |   8 ++
+ .../game_agent_minecraft/static/viewer.js     | 116 ++++++++++++++++++
+ .../game_agent_minecraft/test_viewer.py       |  47 +++++++
+ 16 files changed, 296 insertions(+), 9 deletions(-)
+ create mode 100644 plugin/plugins/game_agent_minecraft/static/index.html
+ create mode 100644 plugin/plugins/game_agent_minecraft/static/viewer.css
+ create mode 100644 plugin/plugins/game_agent_minecraft/static/viewer.js
+ create mode 100644 plugin/plugins/game_agent_minecraft/test_viewer.py
+
+diff --git a/plugin/plugins/game_agent_minecraft/README.md b/plugin/plugins/game_agent_minecraft/README.md
+index fe4f765..4f036c2 100644
+--- a/plugin/plugins/game_agent_minecraft/README.md
++++ b/plugin/plugins/game_agent_minecraft/README.md
+@@ -149,6 +149,19 @@ agent 端启动方式由你自己决定：绿色包用户在解压出来的包
+ `task_finished` 帧上即可。插件会自动切到显式 ID 匹配模式，不再依赖完成
+ 顺序。
+ 
++## 现代游戏画面
++
++在插件管理页打开本插件的「现代游戏画面」面板，可直接查看当前游戏实例的
++第一人称、第三人称和地下城视角，以及血量、背包、聊天、地图和服务器提示。
++画面在浏览器内渲染，查看页面和刷新状态不调用 LLM，不启动额外游戏账号。
++
++mc-agent 需要启用 `render_bot_view`、`viewer_type="modern"`，并配置
++`modern_viewer_assets_dir`（部署说明见 mc-agent 的 `src/agent/vision/modern/README.md`）。
++代理在 WebSocket 建连时发送 `{"type":"viewer_info","viewer":{...}}`，其中包含
++`available`、`type="modern"`、`url`、可选 `lan_url`、`username` 和 `version`。
++插件随 `game_agent_status` 返回这份元数据；断连时停止展示旧连接状态。
++此入口仅观看游戏，不添加主播语音或直播叠层。局域网地址可单独打开。
++
+ ## 文件分工
+ 
+ | 文件 | 作用 |
+diff --git a/plugin/plugins/game_agent_minecraft/client.py b/plugin/plugins/game_agent_minecraft/client.py
+index e59d439..5501308 100644
+--- a/plugin/plugins/game_agent_minecraft/client.py
++++ b/plugin/plugins/game_agent_minecraft/client.py
+@@ -85,6 +85,7 @@ class GameAgentClient:
+         self._ws: Optional[Any] = None
+         self._running = False
+         self.is_connected: bool = False
++        self.viewer_info: dict[str, Any] | None = None
+         self._chat_waiters: dict[str, asyncio.Future] = {}
+         self._background_callbacks: set[asyncio.Task[None]] = set()
+ 
+@@ -113,6 +114,7 @@ class GameAgentClient:
+                     max_size=None,
+                 )
+                 self.is_connected = True
++                self.viewer_info = None
+                 self._log_info("connected to {}", self.uri)
+                 await self._listen()
+                 # ``_listen`` swallows ConnectionClosed internally and
+@@ -122,6 +124,7 @@ class GameAgentClient:
+                 # tight loop. Mirror the exception-path reconnect
+                 # interval for the clean-close path too.
+                 self.is_connected = False
++                self.viewer_info = None
+                 if self._running:
+                     self._log_info(
+                         "listen exited cleanly, reconnecting in {:.1f}s",
+@@ -135,6 +138,7 @@ class GameAgentClient:
+                 break
+             except Exception as exc:
+                 self.is_connected = False
++                self.viewer_info = None
+                 if self._running:
+                     self._log_warning(
+                         "connection failed ({}: {}), retrying in {:.1f}s",
+@@ -148,6 +152,7 @@ class GameAgentClient:
+     async def stop(self) -> None:
+         self._running = False
+         self.is_connected = False
++        self.viewer_info = None
+         ws = self._ws
+         if ws is not None:
+             try:
+@@ -261,7 +266,10 @@ class GameAgentClient:
+ 
+                 msg_type = data.get("type", "")
+                 try:
+-                    if msg_type == "chat_result":
++                    if msg_type == "viewer_info":
++                        viewer = data.get("viewer")
++                        self.viewer_info = dict(viewer) if isinstance(viewer, dict) else None
++                    elif msg_type == "chat_result":
+                         waiter = self._chat_waiters.get(data.get("request_id"))
+                         if waiter is not None and not waiter.done():
+                             waiter.set_result(data)
+diff --git a/plugin/plugins/game_agent_minecraft/i18n/en.json b/plugin/plugins/game_agent_minecraft/i18n/en.json
+index c76ed0a..278fa48 100644
+--- a/plugin/plugins/game_agent_minecraft/i18n/en.json
++++ b/plugin/plugins/game_agent_minecraft/i18n/en.json
+@@ -1,4 +1,12 @@
+ {
+   "plugin.name": "Minecraft Game Plugin",
+-  "plugin.description": "Bridges a local mc-agent (WebSocket) so neko-chan can chat with you while playing alongside you in Minecraft, narrating the game in real time"
++  "plugin.description": "Bridges a local mc-agent (WebSocket) so neko-chan can chat with you while playing alongside you in Minecraft, narrating the game in real time",
++  "viewer.title": "Minecraft Viewer",
++  "viewer.waiting": "Connecting to the game…",
++  "viewer.refresh": "Refresh",
++  "viewer.open": "Open full view",
++  "viewer.requireAgent": "Start mc-agent with the modern viewer enabled.",
++  "viewer.unavailable": "Modern viewer is unavailable",
++  "viewer.connected": "Connected",
++  "viewer.error": "Connection error"
+ }
+diff --git a/plugin/plugins/game_agent_minecraft/i18n/es.json b/plugin/plugins/game_agent_minecraft/i18n/es.json
+index 4f7ddfc..f1d305e 100644
+--- a/plugin/plugins/game_agent_minecraft/i18n/es.json
++++ b/plugin/plugins/game_agent_minecraft/i18n/es.json
+@@ -1,4 +1,12 @@
+ {
+   "plugin.name": "Complemento de Minecraft",
+-  "plugin.description": "Se conecta a un mc-agent local (WebSocket) para que neko-chan charle contigo mientras juega a tu lado en Minecraft y narra la partida en tiempo real"
++  "plugin.description": "Se conecta a un mc-agent local (WebSocket) para que neko-chan charle contigo mientras juega a tu lado en Minecraft y narra la partida en tiempo real",
++  "viewer.title": "Visor de Minecraft",
++  "viewer.waiting": "Conectando al juego…",
++  "viewer.refresh": "Actualizar",
++  "viewer.open": "Abrir vista completa",
++  "viewer.requireAgent": "Inicia mc-agent con el visor moderno activado.",
++  "viewer.unavailable": "El visor no está disponible",
++  "viewer.connected": "Conectado",
++  "viewer.error": "Error de conexión"
+ }
+diff --git a/plugin/plugins/game_agent_minecraft/i18n/ja.json b/plugin/plugins/game_agent_minecraft/i18n/ja.json
+index 227d3d9..c250ecd 100644
+--- a/plugin/plugins/game_agent_minecraft/i18n/ja.json
++++ b/plugin/plugins/game_agent_minecraft/i18n/ja.json
+@@ -1,4 +1,12 @@
+ {
+   "plugin.name": "Minecraft ゲームプラグイン",
+-  "plugin.description": "ローカルの mc-agent（WebSocket）と接続し、猫娘ちゃんが会話しながら Minecraft で一緒に遊び、リアルタイムで実況できるようにします"
++  "plugin.description": "ローカルの mc-agent（WebSocket）と接続し、猫娘ちゃんが会話しながら Minecraft で一緒に遊び、リアルタイムで実況できるようにします",
++  "viewer.title": "ゲームビューアー",
++  "viewer.waiting": "ゲームに接続中…",
++  "viewer.refresh": "更新",
++  "viewer.open": "別画面で開く",
++  "viewer.requireAgent": "モダンビューアーを有効にした mc-agent を起動してください。",
++  "viewer.unavailable": "ビューアーを利用できません",
++  "viewer.connected": "接続済み",
++  "viewer.error": "接続エラー"
+ }
+diff --git a/plugin/plugins/game_agent_minecraft/i18n/ko.json b/plugin/plugins/game_agent_minecraft/i18n/ko.json
+index fd8eed7..a4b8a7f 100644
+--- a/plugin/plugins/game_agent_minecraft/i18n/ko.json
++++ b/plugin/plugins/game_agent_minecraft/i18n/ko.json
+@@ -1,4 +1,12 @@
+ {
+   "plugin.name": "Minecraft 게임 플러그인",
+-  "plugin.description": "로컬 mc-agent(WebSocket)와 연결해 고양이가 대화하면서 Minecraft에서 함께 놀고 실시간으로 게임 화면을 해설할 수 있도록 합니다"
++  "plugin.description": "로컬 mc-agent(WebSocket)와 연결해 고양이가 대화하면서 Minecraft에서 함께 놀고 실시간으로 게임 화면을 해설할 수 있도록 합니다",
++  "viewer.title": "게임 뷰어",
++  "viewer.waiting": "게임에 연결 중…",
++  "viewer.refresh": "새로고침",
++  "viewer.open": "별도 화면 열기",
++  "viewer.requireAgent": "모던 뷰어를 활성화한 mc-agent를 시작하세요.",
++  "viewer.unavailable": "뷰어를 사용할 수 없습니다",
++  "viewer.connected": "연결됨",
++  "viewer.error": "연결 오류"
+ }
+diff --git a/plugin/plugins/game_agent_minecraft/i18n/pt.json b/plugin/plugins/game_agent_minecraft/i18n/pt.json
+index 7e08bed..cb78de2 100644
+--- a/plugin/plugins/game_agent_minecraft/i18n/pt.json
++++ b/plugin/plugins/game_agent_minecraft/i18n/pt.json
+@@ -1,4 +1,12 @@
+ {
+   "plugin.name": "Plugin do Minecraft",
+-  "plugin.description": "Conecta-se a um mc-agent local (WebSocket) para que a neko-chan converse com você enquanto joga ao seu lado no Minecraft e narra a partida em tempo real"
++  "plugin.description": "Conecta-se a um mc-agent local (WebSocket) para que a neko-chan converse com você enquanto joga ao seu lado no Minecraft e narra a partida em tempo real",
++  "viewer.title": "Visualizador Minecraft",
++  "viewer.waiting": "Conectando ao jogo…",
++  "viewer.refresh": "Atualizar",
++  "viewer.open": "Abrir visão completa",
++  "viewer.requireAgent": "Inicie o mc-agent com o visualizador moderno ativado.",
++  "viewer.unavailable": "O visualizador está indisponível",
++  "viewer.connected": "Conectado",
++  "viewer.error": "Erro de conexão"
+ }
+diff --git a/plugin/plugins/game_agent_minecraft/i18n/ru.json b/plugin/plugins/game_agent_minecraft/i18n/ru.json
+index 893719b..aee0b8c 100644
+--- a/plugin/plugins/game_agent_minecraft/i18n/ru.json
++++ b/plugin/plugins/game_agent_minecraft/i18n/ru.json
+@@ -1,4 +1,12 @@
+ {
+   "plugin.name": "Игровой плагин Minecraft",
+-  "plugin.description": "Связывается с локальным mc-agent (WebSocket), позволяя нэко-тян болтать с тобой и одновременно играть рядом в Minecraft, комментируя происходящее в реальном времени"
++  "plugin.description": "Связывается с локальным mc-agent (WebSocket), позволяя нэко-тян болтать с тобой и одновременно играть рядом в Minecraft, комментируя происходящее в реальном времени",
++  "viewer.title": "Обзор Minecraft",
++  "viewer.waiting": "Подключение к игре…",
++  "viewer.refresh": "Обновить",
++  "viewer.open": "Открыть отдельно",
++  "viewer.requireAgent": "Запустите mc-agent с включённым современным просмотром.",
++  "viewer.unavailable": "Просмотр недоступен",
++  "viewer.connected": "Подключено",
++  "viewer.error": "Ошибка подключения"
+ }
+diff --git a/plugin/plugins/game_agent_minecraft/i18n/zh-CN.json b/plugin/plugins/game_agent_minecraft/i18n/zh-CN.json
+index 6ed4010..0578fb9 100644
+--- a/plugin/plugins/game_agent_minecraft/i18n/zh-CN.json
++++ b/plugin/plugins/game_agent_minecraft/i18n/zh-CN.json
+@@ -1,4 +1,12 @@
+ {
+   "plugin.name": "Minecraft 游戏插件",
+-  "plugin.description": "桥接本地 mc-agent（WebSocket），让猫娘一边和你聊天、一边在 Minecraft 里陪你一起玩，并实时观看游戏画面进行解说"
++  "plugin.description": "桥接本地 mc-agent（WebSocket），让猫娘一边和你聊天、一边在 Minecraft 里陪你一起玩，并实时观看游戏画面进行解说",
++  "viewer.title": "现代游戏画面",
++  "viewer.waiting": "正在连接游戏画面…",
++  "viewer.refresh": "刷新",
++  "viewer.open": "独立打开",
++  "viewer.requireAgent": "请启动已开启现代可视化的 mc-agent。",
++  "viewer.unavailable": "现代可视化暂不可用",
++  "viewer.connected": "已连接",
++  "viewer.error": "连接异常"
+ }
+diff --git a/plugin/plugins/game_agent_minecraft/i18n/zh-TW.json b/plugin/plugins/game_agent_minecraft/i18n/zh-TW.json
+index d0e780d..4113aaf 100644
+--- a/plugin/plugins/game_agent_minecraft/i18n/zh-TW.json
++++ b/plugin/plugins/game_agent_minecraft/i18n/zh-TW.json
+@@ -1,4 +1,12 @@
+ {
+   "plugin.name": "Minecraft 遊戲插件",
+-  "plugin.description": "橋接本地 mc-agent（WebSocket），讓貓娘一邊和你聊天、一邊在 Minecraft 裡陪你一起玩，並即時觀看遊戲畫面進行解說"
++  "plugin.description": "橋接本地 mc-agent（WebSocket），讓貓娘一邊和你聊天、一邊在 Minecraft 裡陪你一起玩，並即時觀看遊戲畫面進行解說",
++  "viewer.title": "現代遊戲畫面",
++  "viewer.waiting": "正在連線遊戲畫面…",
++  "viewer.refresh": "重新整理",
++  "viewer.open": "獨立開啟",
++  "viewer.requireAgent": "請啟動已開啟現代視覺化的 mc-agent。",
++  "viewer.unavailable": "現代視覺化暫不可用",
++  "viewer.connected": "已連線",
++  "viewer.error": "連線異常"
+ }
+diff --git a/plugin/plugins/game_agent_minecraft/plugin.toml b/plugin/plugins/game_agent_minecraft/plugin.toml
+index cda77f5..816a816 100644
+--- a/plugin/plugins/game_agent_minecraft/plugin.toml
++++ b/plugin/plugins/game_agent_minecraft/plugin.toml
+@@ -94,6 +94,13 @@ screenshot_max_bytes = 102400
+ 
+ [plugin.ui]
+ enabled = true
++expose_legacy_static_panel = false
++
++[[plugin.ui.panel]]
++id = "viewer"
++title = { "$i18n" = "viewer.title", default = "Minecraft Viewer" }
++entry = "static/index.html"
++permissions = ["state:read"]
+ 
+ [[plugin.ui.guide]]
+ id = "quickstart"
+diff --git a/plugin/plugins/game_agent_minecraft/service.py b/plugin/plugins/game_agent_minecraft/service.py
+index f7e9901..c95d3b4 100644
+--- a/plugin/plugins/game_agent_minecraft/service.py
++++ b/plugin/plugins/game_agent_minecraft/service.py
+@@ -2211,6 +2211,7 @@ class GameAgentService:
+         return {
+             "ws_url": self._ws_url,
+             "connected": connected,
++            "viewer": self._client.viewer_info if connected and self._client else None,
+             "task_finished": self._task_finished,
+             "pending_task": self._pending.task_text if self._pending else None,
+             "log_cache_size": len(self._log_cache),
+diff --git a/plugin/plugins/game_agent_minecraft/static/index.html b/plugin/plugins/game_agent_minecraft/static/index.html
+new file mode 100644
+index 0000000..2cdb506
+--- /dev/null
++++ b/plugin/plugins/game_agent_minecraft/static/index.html
+@@ -0,0 +1,23 @@
++<!doctype html>
++<html lang="zh-CN">
++<head>
++  <meta charset="utf-8">
++  <meta name="viewport" content="width=device-width,initial-scale=1">
++  <title>Minecraft Viewer</title>
++  <link rel="stylesheet" href="viewer.css?v=1">
++</head>
++<body>
++  <header>
++    <div><strong data-i18n="viewer.title">Minecraft Viewer</strong><span id="status" role="status" data-i18n="viewer.waiting">Connecting…</span></div>
++    <nav>
++      <button id="refresh" type="button" data-i18n="viewer.refresh">Refresh</button>
++      <a id="open" href="#" target="_blank" rel="noopener noreferrer" hidden data-i18n="viewer.open">Open full view</a>
++    </nav>
++  </header>
++  <main>
++    <div id="placeholder" role="status"><span data-i18n="viewer.waiting">Connecting…</span><small data-i18n="viewer.requireAgent">Start mc-agent with the modern viewer enabled.</small></div>
++    <iframe id="game" title="Minecraft modern viewer" allow="autoplay; fullscreen" hidden></iframe>
++  </main>
++  <script src="viewer.js?v=1" defer></script>
++</body>
++</html>
+diff --git a/plugin/plugins/game_agent_minecraft/static/viewer.css b/plugin/plugins/game_agent_minecraft/static/viewer.css
+new file mode 100644
+index 0000000..df7c6a0
+--- /dev/null
++++ b/plugin/plugins/game_agent_minecraft/static/viewer.css
+@@ -0,0 +1,8 @@
++:root{color-scheme:dark;font:14px/1.45 system-ui,"Microsoft YaHei",sans-serif;color:#e4edf7;background:#0b111a}
++*{box-sizing:border-box}html,body{height:100%;margin:0}body{display:grid;grid-template-rows:auto 1fr;min-height:440px}
++header{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px 16px;background:linear-gradient(110deg,#152235,#162c30);border-bottom:1px solid #32475b}
++header strong{display:block;font-size:16px;letter-spacing:.04em}#status{display:block;margin-top:3px;color:#a0b5ca;font-size:12px}#status[data-connected=true]{color:#9be2bb}
++nav{display:flex;gap:8px;flex-wrap:wrap}button,a{font:inherit;text-decoration:none;color:#e4edf7;background:#23384d;border:1px solid #466078;border-radius:7px;padding:6px 11px;cursor:pointer}button:hover,a:hover{background:#304d66}button:focus-visible,a:focus-visible{outline:2px solid #90d5ed;outline-offset:2px}button:disabled{opacity:.5;cursor:wait}
++main{position:relative;min-height:360px}iframe{display:block;width:100%;height:100%;border:0;background:#0b111a}[hidden]{display:none!important}
++#placeholder{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:#b9cbdb}small{color:#8598ac;text-align:center;max-width:90%}
++@media(max-width:600px){header{align-items:flex-start;padding:10px;gap:8px}header strong{font-size:14px}button,a{padding:5px 8px;font-size:12px}}
+diff --git a/plugin/plugins/game_agent_minecraft/static/viewer.js b/plugin/plugins/game_agent_minecraft/static/viewer.js
+new file mode 100644
+index 0000000..eb32c8f
+--- /dev/null
++++ b/plugin/plugins/game_agent_minecraft/static/viewer.js
+@@ -0,0 +1,116 @@
++const pluginId = 'game_agent_minecraft';
++const frame = document.querySelector('#game');
++const status = document.querySelector('#status');
++const placeholder = document.querySelector('#placeholder');
++const openLink = document.querySelector('#open');
++const refreshButton = document.querySelector('#refresh');
++let copy = {};
++let mountedUrl = '';
++let refreshing = false;
++const t = (key, fallback) => copy[`viewer.${key}`] || fallback;
++
++async function language() {
++    const query = new URLSearchParams(location.search);
++    let locale = query.get('locale') || query.get('lang');
++    if (!locale) {
++        try {
++            const current = await fetch(`/plugin/${pluginId}/ui-api/locale`, { signal: AbortSignal.timeout(3000) });
++            if (current.ok) locale = (await current.json()).locale;
++        } catch { /* Keep the page usable if the language endpoint is unavailable. */ }
++    }
++    locale = locale || 'zh-CN';
++    if (locale === 'zh' || locale === 'zh-Hans') locale = 'zh-CN';
++    if (locale === 'zh-Hant') locale = 'zh-TW';
++    if (!locale.startsWith('zh')) locale = locale.split('-')[0];
++    if (!['zh-CN', 'zh-TW', 'en', 'ja', 'ko', 'ru', 'es', 'pt'].includes(locale)) locale = 'en';
++    const response = await fetch(`/plugin/${pluginId}/ui-api/i18n/${locale}.json`);
++    if (response.ok) copy = await response.json();
++    document.documentElement.lang = locale;
++    document.querySelectorAll('[data-i18n]').forEach(node => {
++        node.textContent = copy[node.dataset.i18n] || node.textContent;
++    });
++    frame.title = t('title', 'Minecraft Viewer');
++    document.title = frame.title;
++}
++
++async function callStatus() {
++    const securityResponse = await fetch('/security/csrf-token', { signal: AbortSignal.timeout(5000) });
++    if (!securityResponse.ok) throw new Error(`HTTP ${securityResponse.status}`);
++    const security = await securityResponse.json();
++    const response = await fetch('/runs', {
++        method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': security.csrf_token },
++        body: JSON.stringify({ plugin_id: pluginId, entry_id: 'game_agent_status', args: {} }),
++        signal: AbortSignal.timeout(8000),
++    });
++    if (!response.ok) throw new Error(`HTTP ${response.status}`);
++    const created = await response.json();
++    const id = created.run_id || created.id;
++    if (!id) throw new Error('Missing run id');
++    const deadline = Date.now() + 10000;
++    while (Date.now() < deadline) {
++        await new Promise(resolve => setTimeout(resolve, 250));
++        const runResponse = await fetch(`/runs/${encodeURIComponent(id)}`, { signal: AbortSignal.timeout(3000) });
++        if (!runResponse.ok) throw new Error(`HTTP ${runResponse.status}`);
++        const run = await runResponse.json();
++        if (run.status === 'succeeded') {
++            const exported = await fetch(`/runs/${encodeURIComponent(id)}/export`, { signal: AbortSignal.timeout(3000) });
++            if (!exported.ok) throw new Error(`HTTP ${exported.status}`);
++            const result = await exported.json();
++            const value = result.items?.find(item => item.type === 'json')?.json;
++            if (value?.success === false || value?.error) throw new Error('Status query failed');
++            return value?.data || value || {};
++        }
++        if (['failed', 'canceled', 'timeout'].includes(run.status)) throw new Error(run.status);
++    }
++    throw new Error('Status query timed out');
++}
++
++function viewerUrl(viewer) {
++    const url = new URL(viewer.url);
++    if (viewer.lan_url && !['localhost', '127.0.0.1', '[::1]'].includes(location.hostname)) {
++        const lan = new URL(viewer.lan_url);
++        if (lan.protocol === 'http:' && !lan.username && !lan.password && lan.hostname === location.hostname)
++            return new URL('dungeon/', lan).href;
++    }
++    if (url.protocol !== 'http:' || url.username || url.password
++        || !['127.0.0.1', 'localhost', location.hostname].includes(url.hostname)) throw new Error('Invalid viewer URL');
++    return new URL('dungeon/', url).href;
++}
++
++async function refresh(reload = false) {
++    if (refreshing) return;
++    refreshing = true;
++    refreshButton.disabled = true;
++    try {
++        const data = await callStatus();
++        const viewer = data.viewer;
++        if (!data.connected || !viewer?.available || viewer.type !== 'modern') {
++            status.dataset.connected = 'false';
++            status.textContent = t('unavailable', 'Modern viewer is unavailable');
++            frame.hidden = true;
++            frame.removeAttribute('src');
++            mountedUrl = '';
++            openLink.hidden = true;
++            placeholder.hidden = false;
++            return;
++        }
++        const url = viewerUrl(viewer);
++        status.dataset.connected = 'true';
++        status.textContent = `${t('connected', 'Connected')} · ${viewer.username || ''} · ${viewer.version || ''}`;
++        placeholder.hidden = true;
++        frame.hidden = false;
++        if (url !== mountedUrl || reload) { frame.src = url; mountedUrl = url; }
++        openLink.href = url;
++        openLink.hidden = false;
++    } catch (error) {
++        status.dataset.connected = 'false';
++        status.textContent = `${t('error', 'Connection error')}: ${error.message}`;
++    } finally {
++        refreshing = false;
++        refreshButton.disabled = false;
++    }
++}
++
++refreshButton.addEventListener('click', () => refresh(true));
++language().catch(() => {}).finally(() => refresh());
++setInterval(() => { if (!document.hidden) refresh(); }, 20000);
+diff --git a/plugin/plugins/game_agent_minecraft/test_viewer.py b/plugin/plugins/game_agent_minecraft/test_viewer.py
+new file mode 100644
+index 0000000..afa521b
+--- /dev/null
++++ b/plugin/plugins/game_agent_minecraft/test_viewer.py
+@@ -0,0 +1,47 @@
++import asyncio
++import json
++import unittest
++
++import websockets
++
++from plugin.plugins.game_agent_minecraft.client import GameAgentClient
++from plugin.plugins.game_agent_minecraft.service import GameAgentService
++
++
++class ViewerTests(unittest.IsolatedAsyncioTestCase):
++    async def test_metadata_is_received_without_llm_and_cleared_on_disconnect(self):
++        close = asyncio.Event()
++        viewer = {"available": True, "type": "modern", "url": "http://127.0.0.1:3000/",
++                  "username": "ag_NEKO", "views": ["first", "third", "dungeon"]}
++
++        async def handler(ws):
++            await ws.send(json.dumps({"type": "viewer_info", "viewer": viewer}))
++            await close.wait()
++            await ws.close()
++
++        async with websockets.serve(handler, "127.0.0.1", 0) as server:
++            client = GameAgentClient(f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}", reconnect_interval=10)
++            service = GameAgentService(logger=None, push_message_fn=lambda **_: None)
++            service._client = client
++            runner = asyncio.create_task(client.start())
++            try:
++                async with asyncio.timeout(3):
++                    while client.viewer_info is None:
++                        await asyncio.sleep(0.01)
++                self.assertEqual(service.get_status()["viewer"], viewer)
++                self.assertTrue(service.get_status()["connected"])
++                close.set()
++                async with asyncio.timeout(3):
++                    while client.is_connected:
++                        await asyncio.sleep(0.01)
++                self.assertIsNone(service.get_status()["viewer"])
++            finally:
++                close.set()
++                await client.stop()
++                runner.cancel()
++                await asyncio.gather(runner, return_exceptions=True)
++            self.assertIsNone(client.viewer_info)
++
++
++if __name__ == "__main__":
++    unittest.main()

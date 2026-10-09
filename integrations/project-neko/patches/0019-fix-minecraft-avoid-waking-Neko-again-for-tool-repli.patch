@@ -1,0 +1,51 @@
+From 983c0cb33ff55a1cf0c9fc3f38f3f199b66dcfe7 Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Fri, 9 Oct 2026 08:32:36 +0800
+Subject: [PATCH 19/29] fix(minecraft): avoid waking Neko again for tool
+ replies
+
+---
+ plugin/plugins/game_agent_minecraft/service.py       |  6 +++++-
+ .../game_agent_minecraft/test_observations.py        | 12 ++++++++++++
+ 2 files changed, 17 insertions(+), 1 deletion(-)
+
+diff --git a/plugin/plugins/game_agent_minecraft/service.py b/plugin/plugins/game_agent_minecraft/service.py
+index 4a726c2..3fc5316 100644
+--- a/plugin/plugins/game_agent_minecraft/service.py
++++ b/plugin/plugins/game_agent_minecraft/service.py
+@@ -892,7 +892,11 @@ class GameAgentService:
+             if not isinstance(details, dict):
+                 details = {}
+             is_chat = kind in ('chat', 'whisper') and not details.get('reservedCommand')
+-            is_feedback = kind in ('system', 'title', 'subtitle') and bool(re.search(
++            # A tool already returns its own reply to the active model turn.
++            # Re-waking Neko for an explanation containing "cooldown" creates
++            # a query -> reply -> new proactive turn -> query feedback loop.
++            # Retain those events for observations, without another wake-up.
++            is_feedback = kind in ('system', 'title', 'subtitle') and not details.get('solicitedCommand') and bool(re.search(
+                 r'失败|拒绝|不能|无法|没有权限|冷却|需要|完成|奖励|求助|救命|试炼|委托|failed|denied|cannot|cooldown|completed|reward|help', text, re.I))
+             is_plugin_feedback = kind == 'plugin_message' and str(details.get('channel', '')).endswith(':event')
+             signature = json.dumps([kind, event.get('player'), text, details.get('sha256')], ensure_ascii=False)
+diff --git a/plugin/plugins/game_agent_minecraft/test_observations.py b/plugin/plugins/game_agent_minecraft/test_observations.py
+index 52ea79e..f816279 100644
+--- a/plugin/plugins/game_agent_minecraft/test_observations.py
++++ b/plugin/plugins/game_agent_minecraft/test_observations.py
+@@ -93,6 +93,18 @@ class ObservationTests(unittest.IsolatedAsyncioTestCase):
+                                                                 player='Friend_1', data={'reservedCommand': True})]})
+         self.assertFalse(any(call['ai_behavior'] == 'respond' for call in calls))
+ 
++    async def test_solicited_spell_explanation_is_retained_without_a_feedback_nudge_loop(self):
++        service, calls = self.service()
++        initial = frame()
++        await service._on_game_state(initial)
++        reply = event('fixture:reply', 'system', '用法 /mycli cast prospect iron；魔力 6 · 冷却 30 秒',
++                      data={'solicitedCommand': '/mycli skills info prospect'})
++        await service._on_game_events({**initial, 'events': [reply]})
++        self.assertFalse(any(call['ai_behavior'] == 'respond' for call in calls))
++        self.assertIn(reply['text'], [item['text'] for item in service._game_observations.view()['recentEvents']])
++        await service._on_game_events({**initial, 'events': [event('fixture:help', 'whisper', '请帮忙', player='Friend_1')]})
++        self.assertTrue(any(call['ai_behavior'] == 'respond' for call in calls), 'real player help still wakes Neko')
++
+     async def test_concurrent_attention_flushes_emit_each_pending_message_once(self):
+         service, calls = self.service()
+         await service._on_game_state(frame())

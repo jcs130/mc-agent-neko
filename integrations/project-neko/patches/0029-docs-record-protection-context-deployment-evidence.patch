@@ -1,0 +1,33 @@
+From 1d67415fbdb0d7790e68f7141271f1fd8989d173 Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Fri, 9 Oct 2026 11:07:30 +0800
+Subject: [PATCH 29/29] docs: record protection context deployment evidence
+
+---
+ .../docs/2026-10-09-protection-context.md              | 10 ++++++++--
+ 1 file changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/plugin/plugins/game_agent_minecraft/docs/2026-10-09-protection-context.md b/plugin/plugins/game_agent_minecraft/docs/2026-10-09-protection-context.md
+index e137863..89f08b1 100644
+--- a/plugin/plugins/game_agent_minecraft/docs/2026-10-09-protection-context.md
++++ b/plugin/plugins/game_agent_minecraft/docs/2026-10-09-protection-context.md
+@@ -10,11 +10,17 @@
+ 
+ - [x] Add failing tests for the latest tentative allow, a denial at another coordinate, unknown permission, and stale/session-reset data. Require valid JSON within 400/700 token callback budgets.
+ - [x] Retain scoped, aged preflight/blocked facts and a concise distinction between permission errors and tool/safety failures. Missing checks must remain unknown; never infer a whole village's permissions.
+-- [ ] Run the plugin suite and whitespace checks, review and commit the plugin-only change, then reload the plugin through its existing lifecycle.
+-- [ ] Passively capture genuine game state and inspect the same snapshot through the deployed context renderer. Confirm the received permission fields survive and service/viewer/unattended state remains healthy. Do not inject diagnostic tasks or game chat.
++- [x] Run the plugin suite and whitespace checks, review and commit the plugin-only change, then reload the plugin through its existing lifecycle.
++- [x] Passively capture genuine game state and inspect the same snapshot through the deployed context renderer. Confirm the received permission fields survive and service/viewer/unattended state remains healthy. Do not inject diagnostic tasks or game chat.
+ 
+ All edits stay inside `plugin/plugins/game_agent_minecraft/`. Live behavior improvement is a separate observation from context transport correctness; offline tests cannot establish that the model will never repeat a historical explanation.
+ 
+ ## Offline verification
+ 
+ The new tests failed before the change because `lastCheck` was absent (including unknown permission). A richer fixture with two scoped receipts and login welcome data then reproduced a 421/400-token overflow. The renderer now reduces optional skill metadata and shortens its preamble under pressure, retaining both permission facts. Full plugin regression: 77 tests passed at 11:03 Asia/Shanghai. Artifacts: `protection-context-red-20261009.log`, `protection-context-budget-red-20261009.log`, and `protection-context-regression-20261009.log` in the trial directory.
++
++## Deployment verification, 11:06 Asia/Shanghai
++
++Work commit `3d9a151` is deployed as `2cc30b4`. Dispatch was temporarily gated through the existing config API; the pending task was confirmed finished before the plugin-only reload. Unattended mode was restored and verified true. The Minecraft connection and model were kept running. Subsequent plugin passive callbacks were accepted by Neko main.
++
++`D:/neko-mc-trial/protection-context-verified-20261009.json` records a fresh, live plugin observation with break preflight (-576,48,-461), `allow_likely/true/no_known_protection`, and no cached denial. Replaying that exact received state through the identical deployed renderer preserves action, dimension, coordinates, status, reason, source and age at both 400 and 700 tokens (399/695 used). This replay confirms context rendering, rather than claiming to inspect the model's internal beliefs. Plugin/model/main/viewer health all returned HTTP 200; the model is loaded, the game is online, and health/food are 20/20. Observed position has risen from Y34 to Y46; ore collection and complete recovery of the preparation loop are not established.

@@ -1,0 +1,54 @@
+From 854d4663e33019559590811f5c4a567fda123f28 Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Fri, 9 Oct 2026 08:25:18 +0800
+Subject: [PATCH 18/29] docs(minecraft): teach verified skill prerequisites and
+ state freshness
+
+---
+ plugin/plugins/game_agent_minecraft/README.md       | 4 +++-
+ plugin/plugins/game_agent_minecraft/__init__.py     | 2 +-
+ plugin/plugins/game_agent_minecraft/observations.py | 2 +-
+ 3 files changed, 5 insertions(+), 3 deletions(-)
+
+diff --git a/plugin/plugins/game_agent_minecraft/README.md b/plugin/plugins/game_agent_minecraft/README.md
+index 561ba1d..b405d6f 100644
+--- a/plugin/plugins/game_agent_minecraft/README.md
++++ b/plugin/plugins/game_agent_minecraft/README.md
+@@ -232,8 +232,10 @@ mc-agent 需要启用 `render_bot_view`、`viewer_type="modern"`，并配置
+ `minecraft_server(command)` 通过当前游戏连接发送单条 `/mycli` 游戏命令，
+ 与 `minecraft_chat` 的玩家聊天、本地 `runSkill` 动作脚本分开。
+ 先查询 `/mycli help`、`/mycli spells list 1`，按 `MC_SPELL_NEXT` 翻页，
+-再以 `/mycli spells explain <ID>` 查看实际用途、参数、学习条件、魔力和冷却。
++再以 `/mycli skills info <ID>` 查看学习条件、当前等级和技能点成本，
++以 `/mycli spells explain <ID>` 查看实际用途、参数、魔力和冷却；`/mycli skills points` 查询剩余技能点。
+ 学习和施放使用服务端当次给出的完整语法；本地脚本列表没有某个 ID，不表示服务器没有这个技能。
++只在受伤时治疗；服务端状态可能比命令回执稍晚更新，若状态时间早于命令，应再次查询后确认。
+ 
+ 回复中的 `messages` 保留限量原文，`records` 提取 `MC_*` JSON，`current`
+ 返回查询后的自身状态和 `mcagent:state`。`received` 只说明收到了系统消息，
+diff --git a/plugin/plugins/game_agent_minecraft/__init__.py b/plugin/plugins/game_agent_minecraft/__init__.py
+index abe028f..889c357 100644
+--- a/plugin/plugins/game_agent_minecraft/__init__.py
++++ b/plugin/plugins/game_agent_minecraft/__init__.py
+@@ -468,7 +468,7 @@ class GameAgentMinecraftPlugin(NekoPluginBase):
+ 
+     @llm_tool(
+         name="minecraft_server",
+-        description="Query or execute actual Minecraft server gameplay commands via /mycli. Server spells are separate from local runSkill scripts. Discover with /mycli help and /mycli spells list 1 (follow MC_SPELL_NEXT); explain a stable ID with /mycli spells explain <ID>. Use the server's exact learning/casting syntax and required arguments. Check available points, mana, prerequisites and cooldowns first. received/submitted only describes transport, not success: verify server replies and fresh abilities/points/effects/inventory. Use minecraft_chat for conversation.",
++        description="Query or execute actual Minecraft server gameplay commands via /mycli. Server spells are separate from local runSkill scripts. Discover with /mycli help and /mycli spells list 1 (follow MC_SPELL_NEXT); inspect learning prerequisites, current level and point cost with /mycli skills info <ID>; check /mycli skills points. /mycli spells explain <ID> describes effects, arguments, mana and cooldowns. Use the server's exact learning/casting syntax and required arguments. Only heal when injured; check points, mana, prerequisites and cooldowns first. received/submitted only describes transport, not success: verify server replies and fresh abilities/points/effects/inventory; re-query if state predates the command. Use minecraft_chat for conversation.",
+         parameters={'type': 'object', 'properties': {'command': {'type': 'string', 'maxLength': 200}},
+                     'required': ['command']},
+         timeout=10.0,
+diff --git a/plugin/plugins/game_agent_minecraft/observations.py b/plugin/plugins/game_agent_minecraft/observations.py
+index 01193cb..d7d3709 100644
+--- a/plugin/plugins/game_agent_minecraft/observations.py
++++ b/plugin/plugins/game_agent_minecraft/observations.py
+@@ -243,7 +243,7 @@ class GameObservations:
+             abilities = abilities if isinstance(abilities, list) else []
+             compact['serverSkills'] = {
+                 'tool': 'minecraft_server', 'discover': '/mycli spells list 1',
+-                'explain': '/mycli spells explain <ID>',
++                'explain': '/mycli skills info <ID>',
+                 'mana': mana,
+                 'pointsRemaining': points.get('remaining'),
+                 'observedAbilities': [short(item.get('id'), 80) for item in abilities[:8] if isinstance(item, dict)],

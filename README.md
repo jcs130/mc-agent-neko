@@ -60,6 +60,15 @@ devices can watch concurrently. The frontend comes from
 Mineflayer host adapter. See [setup and resource generation](docs/modern-viewer.md).
 The modern renderer currently supports Minecraft Java 1.20.6; it is disabled by default.
 
+## Project N.E.K.O. integration
+
+The matching Minecraft plugin is available as an ordered
+[companion patch series](integrations/project-neko/README.md), with a pinned
+upstream base, application instructions and verified plugin tree. It includes
+the viewer panel, game/server feedback, player communication and unattended
+decision fixes. See [game observations](docs/game-information.md) and
+[external autonomy ownership](docs/neko-external-autonomy.md) for the body side.
+
 ## Model Customization
 
 You can configure project details in `settings.js`. [See file.](settings.js)

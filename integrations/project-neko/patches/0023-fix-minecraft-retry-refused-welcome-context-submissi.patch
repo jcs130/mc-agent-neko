@@ -1,0 +1,51 @@
+From 479840a501398af112755300171d6cce09b259f1 Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Fri, 9 Oct 2026 09:59:48 +0800
+Subject: [PATCH 23/29] fix(minecraft): retry refused welcome context
+ submissions
+
+---
+ plugin/plugins/game_agent_minecraft/service.py         |  8 +++++---
+ .../game_agent_minecraft/test_server_welcome.py        | 10 ++++++++++
+ 2 files changed, 15 insertions(+), 3 deletions(-)
+
+diff --git a/plugin/plugins/game_agent_minecraft/service.py b/plugin/plugins/game_agent_minecraft/service.py
+index 4fb4fbb..508e210 100644
+--- a/plugin/plugins/game_agent_minecraft/service.py
++++ b/plugin/plugins/game_agent_minecraft/service.py
+@@ -890,9 +890,11 @@ class GameAgentService:
+                 for part in self._game_observations.welcome_context_parts():
+                     if part['key'] in self._server_welcome_seen:
+                         continue
+-                    await asyncio.to_thread(self._push_message, source='game_agent_minecraft', visibility=[],
+-                                            ai_behavior='read', parts=[{'type': 'text', 'text': part['text']}],
+-                                            priority=4, coalesce_key='mc_server_welcome_' + part['key'])
++                    result = await asyncio.to_thread(self._push_message, source='game_agent_minecraft', visibility=[],
++                                                     ai_behavior='read', parts=[{'type': 'text', 'text': part['text']}],
++                                                     priority=4, coalesce_key='mc_server_welcome_' + part['key'])
++                    if isinstance(result, dict) and result.get('submitted') is False:
++                        raise RuntimeError('Server welcome callback submission was refused')
+                     self._server_welcome_seen.add(part['key'])
+         except Exception as exc:
+             # Keep unsent chunks eligible for the next snapshot; receiving a
+diff --git a/plugin/plugins/game_agent_minecraft/test_server_welcome.py b/plugin/plugins/game_agent_minecraft/test_server_welcome.py
+index 2138455..6254a62 100644
+--- a/plugin/plugins/game_agent_minecraft/test_server_welcome.py
++++ b/plugin/plugins/game_agent_minecraft/test_server_welcome.py
+@@ -101,6 +101,16 @@ class ServerWelcomeTests(unittest.IsolatedAsyncioTestCase):
+         info.clock = lambda: time.time() + 60
+         self.assertEqual(info.welcome_context_parts(), [])
+ 
++    async def test_refused_sdk_submission_stays_eligible_for_retry(self):
++        service, calls = self.service()
++        original = service._push_message
++        service._push_message = lambda **kwargs: {'submitted': False}
++        await service._on_game_state(welcome_frame())
++        self.assertEqual(service._server_welcome_seen, set())
++        service._push_message = original
++        await service._on_game_state(welcome_frame(seq=2))
++        self.assertEqual(len(service._server_welcome_seen), 2)
++
+     async def test_changed_welcome_sends_only_new_messages_and_never_replays_old_session(self):
+         service, calls = self.service()
+         await service._on_game_state(welcome_frame(texts=['first guide']))

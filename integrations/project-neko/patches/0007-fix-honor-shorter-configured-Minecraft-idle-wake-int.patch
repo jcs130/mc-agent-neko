@@ -1,0 +1,102 @@
+From e8efeb86e475d9531b991333867d25e1820c3d46 Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Thu, 8 Oct 2026 20:34:44 +0800
+Subject: [PATCH 07/29] fix: honor shorter configured Minecraft idle wake
+ intervals
+
+---
+ plugin/plugins/game_agent_minecraft/README.md |  2 +-
+ .../plugins/game_agent_minecraft/service.py   |  9 ++--
+ .../game_agent_minecraft/test_nudge_timing.py | 43 +++++++++++++++++++
+ 3 files changed, 50 insertions(+), 4 deletions(-)
+ create mode 100644 plugin/plugins/game_agent_minecraft/test_nudge_timing.py
+
+diff --git a/plugin/plugins/game_agent_minecraft/README.md b/plugin/plugins/game_agent_minecraft/README.md
+index 4f036c2..0f00550 100644
+--- a/plugin/plugins/game_agent_minecraft/README.md
++++ b/plugin/plugins/game_agent_minecraft/README.md
+@@ -63,7 +63,7 @@ agent 端启动方式由你自己决定：绿色包用户在解压出来的包
+ | `ws_url` | `ws://localhost:48909` | agent server WebSocket 地址 |
+ | `reconnect_interval_seconds` | `5.0` | WS 断开后等待多久重连 |
+ | `task_timeout_seconds` | `120.0` | `minecraft_task` 单次调用最长等待 agent 完成的秒数；超时返回 `{status: "timeout"}` 给 LLM。默认 120s 给 mine/craft 类多步动作留余量（实测 60–90s 较常见）；先前 25s 默认在挖矿场景下普遍误超时 |
+-| `system_prompt_interval_seconds` | `15.0` | 自动 nudge 循环的最小间隔（节流，降低对话密度）；不影响 `main_server` 自身的对话节奏控制 |
++| `system_prompt_interval_seconds` | `15.0` | 状态提示间隔；配置较短间隔也会缩短空闲唤醒的首次等待和冷却，热更生效。进行中的任务仍使用独立节流，不影响 `main_server` 自身的对话节奏控制 |
+ | `skip_system_prompt_if_busy` | `true` | 任务进行中跳过 nudge，避免堆叠 |
+ | `stream_screenshots_to_llm` | `true` | 收到 agent 截图就 push 到模型视觉上下文（`ai_behavior="read"`），按下面的最小间隔节流 |
+ | `screenshot_stream_min_interval_seconds` | `6.0` | 内联截图流 push 的最小间隔（节流，防止按 agent ~1Hz 速率灌爆模型视觉上下文）；窗口内的帧折叠为最新一张 |
+diff --git a/plugin/plugins/game_agent_minecraft/service.py b/plugin/plugins/game_agent_minecraft/service.py
+index 8aa4b59..e233644 100644
+--- a/plugin/plugins/game_agent_minecraft/service.py
++++ b/plugin/plugins/game_agent_minecraft/service.py
+@@ -1921,7 +1921,8 @@ class GameAgentService:
+             "system_prompt_loop started (in_progress={}/{}, keep_going={}/{}, "
+             "general_interval={}s)",
+             _IN_PROGRESS_AFTER, _IN_PROGRESS_COOLDOWN,
+-            _KEEP_GOING_AFTER, _KEEP_GOING_COOLDOWN,
++            min(_KEEP_GOING_AFTER, self._system_prompt_interval),
++            min(_KEEP_GOING_COOLDOWN, self._system_prompt_interval),
+             self._system_prompt_interval,
+         )
+         # [ISSUE4a] Per-iteration try/except (NOT a recursive restart): a single
+@@ -1963,8 +1964,10 @@ class GameAgentService:
+                     # No upper bound (see _KEEP_GOING_MAX_WINDOW removal note):
+                     # idle → keep nudging forever, paced by the cooldown.
+                     if (
+-                        since_finish >= _KEEP_GOING_AFTER
+-                        and since_last_keep >= _KEEP_GOING_COOLDOWN
++                        # Respect a faster configured idle interval, including
++                        # live reloads; pending tasks use their separate branch.
++                        since_finish >= min(_KEEP_GOING_AFTER, self._system_prompt_interval)
++                        and since_last_keep >= min(_KEEP_GOING_COOLDOWN, self._system_prompt_interval)
+                     ):
+                         self._log_debug(
+                             "firing keep_going nudge (since_finish={:.1f}s, "
+diff --git a/plugin/plugins/game_agent_minecraft/test_nudge_timing.py b/plugin/plugins/game_agent_minecraft/test_nudge_timing.py
+new file mode 100644
+index 0000000..16714dd
+--- /dev/null
++++ b/plugin/plugins/game_agent_minecraft/test_nudge_timing.py
+@@ -0,0 +1,43 @@
++import asyncio
++import unittest
++from types import SimpleNamespace
++from unittest.mock import patch
++
++from plugin.plugins.game_agent_minecraft.service import GameAgentService
++
++
++class NudgeTimingTests(unittest.IsolatedAsyncioTestCase):
++    async def observe(self, interval, *, busy=False, reload_at=None):
++        clock = [1000.0]
++        calls = []
++        service = GameAgentService(logger=None, push_message_fn=lambda **kw: calls.append((clock[0] - 1000, kw)))
++        service.configure({'system_prompt_interval_seconds': interval})
++        service._task_finished = not busy
++        service._last_task_finished_at = 1000.0
++        if busy:
++            service._pending = SimpleNamespace(start_time=1000.0, task_text='正在行动')
++
++        async def step(_):
++            clock[0] += 0.5
++            if reload_at and clock[0] - 1000 == reload_at:
++                service.configure({'system_prompt_interval_seconds': 10.0})
++            if clock[0] > 1025:
++                raise asyncio.CancelledError
++
++        module = 'plugin.plugins.game_agent_minecraft.service'
++        with patch(module + '.asyncio.sleep', step), patch(module + '.time.time', lambda: clock[0]):
++            await service._system_prompt_loop()
++        return [(at, msg['coalesce_key']) for at, msg in calls]
++
++    async def test_configured_ten_second_idle_interval_is_honored(self):
++        self.assertEqual(await self.observe(10.0), [(10.0, 'mc_keep_going'), (20.0, 'mc_keep_going')])
++
++    async def test_interval_reload_takes_effect_without_restarting_loop(self):
++        self.assertEqual(await self.observe(45.0, reload_at=12.0), [(12.0, 'mc_keep_going'), (22.0, 'mc_keep_going')])
++
++    async def test_shorter_idle_interval_does_not_interrupt_pending_task(self):
++        self.assertEqual(await self.observe(10.0, busy=True), [])
++
++
++if __name__ == '__main__':
++    unittest.main()

@@ -1,0 +1,30 @@
+From eb52dd58f6f440a4346bad6e11eea4c8bae700e1 Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Thu, 8 Oct 2026 22:14:04 +0800
+Subject: [PATCH 10/29] docs(minecraft): describe fresh unattended survival
+ telemetry
+
+---
+ plugin/plugins/game_agent_minecraft/README.md | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/plugin/plugins/game_agent_minecraft/README.md b/plugin/plugins/game_agent_minecraft/README.md
+index 52eafb7..6b1b212 100644
+--- a/plugin/plugins/game_agent_minecraft/README.md
++++ b/plugin/plugins/game_agent_minecraft/README.md
+@@ -173,6 +173,15 @@ mc-agent 需要启用 `render_bot_view`、`viewer_type="modern"`，并配置
+ 插件随 `game_agent_status` 返回这份元数据；断连时停止展示旧连接状态。
+ 此入口仅观看游戏，不添加主播语音或直播叠层。局域网地址可单独打开。
+ 
++## 无人值守生存数据
++
++插件接收游戏端已有的 `vitals` 帧（`hp`、`food`、`hostiles` 数值），在状态查询、
++自主决策和执行中提示里提供最新状态。超过 45 秒未更新的数据不再作为当前状态。
++开启 `unattended_enabled` 后，低血量、缺粮或残血遇敌触发生存决策提示，同一危险
++至少间隔 30 秒，使用 `mc_survival` 合并键防止堆积。提示要求遵守最新停止指令，
++有自主授权时安排短避险/补食目标；必要时向实际在线玩家求助。它复用本体工具与
++原有游戏控制器，不直接执行另一套游戏动作。死亡后满血不等于成功找到食物。
++
+ ## 文件分工
+ 
+ | 文件 | 作用 |

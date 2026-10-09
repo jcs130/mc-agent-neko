@@ -1,0 +1,270 @@
+From 99eb8a7e3d365406a6d8f82b75fb83139bf1d3b5 Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Thu, 8 Oct 2026 22:11:25 +0800
+Subject: [PATCH 09/29] fix(minecraft): feed fresh survival vitals into
+ autonomous decisions
+
+---
+ plugin/plugins/game_agent_minecraft/client.py |  6 ++
+ .../plugins/game_agent_minecraft/prompts.py   | 20 +++++
+ .../plugins/game_agent_minecraft/service.py   | 48 ++++++++++++
+ .../test_survival_state.py                    | 73 +++++++++++++++++++
+ 4 files changed, 147 insertions(+)
+ create mode 100644 plugin/plugins/game_agent_minecraft/test_survival_state.py
+
+diff --git a/plugin/plugins/game_agent_minecraft/client.py b/plugin/plugins/game_agent_minecraft/client.py
+index 5501308..8d65108 100644
+--- a/plugin/plugins/game_agent_minecraft/client.py
++++ b/plugin/plugins/game_agent_minecraft/client.py
+@@ -33,6 +33,7 @@ OnTaskFinished = Callable[[dict[str, Any]], Awaitable[None]]
+ OnAlert = Callable[[dict[str, Any]], Awaitable[None]]
+ OnInventory = Callable[[dict[str, Any]], Awaitable[None]]
+ OnBotStatus = Callable[[dict[str, Any]], Awaitable[None]]  # bot_status_nl frame
++OnVitals = Callable[[dict[str, Any]], Awaitable[None]]
+ 
+ 
+ @dataclass(frozen=True, slots=True)
+@@ -65,6 +66,7 @@ class GameAgentClient:
+         on_alert: Optional[OnAlert] = None,
+         on_inventory: Optional[OnInventory] = None,
+         on_bot_status: Optional[OnBotStatus] = None,
++        on_vitals: Optional[OnVitals] = None,
+         on_ingame_chat: Optional[OnIngameChat] = None,
+         reconnect_interval: float = 5.0,
+         logger: Any = None,
+@@ -76,6 +78,7 @@ class GameAgentClient:
+         self.on_alert = on_alert
+         self.on_inventory = on_inventory
+         self.on_bot_status = on_bot_status
++        self.on_vitals = on_vitals
+         self.on_ingame_chat = on_ingame_chat
+         self.reconnect_interval = reconnect_interval
+         # Plugin SDK injects a per-plugin loguru logger; fall back to a
+@@ -304,6 +307,9 @@ class GameAgentClient:
+                         # and wakes any pending ``query_inventory`` calls.
+                         await self.on_inventory(data)
+ 
++                    elif msg_type == "vitals" and self.on_vitals is not None:
++                        await self.on_vitals(data)
++
+                     elif msg_type == "bot_status_nl" and self.on_bot_status is not None:
+                         # Natural-language activity status (🎯[按指令]/🤖[自主] +
+                         # skill/kind). The service uses it to know whether the
+diff --git a/plugin/plugins/game_agent_minecraft/prompts.py b/plugin/plugins/game_agent_minecraft/prompts.py
+index ccad37c..bcbdb55 100644
+--- a/plugin/plugins/game_agent_minecraft/prompts.py
++++ b/plugin/plugins/game_agent_minecraft/prompts.py
+@@ -194,6 +194,26 @@ _CUE_PREFIX_STATE: Dict[str, str] = {
+ # ===========================================================================
+ 
+ PROMPTS: Dict[str, Dict[str, str]] = {
++    "VITALS_BRIEF": {
++        "zh": "最新生存数据：生命 {hp}/20，饥饿 {food}/20，附近敌对生物 {hostiles}。",
++        "zh-TW": "最新生存資料：生命 {hp}/20，飢餓 {food}/20，附近敵對生物 {hostiles}。",
++        "en": "Latest game vitals: health {hp}/20, food {food}/20, nearby hostiles {hostiles}.",
++        "ja": "最新状態：体力 {hp}/20、満腹度 {food}/20、近くの敵 {hostiles}。",
++        "ko": "최신 상태: 체력 {hp}/20, 허기 {food}/20, 주변 적 {hostiles}.",
++        "ru": "Сейчас: здоровье {hp}/20, сытость {food}/20, врагов рядом {hostiles}.",
++        "es": "Estado actual: salud {hp}/20, comida {food}/20, enemigos cercanos {hostiles}.",
++        "pt": "Estado atual: vida {hp}/20, comida {food}/20, inimigos próximos {hostiles}.",
++    },
++    "SURVIVAL_RECOVERY": {
++        "zh": "生存需要优先处理。先遵守用户最新的停止或暂停要求；持续自主游玩授权有效时，停止非必要采矿或攀爬，立即用 minecraft_task 安排一个短的避险或获取并吃下食物的目标。先用背包资源；无法取得食物且附近有真实在线玩家时，可以用 minecraft_chat 简短求助，避免重复刷屏。不要只口头承诺，按后续真实血量和饥饿值确认恢复。",
++        "zh-TW": "生存優先。遵守最新停止或暫停要求；持續自主授權有效時，用 minecraft_task 安排短的避險或補食目標，先用背包資源。確實需要且有在線玩家時可用 minecraft_chat 求助，避免洗版，按真實生命和飢餓值確認恢復。",
++        "en": "Survival takes priority. Honor the latest stop/pause request. If continuous play is authorized, call minecraft_task now for a short safety or acquire-and-eat-food goal, using carried supplies first. If blocked and a real player is online, ask briefly via minecraft_chat without repeating. Verify recovery from actual vitals.",
++        "ja": "生存優先。停止・一時停止の指示を守る。自律プレイ許可が有効なら minecraft_task で避難か食料確保・食事の短い目標を今実行。所持品を優先し、困った時は実在するオンラインプレイヤーに minecraft_chat で一度相談。数値で回復確認。",
++        "ko": "생존 우선. 중지 지시를 존중하고 자율 플레이가 허용되면 minecraft_task 로 짧은 피신 또는 식량 확보 및 식사 목표를 실행해. 소지품부터 사용하고 막히면 실제 온라인 플레이어에게 minecraft_chat 으로 간단히 도움을 요청해. 수치로 회복을 확인해.",
++        "ru": "Выживание важнее. Соблюдай команды остановки. При разрешённой самостоятельной игре вызови minecraft_task для короткой цели укрытия или получения и употребления еды. Сначала используй запасы. При необходимости попроси реального игрока через minecraft_chat без спама. Проверь восстановление по показателям.",
++        "es": "Prioriza sobrevivir y respeta las órdenes de parar. Con juego autónomo autorizado, llama a minecraft_task para una meta corta de refugio o conseguir y comer alimentos. Usa primero lo que llevas; si te bloqueas, pide ayuda a un jugador conectado con minecraft_chat sin repetir. Comprueba los valores reales.",
++        "pt": "Priorize sobreviver e respeite ordens de parar. Com jogo autônomo autorizado, use minecraft_task para uma meta curta de abrigo ou obter e comer alimentos. Use os suprimentos primeiro; se bloqueada, peça ajuda a um jogador conectado via minecraft_chat sem repetir. Confira a recuperação nos valores reais.",
++    },
+ 
+     # -------------------------------------------------------------------
+     # Generic / shared
+diff --git a/plugin/plugins/game_agent_minecraft/service.py b/plugin/plugins/game_agent_minecraft/service.py
+index 28c04b3..f1839f5 100644
+--- a/plugin/plugins/game_agent_minecraft/service.py
++++ b/plugin/plugins/game_agent_minecraft/service.py
+@@ -293,6 +293,10 @@ class GameAgentService:
+         # dialog LLM always gets present-state, not minutes-old cache.
+         self._last_inventory: Dict[str, int] = {}
+         self._last_inventory_at: float = 0.0
++        self._last_vitals: Dict[str, int] = {}
++        self._last_vitals_at: float = 0.0
++        self._survival_cue_at: float = 0.0
++        self._survival_level = None
+         # [INV-DEDUP] snapshot of the inventory we last SURFACED to the dialog
+         # (in a nudge/cue). The bag line is only re-stated when this changes, so
+         # she stops robotically reciting the same inventory every nudge. None =
+@@ -526,6 +530,7 @@ class GameAgentService:
+             on_alert=self._on_alert,
+             on_inventory=self._on_inventory,
+             on_bot_status=self._on_bot_status,
++            on_vitals=self._on_vitals,
+             on_ingame_chat=self._on_ingame_chat,
+             reconnect_interval=self._reconnect_interval,
+             logger=self.logger,
+@@ -642,6 +647,10 @@ class GameAgentService:
+         # 清空 = "回到 inv_at==0 未知"分支，由下一个 task_finished 重建。
+         self._last_inventory = {}
+         self._last_inventory_at = 0.0
++        self._last_vitals = {}
++        self._last_vitals_at = 0.0
++        self._survival_cue_at = 0.0
++        self._survival_level = None
+         # New session may be a different world — let its first inventory and
+         # activity surface fresh instead of being deduped against the old one.
+         self._last_pushed_inventory = None
+@@ -776,6 +785,35 @@ class GameAgentService:
+         self._agent_busy_at = time.time()
+         self._agent_activity = text[:120]
+ 
++    async def _on_vitals(self, data: dict[str, Any]) -> None:
++        # Accept numeric game telemetry only; stale text/logs are not vitals.
++        values = {key: data.get(key) for key in ('hp', 'food', 'hostiles')}
++        if any(type(value) not in (int, float) or not 0 <= value <= (10000 if key == 'hostiles' else 20)
++               for key, value in values.items()):
++            return
++        self._last_vitals = {key: int(value) for key, value in values.items()}
++        self._last_vitals_at = time.time()
++        hp, food, hostiles = (values[key] for key in ('hp', 'food', 'hostiles'))
++        level = (hp <= 10, food <= 8, hostiles > 0 and hp <= 16, hp <= 6 or food <= 2)
++        if not any(level):
++            self._survival_level = None
++            return
++        if not self._unattended.enabled:
++            return
++        if level == self._survival_level and self._last_vitals_at - self._survival_cue_at < 30:
++            return
++        self._survival_level = level
++        self._survival_cue_at = self._last_vitals_at
++        self._push_message(source='game_agent_minecraft', visibility=[], ai_behavior='respond',
++            parts=[{'type': 'text', 'text': self._vitals_section() + '\n'
++                    + prompts.t('SURVIVAL_RECOVERY', lang=self._lang)}],
++            priority=5, coalesce_key='mc_survival')
++
++    def _vitals_section(self) -> Optional[str]:
++        if not self._last_vitals or time.time() - self._last_vitals_at > 45:
++            return None
++        return prompts.t('VITALS_BRIEF', lang=self._lang, **self._last_vitals)
++
+     def _mc_agent_busy(self) -> bool:
+         """True when the mc-agent recently reported it's actively executing.
+         Fresh within ``_agent_busy_ttl`` — a stale flag (no bot_status_nl for a
+@@ -2037,6 +2075,9 @@ class GameAgentService:
+             "IN_PROGRESS_HEADER", lang=self._lang,
+             pending_text=pending_text[:120], elapsed=f"{elapsed:.0f}",
+         )]
++        vitals = self._vitals_section()
++        if vitals:
++            sections.append(vitals)
+         inv_line = self._inventory_section_if_changed(top_n=15)
+         if inv_line:
+             sections.append(inv_line)
+@@ -2069,6 +2110,9 @@ class GameAgentService:
+         it can ground its next decision.
+         """
+         sections: list[str] = []
++        vitals = self._vitals_section()
++        if vitals:
++            sections.append(vitals)
+         inv_line = self._inventory_section_if_changed(top_n=20)
+         if inv_line:
+             sections.append(inv_line)
+@@ -2162,6 +2206,9 @@ class GameAgentService:
+         else:
+             sections.append(prompts.t("SYSTEM_PROMPT_IDLE_BODY", lang=self._lang))
+         prompt_text = prompts.t("CUE_PREFIX_STATE", lang=self._lang) + "\n" + "\n".join(sections)
++        vitals = self._vitals_section()
++        if vitals:
++            prompt_text = vitals + "\n" + prompt_text
+ 
+         # Build the parts list: cached screenshots first (so the LLM
+         # has visual context when it reads the prompt), then the
+@@ -2225,6 +2272,7 @@ class GameAgentService:
+             "ws_url": self._ws_url,
+             "connected": connected,
+             "unattended": self._unattended.status,
++            "vitals": dict(self._last_vitals) if self._vitals_section() else None,
+             "viewer": self._client.viewer_info if connected and self._client else None,
+             "task_finished": self._task_finished,
+             "pending_task": self._pending.task_text if self._pending else None,
+diff --git a/plugin/plugins/game_agent_minecraft/test_survival_state.py b/plugin/plugins/game_agent_minecraft/test_survival_state.py
+new file mode 100644
+index 0000000..87b30ac
+--- /dev/null
++++ b/plugin/plugins/game_agent_minecraft/test_survival_state.py
+@@ -0,0 +1,73 @@
++import asyncio
++import json
++import time
++import unittest
++from unittest.mock import patch
++
++import websockets
++
++from plugin.plugins.game_agent_minecraft.client import GameAgentClient
++from plugin.plugins.game_agent_minecraft.service import GameAgentService
++
++
++class SurvivalStateTests(unittest.IsolatedAsyncioTestCase):
++    def service(self):
++        calls = []
++        service = GameAgentService(logger=None, push_message_fn=lambda **kw: calls.append(kw))
++        service.configure({'unattended_enabled': True, 'unattended_character': 'YUI'})
++        return service, calls
++
++    async def test_numeric_vitals_reach_model_and_low_food_wakes_recovery(self):
++        service, calls = self.service()
++        await service._on_vitals({'hp': 16, 'food': 8, 'hostiles': 0})
++        self.assertEqual(len(calls), 1)
++        self.assertEqual(calls[0]['coalesce_key'], 'mc_survival')
++        self.assertIn('16/20', calls[0]['parts'][0]['text'])
++        self.assertIn('8/20', calls[0]['parts'][0]['text'])
++        await service._on_vitals({'hp': 16, 'food': 8, 'hostiles': 0})
++        self.assertEqual(len(calls), 1, 'identical danger must not flood the model')
++        await service._fire_keep_going_nudge()
++        self.assertIn('8/20', calls[-1]['parts'][0]['text'])
++
++    async def test_stale_and_invalid_vitals_are_not_reported_as_current(self):
++        service, calls = self.service()
++        await service._on_vitals({'hp': 20, 'food': 20, 'hostiles': 0})
++        self.assertEqual(calls, [])
++        with patch('plugin.plugins.game_agent_minecraft.service.time.time', return_value=time.time()+60):
++            self.assertIsNone(service._vitals_section())
++        await service._on_vitals({'hp': '!command', 'food': float('nan'), 'hostiles': 0})
++        self.assertEqual(service._last_vitals['hp'], 20)
++
++    async def test_disabled_unattended_mode_only_caches_vitals(self):
++        service, calls = self.service()
++        service.configure({'unattended_enabled': False})
++        await service._on_vitals({'hp': 4, 'food': 1, 'hostiles': 2})
++        self.assertEqual(calls, [])
++        self.assertIn('4/20', service._vitals_section())
++
++    async def test_bridge_routes_real_vitals_frames(self):
++        received = asyncio.Event()
++        values = []
++
++        async def handler(ws):
++            await ws.send(json.dumps({'type': 'vitals', 'hp': 12, 'food': 7, 'hostiles': 1}))
++            await ws.wait_closed()
++
++        async def observe(value):
++            values.append(value)
++            received.set()
++
++        async with websockets.serve(handler, '127.0.0.1', 0) as server:
++            port = server.sockets[0].getsockname()[1]
++            client = GameAgentClient(f'ws://127.0.0.1:{port}', on_vitals=observe)
++            task = asyncio.create_task(client.start())
++            try:
++                await asyncio.wait_for(received.wait(), 2)
++                self.assertEqual(values[0]['food'], 7)
++            finally:
++                await client.stop()
++                await asyncio.wait_for(task, 2)
++
++
++if __name__ == '__main__':
++    unittest.main()

@@ -1,0 +1,59 @@
+From 7b6fe3f11b514ca47893c963c34446153c97bb83 Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Fri, 9 Oct 2026 10:51:56 +0800
+Subject: [PATCH 27/29] docs(minecraft): record runtime configuration and
+ recovery checks
+
+---
+ .../docs/2026-10-09-query-loop.md             | 41 +++++++++++++++++++
+ 1 file changed, 41 insertions(+)
+
+diff --git a/plugin/plugins/game_agent_minecraft/docs/2026-10-09-query-loop.md b/plugin/plugins/game_agent_minecraft/docs/2026-10-09-query-loop.md
+index 8c1d476..41201e8 100644
+--- a/plugin/plugins/game_agent_minecraft/docs/2026-10-09-query-loop.md
++++ b/plugin/plugins/game_agent_minecraft/docs/2026-10-09-query-loop.md
+@@ -66,3 +66,44 @@ autonomous action execution, not completion of the whole mining goal or
+ long-term unattended survival. Health checks confirmed the local model loaded,
+ YUI active/ready, plugin connected, LAN viewer online, and guardian running:
+ `neko-stuck-final-health-20261009.json`.
++
++## Runtime budgets, applied configuration, and later prerequisites
++
++Further observation found the trial's native absolute wall limit was 110s,
++ending missions despite real digging progress. The launch configuration now
++uses 180s without inventory/dimension progress and a 280s absolute ceiling;
++the plugin waits 295s, within its supported limit. Existing absolute-timeout
++tests still pass; selected runtime values are in `task-budgets-20261009.json`.
++
++The stop/start lifecycle also exposed a maintenance issue: writing the TOML
++file and calling the plugin reload entry left the host's applied snapshot at
++`unattended_enabled=false`. The runtime helper now uses the existing permanent
++`config/hot-update` API before the reload, and startup checks the plugin's
++actual enabled value. The isolated PowerShell regression failed before this
++change and passed afterward. No Neko platform source was changed. After
++application, `query-loop-effective-enabled-20261009.json` records a natural
++new mission, actual movement/inventory change, enabled unattended mode, and
++zero native kernel commits/handoff failures/tool caps during its 55s window.
++
++The body's later iron-mining attempts also had no suitable pickaxe. Native
++`mineOres` wrote this only to `progress.txt`, producing empty action feedback
++for its LLM. The skill now logs the missing prerequisite through the normal
++body output so the model can repair/craft a pickaxe instead of repeating a
++silent failure. Two red/green regressions cover absent and wooden-only picks;
++the full native suite now passes 225 tests (plugin remains 74). This skill is
++hot-reloaded, so it did not require another game restart. The body was observed
++checking inventory, attempting a crafting table, and choosing `getWood` after
++receiving the true missing-materials result. Its mining goal is not claimed
++complete.
++
++Final recovery observation was interrupted by a new external connection
++failure. The guardian is reconnecting, and an independent TCP probe to
++`micro.kangqiang.site:25702` (`60.176.65.106`) timed out after 8s. This confirms
++current unreachability from this host; the client's generic maintenance label
++does not prove that the server is actually under maintenance. Artifact:
++`server-connectivity-20261009.json`. At 10:51 the game had automatically
++reconnected: native login/spawn logs, fresh online telemetry, LAN viewer health,
++and the guardian's running state all confirmed recovery. The refreshed final
++health artifact distinguishes this later state from the earlier TCP timeout.
++Earlier action-recovery captures do not imply successful completion of the
++mining goal after that reconnect.

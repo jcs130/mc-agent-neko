@@ -1,0 +1,130 @@
+{
+  "upstreamRepository": "https://github.com/Project-N-E-K-O/N.E.K.O",
+  "baseCommit": "fb2a2e731a8c954478d08678b0c8cf40e8145a54",
+  "sourceCommit": "1d67415fbdb0d7790e68f7141271f1fd8989d173",
+  "scope": "plugin/plugins/game_agent_minecraft",
+  "resultPluginTree": "7a0ef08e7b9f3943386c9f0ff4a6f1472fa1d290",
+  "patches": [
+    {
+      "file": "0001-chore-configure-text-only-local-Qwen-Minecraft-trial.patch",
+      "sha256": "0ef09a811d935535cb40473740f333bedeb2eaf632e14ca7595ce06f20be8a4e"
+    },
+    {
+      "file": "0002-feat-expose-confirmed-Minecraft-public-and-private-c.patch",
+      "sha256": "e7933a8bbb6f1735e98137383adc3d323752460bd974db3c036306a3fcd65a30"
+    },
+    {
+      "file": "0003-feat-minecraft-add-modern-game-viewer-panel.patch",
+      "sha256": "0e105c1698373a5512c6b54257a70f6819861282ce0819b8c5097d1a80811272"
+    },
+    {
+      "file": "0004-fix-continue-authorized-Minecraft-play-with-complete.patch",
+      "sha256": "b1b2bac932de756f4bc842daddfa871fbb139654097f0e4a6d2799267b55ab4d"
+    },
+    {
+      "file": "0005-fix-honor-autonomous-play-authorization-after-task-o.patch",
+      "sha256": "94308139b5f64a4c13f837e3779bc4f20fead00aadcc65818bfa6c3509f2818e"
+    },
+    {
+      "file": "0006-fix-align-idle-context-and-tools-with-autonomous-pla.patch",
+      "sha256": "672d612c7de18bd2877951bdbf3df716f5b24d796bd32cb86470deefc18150a9"
+    },
+    {
+      "file": "0007-fix-honor-shorter-configured-Minecraft-idle-wake-int.patch",
+      "sha256": "73b8624ea30c50f921e76b857668b717422f81366b11218e7e97b39402871ee8"
+    },
+    {
+      "file": "0008-feat-minecraft-keep-main-sessions-alive-without-a-we.patch",
+      "sha256": "3debd4854670757bc8ae131aa4e923b4e56587fdf78d82bcf2294b386a866305"
+    },
+    {
+      "file": "0009-fix-minecraft-feed-fresh-survival-vitals-into-autono.patch",
+      "sha256": "15322c79308d28d83f7eca286018bd48eb24dcc727bdf4a1e4dfdb52b80e71a8"
+    },
+    {
+      "file": "0010-docs-minecraft-describe-fresh-unattended-survival-te.patch",
+      "sha256": "ac714833884c9317940c4cec8901981809f7f83caa7d37409720fffb058906fa"
+    },
+    {
+      "file": "0011-feat-minecraft-expose-unattended-session-settings-in.patch",
+      "sha256": "9c2070112cf777f77d130184239a2e8637f81233c0a2e7ed8eae09b8362f3d2c"
+    },
+    {
+      "file": "0012-fix-keep-unattended-sessions-alive-when-TTS-sends-bi.patch",
+      "sha256": "9af3a7ca23481b0823168316c8b68122bea2a997b55827dd2e639ecfe740c39c"
+    },
+    {
+      "file": "0013-fix-ground-idle-decisions-and-stop-timer-driven-narr.patch",
+      "sha256": "aa9f6e1bce514912d92004cdb47142efefbfa02e004de2ff34ba823f5d7607b4"
+    },
+    {
+      "file": "0014-feat-minecraft-ground-Neko-decisions-in-complete-gam.patch",
+      "sha256": "400388f8fb88b6dfb5bd2439bda09c7a20257996392cc7f03a9701cb7736fb73"
+    },
+    {
+      "file": "0015-fix-minecraft-preserve-readable-books-in-decision-co.patch",
+      "sha256": "700c7eee3f6448a0f76270e80545431a09fe9584015bdec6331ba792413559d7"
+    },
+    {
+      "file": "0016-fix-minecraft-fit-game-facts-within-Neko-callback-bu.patch",
+      "sha256": "b81871889e03d80d78de63b2de2d6a3a69581e6fd76e94f6347b06283f76cc7f"
+    },
+    {
+      "file": "0017-fix-minecraft-connect-Neko-to-server-skill-discovery.patch",
+      "sha256": "9326c4ff9f15b1d4b61e850134af67a83d1a7b6546490fe139ac8acfe8195670"
+    },
+    {
+      "file": "0018-docs-minecraft-teach-verified-skill-prerequisites-an.patch",
+      "sha256": "a02b71b9b8eebf296790377c8316e176b73c4778bee3b9afad319436b0058113"
+    },
+    {
+      "file": "0019-fix-minecraft-avoid-waking-Neko-again-for-tool-repli.patch",
+      "sha256": "3928a3bfd4dec26994f8201088ea04110893699ba217b2d8b8367625c8fd3a99"
+    },
+    {
+      "file": "0020-fix-retain-Minecraft-building-protection-feedback-in.patch",
+      "sha256": "bb3f9b963a48d4edea0d6f7fc2800a9d1ca6a98f7313d2d416f9ef7a2833497c"
+    },
+    {
+      "file": "0021-fix-reserve-game-chat-for-player-communication-and-p.patch",
+      "sha256": "a3c9ae488457628934e873713df750c59588000479d98021e70d103cb991ac33"
+    },
+    {
+      "file": "0022-fix-minecraft-read-retained-server-welcome-instructi.patch",
+      "sha256": "96571fa564386572ed53a542e651a77a4773911c646149cf31a6e848f80f7c1e"
+    },
+    {
+      "file": "0023-fix-minecraft-retry-refused-welcome-context-submissi.patch",
+      "sha256": "05eadad0d3dba61c7aef8a6d4fa7375f9526661919fa3374786f24e73519479c"
+    },
+    {
+      "file": "0024-fix-minecraft-keep-autonomous-queries-from-starving-.patch",
+      "sha256": "5e14ea1044b22a6de44fb1f806a599c295a2ca64a6e70b885122b42b791a8645"
+    },
+    {
+      "file": "0025-fix-minecraft-respect-live-body-activity-after-task-.patch",
+      "sha256": "db88f62cd221b85a4d87d2cf52b9c51e25e23c597168e1fefb397c4311d41a67"
+    },
+    {
+      "file": "0026-docs-minecraft-record-task-correlated-recovery-evide.patch",
+      "sha256": "a97f715411bac8d7301d0c37fd7a9cb017cf7e7ab76b6c3028cdf773db60cab5"
+    },
+    {
+      "file": "0027-docs-minecraft-record-runtime-configuration-and-reco.patch",
+      "sha256": "2c039b1f255bc1027aedd813f1be2dd4a86d76a8954eaefdefb3f432139a2539"
+    },
+    {
+      "file": "0028-fix-retain-scoped-protection-receipts-in-Neko-decisi.patch",
+      "sha256": "89f7e8d45dce3f466102d4985d2c7328fff6b28a45043d7f1557126d5816a2de"
+    },
+    {
+      "file": "0029-docs-record-protection-context-deployment-evidence.patch",
+      "sha256": "2d21f6c94710329ba021abc1355caade85d46dfeb2a8b76c0d729b03bf201013"
+    }
+  ],
+  "verification": {
+    "appliedInOrderToBase": true,
+    "resultPluginTreeMatchesSource": true,
+    "pluginTestsPassed": 77
+  }
+}

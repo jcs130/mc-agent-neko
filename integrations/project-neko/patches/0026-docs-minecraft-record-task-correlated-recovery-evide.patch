@@ -1,0 +1,52 @@
+From b7844ac69558b59c87bc7a24222a3362f5f971d1 Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Fri, 9 Oct 2026 10:36:27 +0800
+Subject: [PATCH 26/29] docs(minecraft): record task-correlated recovery
+ evidence
+
+---
+ .../docs/2026-10-09-query-loop.md             | 27 +++++++++++++++++--
+ 1 file changed, 25 insertions(+), 2 deletions(-)
+
+diff --git a/plugin/plugins/game_agent_minecraft/docs/2026-10-09-query-loop.md b/plugin/plugins/game_agent_minecraft/docs/2026-10-09-query-loop.md
+index 243fd81..8c1d476 100644
+--- a/plugin/plugins/game_agent_minecraft/docs/2026-10-09-query-loop.md
++++ b/plugin/plugins/game_agent_minecraft/docs/2026-10-09-query-loop.md
+@@ -11,7 +11,7 @@ The plugin currently tells the model to observe before planning and manually che
+ - [x] Add failing tests for meaningful messages surviving telemetry noise, retained query results across idle decisions, session reset/task-claim reset, and decision callbacks fitting the host budget.
+ - [x] Prefer meaningful events in compact context. Mark installed automatic dig checks accurately. Revise plugin tool descriptions and autonomy prompts to reserve a tool round for a concrete action and use supplied fresh state.
+ - [x] Keep the last three server command replies in the plugin connection's cache, expose them via observe and a compact idle-decision reference, and attach an action hint to server replies during unattended idle play. These are historical received facts, not claims of action success.
+-- [ ] Run the full plugin suite, check a local-model replay without executing live game actions, commit and reload only this plugin, then passively verify genuine autonomous action dispatch and measured game progress.
++- [x] Run the full plugin suite and a local-model replay without executing live game actions. Deploy the plugin changes and the subsequently discovered native ownership fix, then passively verify genuine task execution and measured game progress.
+ 
+ All Neko edits remain in `plugin/plugins/game_agent_minecraft/`. No core/tool-budget or model changes, no hardcoded fallback game action, no diagnostic task/chat injection, no weakening of protection checks or action cancellation.
+ 
+@@ -42,4 +42,27 @@ reproduce these missed busy states before the change; native tests reproduce
+ the independent kernel dispatch and startup ownership race.
+ 
+ Native regression suite: 223 tests passed. Plugin suite: 74 tests passed.
+-Deployment and genuine task execution are still pending verification.
++
++## Live verification after both repairs
++
++Runtime settings now reserve autonomy for `neko` from startup. Both components
++were reloaded through the trial lifecycle; unattended recovery is enabled.
++The local Qwen service and existing Neko main session stayed available.
++
++The first 55 seconds after reconnect still contained one query-budget cap and
++no body action. Therefore this does not claim that prompts eliminate every
++query-only turn or the model's planning latency. At 10:34:28 Neko naturally
++dispatched task `525f09c8b6dd43ef8942e7bafd2c994c`, without any diagnostic task
++or chat injection. Native execution logged `!digDown(10)` and ten successful
++stone breaks. The next 55-second passive capture attributed 16 blocks of
++vertical movement, inventory changes, and 17 active snapshots to that actual
++mission. It had zero kernel commits, handoff failures, or tool-budget caps.
++Artifact: `query-loop-actual-task-20261009.json`.
++
++The verifier now correlates mission IDs, executed body code, active telemetry,
++and world changes. The earlier claim-plus-movement verdict was corrected to
++false in `query-loop-after-20261009.json`. This confirms recovery of real
++autonomous action execution, not completion of the whole mining goal or
++long-term unattended survival. Health checks confirmed the local model loaded,
++YUI active/ready, plugin connected, LAN viewer online, and guardian running:
++`neko-stuck-final-health-20261009.json`.

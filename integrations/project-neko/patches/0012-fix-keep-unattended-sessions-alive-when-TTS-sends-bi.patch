@@ -1,0 +1,85 @@
+From 6738a50bcc72a4912a2728d0abb820c3953a0feb Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Thu, 8 Oct 2026 22:43:46 +0800
+Subject: [PATCH 12/29] fix: keep unattended sessions alive when TTS sends
+ binary audio
+
+---
+ plugin/plugins/game_agent_minecraft/README.md |  2 ++
+ .../game_agent_minecraft/test_unattended.py   | 30 +++++++++++++++++++
+ .../game_agent_minecraft/unattended.py        |  8 ++++-
+ 3 files changed, 39 insertions(+), 1 deletion(-)
+
+diff --git a/plugin/plugins/game_agent_minecraft/README.md b/plugin/plugins/game_agent_minecraft/README.md
+index 6b1b212..1c132d5 100644
+--- a/plugin/plugins/game_agent_minecraft/README.md
++++ b/plugin/plugins/game_agent_minecraft/README.md
+@@ -62,6 +62,8 @@ agent 端启动方式由你自己决定：绿色包用户在解压出来的包
+ 此模式仍通过 Neko 本体的正式文本会话使用人格、记忆和已注册工具；不创建另一套模型或游戏账号。
+ 网页会话正常时保持原会话；会话失活持续 10 秒后由插件后台接管。重新打开网页通过本体原有的
+ 新连接接管机制让后台退出。后台断线以 5–60 秒退避重连，插件停止时取消后台任务并关闭连接。
++本体启用 TTS 时，同一个 WebSocket 还会发送二进制 PCM 音频；后台只处理文本控制消息并丢弃音频帧，
++桌面客户端负责播放，避免把语音误当 JSON 而反复重连。
+ 这项配置只解决会话生命周期，持续自主行动仍须获得用户授权；后续停止、暂停和具体指令优先。
+ 
+ 修改配置后调用原有 `game_agent_reload_config` 即可生效，状态查询的 `unattended` 字段包含
+diff --git a/plugin/plugins/game_agent_minecraft/test_unattended.py b/plugin/plugins/game_agent_minecraft/test_unattended.py
+index 23e7bf8..2742ab4 100644
+--- a/plugin/plugins/game_agent_minecraft/test_unattended.py
++++ b/plugin/plugins/game_agent_minecraft/test_unattended.py
+@@ -34,6 +34,36 @@ class UnattendedTests(unittest.IsolatedAsyncioTestCase):
+         worker._serve_session.assert_not_awaited()
+         self.assertEqual(worker.status['state'], 'existing_session')
+ 
++    async def test_binary_tts_audio_does_not_interrupt_control_messages(self):
++        for audio in (b'\x00\x00\x01\x00', b'\xff\xfe\x00\x80'):
++            with self.subTest(audio=audio):
++                worker = self.create()
++                worker.configure({'unattended_enabled': True, 'unattended_character': 'YUI'})
++                sent, queue = [], asyncio.Queue()
++                class Socket:
++                    async def send(self, raw):
++                        message = json.loads(raw)
++                        sent.append(message)
++                        if message['action'] == 'start_session':
++                            await queue.put(json.dumps({'type': 'session_started', 'input_mode': 'text',
++                                                        'request_id': message['request_id']}))
++                            await queue.put(audio)
++                            await queue.put(json.dumps({'type': 'audio_end'}))
++                        else:
++                            await queue.put(json.dumps({'type': 'pong'}))
++                    async def recv(self):
++                        return await queue.get()
++                ticks = []
++                async def tick(_):
++                    ticks.append(True)
++                    if len(ticks) == 2:
++                        worker.enabled = False
++                    await asyncio.sleep(0)
++                worker._sleep = tick
++                await asyncio.wait_for(worker._drive_socket(Socket()), 2)
++                self.assertEqual([msg['action'] for msg in sent], ['start_session', 'ping', 'ping'])
++                self.assertEqual(worker.status['starts'], 1)
++
+     async def test_disabled_or_disconnected_mode_cannot_start_a_session(self):
+         for config, connected in [({}, True), ({'unattended_enabled': True, 'unattended_character': 'YUI'}, False)]:
+             worker = UnattendedSession(logger=None, game_connected=lambda: connected)
+diff --git a/plugin/plugins/game_agent_minecraft/unattended.py b/plugin/plugins/game_agent_minecraft/unattended.py
+index 819629a..305de06 100644
+--- a/plugin/plugins/game_agent_minecraft/unattended.py
++++ b/plugin/plugins/game_agent_minecraft/unattended.py
+@@ -118,7 +118,13 @@ class UnattendedSession:
+ 
+         async def receive():
+             while True:
+-                message = json.loads(await socket.recv())
++                frame = await socket.recv()
++                # The official main socket multiplexes JSON control messages
++                # with binary PCM when TTS is enabled. Only the desktop plays
++                # audio; a background text client must still keep its session.
++                if isinstance(frame, bytes):
++                    continue
++                message = json.loads(frame)
+                 kind = message.get('type')
+                 if kind == 'session_started' and message.get('request_id') == request_id:
+                     if message.get('input_mode') != 'text':

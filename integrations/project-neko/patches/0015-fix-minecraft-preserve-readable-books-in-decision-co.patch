@@ -1,0 +1,72 @@
+From 4a1909b61792cc80589bf14fbf8a02e7f909c2bf Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Fri, 9 Oct 2026 00:27:56 +0800
+Subject: [PATCH 15/29] fix(minecraft): preserve readable books in decision
+ context
+
+---
+ plugin/plugins/game_agent_minecraft/README.md       |  2 ++
+ plugin/plugins/game_agent_minecraft/observations.py | 13 ++++++++++++-
+ .../game_agent_minecraft/test_observations.py       | 10 ++++++++++
+ 3 files changed, 24 insertions(+), 1 deletion(-)
+
+diff --git a/plugin/plugins/game_agent_minecraft/README.md b/plugin/plugins/game_agent_minecraft/README.md
+index c4c496b..6ea3549 100644
+--- a/plugin/plugins/game_agent_minecraft/README.md
++++ b/plugin/plugins/game_agent_minecraft/README.md
+@@ -211,6 +211,8 @@ mc-agent 需要启用 `render_bot_view`、`viewer_type="modern"`，并配置
+ `sections` 可选 `self`、`world`、`inventory`、`nearby`、`window`、`activity`、
+ `server`、`coverage`；`max_events` 为 0–48，默认 20。查看书本或菜单详情时选择
+ `inventory`/`window`，查看技能和任务提示时选择 `server` 并结合近期消息。
++书页和物品描述先提取为可读文本，避免 1.20.6 深层 NBT 在截断后只剩空结构；
++日常决策保留这些文字和完整受限命令名，原始组件通过按栏目查询进一步查看。
+ 
+ 所有信息带采集时间和来源。超过 45 秒或离线的数据不会作为当前状态；新会话清理旧缓存。
+ 事件保留 120 秒。采集和模型上下文均有容量限制，截断、丢弃数量和未知内容显式标注。
+diff --git a/plugin/plugins/game_agent_minecraft/observations.py b/plugin/plugins/game_agent_minecraft/observations.py
+index 292b4ed..ff0cfb6 100644
+--- a/plugin/plugins/game_agent_minecraft/observations.py
++++ b/plugin/plugins/game_agent_minecraft/observations.py
+@@ -171,9 +171,20 @@ class GameObservations:
+         if view['state']:
+             view['state'] = dict(view['state'])
+             inv = dict(view['state'].get('inventory') or {})
+-            inv['slots'] = [{key: item.get(key) for key in ('slot', 'name', 'count', 'displayName', 'durabilityUsed', 'maxDurability', 'enchants')}
++            inv['slots'] = [{key: item.get(key) for key in ('slot', 'name', 'count', 'displayName', 'customName', 'lore', 'book', 'durabilityUsed', 'maxDurability', 'durabilityInconsistent', 'durabilityNote', 'enchants')}
+                             for item in inv.get('slots', []) if isinstance(item, dict)]
+             view['state']['inventory'] = inv
++            server = dict(view['state'].get('server') or {})
++            if isinstance(server.get('commandCatalog'), dict):
++                server['commandCatalog'] = {key: value for key, value in server['commandCatalog'].items() if key != 'commands'}
++            if isinstance(server.get('advancements'), dict):
++                advancements = dict(server['advancements'])
++                entries = advancements.get('entries')
++                if isinstance(entries, dict):
++                    advancements['entries'] = dict(list(entries.items())[-8:])
++                    advancements['entriesOmittedFromContext'] = max(0, len(entries) - 8)
++                server['advancements'] = advancements
++            view['state']['server'] = server
+             nearby = dict(view['state'].get('nearby') or {})
+             nearby['entities'] = [{key: entity.get(key) for key in ('id', 'name', 'type', 'username', 'displayName', 'customName', 'position', 'distance', 'health')}
+                                   for entity in nearby.get('entities', [])[:16] if isinstance(entity, dict)]
+diff --git a/plugin/plugins/game_agent_minecraft/test_observations.py b/plugin/plugins/game_agent_minecraft/test_observations.py
+index 8f69eb9..454d3ca 100644
+--- a/plugin/plugins/game_agent_minecraft/test_observations.py
++++ b/plugin/plugins/game_agent_minecraft/test_observations.py
+@@ -166,6 +166,16 @@ class ObservationTests(unittest.IsolatedAsyncioTestCase):
+         self.assertTrue(info.view()['truncated'])
+         self.assertLess(len(info.context().encode('utf-8')), 150000)
+ 
++    async def test_decisions_keep_readable_book_pages_and_command_names(self):
++        info = GameObservations()
++        initial = frame()
++        initial['state']['inventory']['slots'] = [{'name': 'written_book', 'book': {'pageCount': 23, 'pages': [{'page': 23, 'text': '技能需要先装备法杖'}]}}]
++        initial['state']['server']['commandCatalog'] = {'namesText': 'skills, quests, whisper', 'commands': [{'name': 'skills'}]}
++        info.ingest_state(initial)
++        context = info.context()
++        self.assertIn('技能需要先装备法杖', context)
++        self.assertIn('skills, quests, whisper', context)
++
+     async def test_malformed_frames_do_not_overwrite_valid_observations(self):
+         info = GameObservations()
+         info.ingest_state(frame(seq=2))

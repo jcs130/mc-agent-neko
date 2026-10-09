@@ -1,0 +1,330 @@
+From d007b8cc53192cb700e1460af95aa0b4c5932a34 Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Fri, 9 Oct 2026 10:17:36 +0800
+Subject: [PATCH 24/29] fix(minecraft): keep autonomous queries from starving
+ body actions
+
+---
+ plugin/plugins/game_agent_minecraft/README.md | 10 +++
+ .../plugins/game_agent_minecraft/__init__.py  |  9 +-
+ .../docs/2026-10-09-query-loop.md             | 25 ++++++
+ .../game_agent_minecraft/observations.py      |  8 +-
+ .../plugins/game_agent_minecraft/prompts.py   |  8 +-
+ .../plugins/game_agent_minecraft/service.py   | 38 ++++++++-
+ .../game_agent_minecraft/test_query_loop.py   | 83 +++++++++++++++++++
+ 7 files changed, 175 insertions(+), 6 deletions(-)
+ create mode 100644 plugin/plugins/game_agent_minecraft/docs/2026-10-09-query-loop.md
+ create mode 100644 plugin/plugins/game_agent_minecraft/test_query_loop.py
+
+diff --git a/plugin/plugins/game_agent_minecraft/README.md b/plugin/plugins/game_agent_minecraft/README.md
+index afbd976..bd3f8a0 100644
+--- a/plugin/plugins/game_agent_minecraft/README.md
++++ b/plugin/plugins/game_agent_minecraft/README.md
+@@ -235,6 +235,16 @@ MC 侧设置 `chat_ingame=false` 后，身体的工具调用和行动解说仅
+ 原始消息和书页不会因提示摘要而从缓存丢失。书里的数值可能生成于较早时刻，
+ 实时生命、饥饿、位置和时间应以 `self`/`world` 为准。
+ 
++离线模型的单轮工具预算可能只有 3 轮。自主提示使用已附的新鲜事实，最多补查一项
++真正缺失的关键事实，并为 `minecraft_task` 留一轮；不要求每次重复观测或重查技能目录。
++`protection.automaticDigChecks=true` 表示身体已有逐次挖掘保护检查，委派挖掘时由该检查
++执行，不能绕过拒绝或未知权限；其他陌生方块交互仍按对应权限查询。
++简短上下文优先保留聊天和有意义的回执，避免法力/冷却状态包挤走实际文字。
++插件另保留本次连接最近 3 种服务器命令的回执，`minecraft_observe` 的
++`lastServerCommands` 可重读，下一次自主决策也带上受限摘要。回执是带时间的历史数据，
++`received` 仅表示运输收到，不证明施法或采集成功。状态字段 `server_calls_since_task`
++记录自上次身体目标以来的服务器调用数，目标被接受后归零。插件不为模型强派固定动作。
++
+ 登录后前 30 秒收到的非查询回执系统消息、标题和副标题另存到
+ `server.welcome`，用于保留欢迎词和玩法说明。最多保留 32 条、合计 8,192 字符，
+ 截断和遗漏数量会标注；玩家聊天、私聊、主动查询的回执不进入这个缓存。
+diff --git a/plugin/plugins/game_agent_minecraft/__init__.py b/plugin/plugins/game_agent_minecraft/__init__.py
+index e6bee54..e1e1530 100644
+--- a/plugin/plugins/game_agent_minecraft/__init__.py
++++ b/plugin/plugins/game_agent_minecraft/__init__.py
+@@ -468,7 +468,7 @@ class GameAgentMinecraftPlugin(NekoPluginBase):
+ 
+     @llm_tool(
+         name="minecraft_server",
+-        description="Query or execute actual Minecraft server gameplay commands via /mycli. Server spells are separate from local runSkill scripts. Discover with /mycli help and /mycli spells list 1 (follow MC_SPELL_NEXT); inspect learning prerequisites, current level and point cost with /mycli skills info <ID>; check /mycli skills points. /mycli spells explain <ID> describes effects, arguments, mana and cooldowns. Before changing unfamiliar blocks query /mycli protect break|place|container|use <x> <y> <z> with one action and nearby integer coordinates; /mycli land here shows land permissions. Protection deny means stop retrying that target and choose another location/activity; unknown is not permission; allow_likely is tentative and later server denial takes precedence. Use the server's exact learning/casting syntax and required arguments. Only heal when injured; check points, mana, prerequisites and cooldowns first. received/submitted only describes transport, not success: verify replies and fresh state. Use minecraft_chat for conversation.",
++        description="Query or execute actual server /mycli commands. Use only when essential server facts are missing or a real server skill is needed; do not rediscover known catalogues every turn. Discover with /mycli help or /mycli spells list 1, follow MC_SPELL_NEXT; /mycli skills info <ID> gives learning conditions/points, /mycli spells explain <ID> gives arguments/mana/cooldowns. When protection.automaticDigChecks=true, the action player automatically checks every dig: delegate guarded digging to minecraft_task instead of spending a round on a duplicate break query. Otherwise query /mycli protect break|place|container|use <x> <y> <z> for unfamiliar changes; deny means choose another target, unknown is not permission, allow_likely remains tentative. Use exact received syntax; never invent prerequisites/cooldowns. received/submitted is transport, not success. Reserve a tool round for a concrete action in autonomous play. Use minecraft_chat for conversation.",
+         parameters={'type': 'object', 'properties': {'command': {'type': 'string', 'maxLength': 200}},
+                     'required': ['command']},
+         timeout=10.0,
+@@ -488,11 +488,16 @@ class GameAgentMinecraftPlugin(NekoPluginBase):
+             result['current'] = {'fresh': observation.get('fresh'), 'observedAt': observation.get('observedAt'),
+                                  'self': {key: own.get(key) for key in ('health', 'food', 'position', 'effects')},
+                                  'serverState': protocol.get('value'), 'serverStateObservedAt': protocol.get('observedAt')}
++        result.setdefault('command', command.strip())
++        self._service.record_server_command(result)
++        hint = self._service.server_action_hint()
++        if hint:
++            result['nextDecision'] = hint
+         return result
+ 
+     @llm_tool(
+         name='minecraft_observe',
+-        description='Read fresh Minecraft facts without sending chat or changing the current action. Use before planning, after ambiguous server feedback, or to inspect menus, book/item components, skills, quests, scoreboard, Boss bars and recent messages. Missing or stale data is unknown. Choose sections to inspect details when a response is truncated.',
++        description='Read fresh Minecraft facts without sending chat or changing the current action. Use when essential details are missing/stale/truncated in the already attached state, or after ambiguous feedback; do not repeat a full observation before every action. Select sections for menus/books, skills/quests, scoreboard or messages. lastServerCommands retains recent query replies. Missing data is unknown. Reserve a tool round for minecraft_task in autonomous play.',
+         parameters={
+             'type': 'object',
+             'properties': {
+diff --git a/plugin/plugins/game_agent_minecraft/docs/2026-10-09-query-loop.md b/plugin/plugins/game_agent_minecraft/docs/2026-10-09-query-loop.md
+new file mode 100644
+index 0000000..befca1d
+--- /dev/null
++++ b/plugin/plugins/game_agent_minecraft/docs/2026-10-09-query-loop.md
+@@ -0,0 +1,25 @@
++# Idle server-query loop repair
++
++User symptom: the character appears stuck again. Read-only capture reproduced it: nine fresh snapshots over 20 seconds, zero movement, no active action/skill/dig, five tool-budget caps and no body task dispatched since 10:04. Local model requests and server replies succeeded.
++
++Ranked causes investigated: (1) the three-round offline tool budget is spent on observation/protection/catalogue queries before action; (2) query outcomes are lost from the next proactive decision; (3) a running body action blocks dispatch. The trace confirms (1), context inspection shows (2), and fresh idle body/pending status rules out (3) for this episode.
++
++The plugin currently tells the model to observe before planning and manually check break protection even though the action player already performs guarded dig checks. Frequent `mcagent:state` events also displace textual replies from the two-event decision summary. Query tool results only live in the ephemeral tool turn.
++
++## Scope and steps
++
++- [x] Add failing tests for meaningful messages surviving telemetry noise, retained query results across idle decisions, session reset/task-claim reset, and decision callbacks fitting the host budget.
++- [x] Prefer meaningful events in compact context. Mark installed automatic dig checks accurately. Revise plugin tool descriptions and autonomy prompts to reserve a tool round for a concrete action and use supplied fresh state.
++- [x] Keep the last three server command replies in the plugin connection's cache, expose them via observe and a compact idle-decision reference, and attach an action hint to server replies during unattended idle play. These are historical received facts, not claims of action success.
++- [ ] Run the full plugin suite, check a local-model replay without executing live game actions, commit and reload only this plugin, then passively verify genuine autonomous action dispatch and measured game progress.
++
++All Neko edits remain in `plugin/plugins/game_agent_minecraft/`. No core/tool-budget or model changes, no hardcoded fallback game action, no diagnostic task/chat injection, no weakening of protection checks or action cancellation.
++
++Verification artifacts start with `neko-stuck-` / `query-loop-` under `D:/neko-mc-trial/`.
++
++## Verification before reload
++
++- Five new tests initially failed (missing query cache/automatic guard marker and telemetry hiding a real ore location). They pass after the change. Full Minecraft plugin suite: 72 tests passed, output `query-loop-regression-20261009.log`.
++- Local Qwen replay with simulated game tools proposed a short lapis-mining body task in round one. No live game action or chat was sent by the replay. Artifact: `query-loop-replay-patched-20261009.json`.
++- The short baseline replay also proposed a body task in round one; this replay does not reproduce the production conversation's repeated query history, and is only a compatibility check. The actual failure evidence is the live 20-second capture (`neko-stuck-before-20261009.json`), not a claimed before/after model benchmark.
++- The fix is plugin-scoped: core's three-round limit is unchanged. Live autonomous dispatch and measured movement/inventory progress remain to be checked before claiming recovery.
+diff --git a/plugin/plugins/game_agent_minecraft/observations.py b/plugin/plugins/game_agent_minecraft/observations.py
+index 97ba2ba..732e89f 100644
+--- a/plugin/plugins/game_agent_minecraft/observations.py
++++ b/plugin/plugins/game_agent_minecraft/observations.py
+@@ -223,7 +223,12 @@ class GameObservations:
+         if not self.available:
+             return None
+         from utils.tokenize import count_tokens
+-        view = self.view(max_events=2)
++        view = self.view(max_events=48)
++        # Continuous mana/cooldown telemetry already lives in server state.
++        # Do not let it displace a player's message or a textual query reply.
++        meaningful_events = [event for event in view['recentEvents']
++                             if event.get('text') or event.get('kind') != 'plugin_message']
++        view['recentEvents'] = (meaningful_events or view['recentEvents'])[-2:]
+         state = view.pop('state') or {}
+         short = lambda value, size=100: str(value or '')[:size]
+         own, world, inv = (state.get(key) or {} for key in ('self', 'world', 'inventory'))
+@@ -316,6 +321,7 @@ class GameObservations:
+             failure = failure if isinstance(failure, dict) else {}
+             compact['protection'] = {
+                 'tool': 'minecraft_server', 'check': '/mycli protect break <x> <y> <z>',
++                'automaticDigChecks': protection.get('installed') is True,
+                 'rule': 'deny: avoid target; unknown: recheck nearby; allow_likely is tentative',
+                 'lastBlocked': {key: short(failure[key], 80) if isinstance(failure[key], str) else failure[key]
+                                 for key in ('status', 'reason', 'x', 'y', 'z') if key in failure},
+diff --git a/plugin/plugins/game_agent_minecraft/prompts.py b/plugin/plugins/game_agent_minecraft/prompts.py
+index 0d5f945..65a0ec1 100644
+--- a/plugin/plugins/game_agent_minecraft/prompts.py
++++ b/plugin/plugins/game_agent_minecraft/prompts.py
+@@ -803,8 +803,8 @@ PROMPTS.update({
+         "en": "Use game chat only for genuine player replies, help or cooperation; keep tool calls/plans/progress local. You may initiate a private conversation with a real online player using minecraft_chat(player=...). Keep private replies private. Avoid repetition and stop nudging nonresponders; failed whispers never fall back to public chat.",
+     },
+     "AUTONOMOUS_DECISION_BODY": {
+-        "zh": "无人值守游玩已开启。若主人最新明确要求停止或暂停，遵守它；否则现在是行动决策回合：根据下面的真实游戏状态、背包、服务器反馈和最近结果，调用 minecraft_task 执行一个短而可行的新目标。关键事实缺失、过期或被截断时，先用 minecraft_observe 查询相应栏目；不要猜测菜单、技能权限、冷却或任务完成。不要用‘本喵接着挖’等预告代替调用，也不用播报计划。缺少前置物品就先补前置条件，失败后改变方法；派发确认不是完成证据。",
+-        "en": "Unattended play is enabled. Obey any latest explicit stop or pause from the user; otherwise this is an action decision: use the actual game state, inventory, server feedback and last outcome below to CALL minecraft_task with one short feasible new goal. Query relevant sections with minecraft_observe when key facts are missing, stale or truncated; never invent menu options, ability permissions, cooldowns or completion. Do not substitute spoken promises for a call or narrate your plan. Obtain missing prerequisites first and change methods after failure. Dispatch acknowledgement is not completion evidence.",
++        "zh": "无人值守已开启；遵守最新停止/暂停指令。根据已附新鲜状态，直接用 minecraft_task 执行短且安全的目标，不用预告代替行动。回合可能只有3轮工具调用：最多补查1项真正缺失的关键事实，必须留一轮行动；不要重复查已有状态/技能目录。automaticDigChecks=true 时挖掘会自动检查保护，禁止绕过 deny/unknown。失败就换办法，派发不等于完成。",
++        "en": "Unattended play is enabled; honor the latest stop/pause. Use the attached fresh facts to CALL minecraft_task for one short safe goal, not a spoken promise. A turn may have only 3 tool rounds: query at most ONE genuinely missing essential fact and reserve a round for action. Do not repeat supplied state or known skill catalogues. automaticDigChecks=true means digging checks protection automatically; never bypass deny/unknown. Change methods after failure; dispatch is not completion.",
+     },
+     "LAST_TASK_OUTCOME": {
+         "zh": "最近一次实际执行结果（历史事实，不是正在执行）：目标={task}；状态={status}；反馈={result}",
+@@ -814,4 +814,8 @@ PROMPTS.update({
+         "zh": "上次决策提醒之后没有新的动作被接受，身体仍然空闲。之前的口头预告没有执行；不要重复它。检查失败原因和前置条件，直接调用可行的新动作；若最新指令要求暂停，就保持安静。",
+         "en": "No new action was accepted after the last decision cue; the body is still idle. The previous spoken promise was not executed: do not repeat it. Check failure causes and prerequisites, then call a feasible new action directly; stay quiet if the latest instruction requested a pause.",
+     },
++    "QUERY_ACTION_HINT": {
++        "zh": "无人值守且身体空闲：本次服务器回执已取得。留一轮调用 minecraft_task 推进短目标，不要再查已有状态/技能目录。挖掘的 automaticDigChecks=true 时会自动核验保护；deny/unknown 仍须停止。信息不足以安全行动就选不依赖该信息的可行目标；不要编造完成。",
++        "en": "Unattended body is idle and this server reply is available. Reserve a round to CALL minecraft_task for a short goal; do not repeat supplied state/catalogues. automaticDigChecks=true guards digging; deny/unknown still stop it. If facts are insufficient, choose a feasible goal that does not depend on them. Never claim unverified completion.",
++    },
+ })
+diff --git a/plugin/plugins/game_agent_minecraft/service.py b/plugin/plugins/game_agent_minecraft/service.py
+index 508e210..bc997e5 100644
+--- a/plugin/plugins/game_agent_minecraft/service.py
++++ b/plugin/plugins/game_agent_minecraft/service.py
+@@ -300,6 +300,8 @@ class GameAgentService:
+         self._game_context_push_at = 0.0
+         self._server_welcome_session: Optional[str] = None
+         self._server_welcome_seen: set[str] = set()
++        self._server_command_history: list[dict[str, Any]] = []
++        self._server_calls_since_task = 0
+         self._game_attention_at = 0.0
+         self._game_attention_pending = False
+         self._game_attention_ids: set[str] = set()
+@@ -857,8 +859,12 @@ class GameAgentService:
+ 
+     async def _on_game_state(self, data: dict[str, Any]) -> None:
+         previous_ids = set(self._game_observations.events)
++        previous_session = self._game_observations.session_id
+         if not self._game_observations.ingest_state(data):
+             return
++        if previous_session != self._game_observations.session_id:
++            self._server_command_history.clear()
++            self._server_calls_since_task = 0
+         for waiter in self._game_state_waiters:
+             if not waiter.done():
+                 waiter.set_result(True)
+@@ -1025,10 +1031,30 @@ class GameAgentService:
+         result['source'] = 'live' if refreshed else 'cached'
+         result['status'] = 'ok' if result['fresh'] else 'unavailable'
+         result['lastTaskOutcome'] = self._last_task_outcome
++        result['lastServerCommands'] = list(self._server_command_history) if self._game_observations.fresh else []
+         result, clipped = bounded_value(result, 48000)
+         result['responseTruncated'] = clipped
+         return result
+ 
++    def record_server_command(self, result) -> None:
++        if not isinstance(result, dict) or not isinstance(result.get('command'), str):
++            return
++        entry, clipped = bounded_value({
++            'command': result['command'][:200], 'status': result.get('status'), 'reason': result.get('reason'),
++            'observedAt': time.time(), 'sessionId': self._game_observations.session_id,
++            'messages': result.get('messages') or [], 'records': result.get('records') or [],
++        }, 6000)
++        entry['cacheTruncated'] = clipped
++        self._server_command_history = [entry, *(item for item in self._server_command_history
++                                                if item['command'] != entry['command'])][:3]
++        if self._pending is None and self._task_finished:
++            self._server_calls_since_task += 1
++
++    def server_action_hint(self) -> str:
++        if not self._unattended.enabled or self._pending is not None or not self._task_finished or self._mc_agent_busy():
++            return ''
++        return prompts.t('QUERY_ACTION_HINT', lang=self._lang)
++
+     def _mc_agent_busy(self) -> bool:
+         """True when the mc-agent recently reported it's actively executing.
+         Fresh within ``_agent_busy_ttl`` — a stale flag (no bot_status_nl for a
+@@ -1176,6 +1202,7 @@ class GameAgentService:
+             self._task_finished = False
+             self._idle_decision_key = None
+             self._idle_decision_attempts = 0
++            self._server_calls_since_task = 0
+             self._log_info(
+                 "claim accepted (overwrite={}): {!r}", overwrite, task[:80],
+             )
+@@ -2375,7 +2402,14 @@ class GameAgentService:
+                 sections.append(truncate_to_tokens(prompts.t(
+                     'LAST_TASK_OUTCOME', lang=self._lang, task=outcome['task'][:100],
+                     status=outcome['status'], result=outcome['text'][:400],
+-                ), 160) + '\nFull lastTaskOutcome is available through minecraft_observe.')
++                ), 120) + '\nFull lastTaskOutcome is available through minecraft_observe.')
++            if self._server_command_history:
++                history = [{'command': item['command'], 'status': item['status'],
++                            'reply': ' '.join(str(text) for text in item['messages'])[:220]}
++                           for item in self._server_command_history[:2]]
++                sections.append('Received server replies (historical, not completion): ' + truncate_to_tokens(
++                    json.dumps(history, ensure_ascii=False, separators=(',', ':')), 120) +
++                    '\nFull lastServerCommands: minecraft_observe.')
+             if self._idle_decision_attempts:
+                 sections.append(prompts.t('IDLE_DECISION_RETRY', lang=self._lang))
+             if not self._unattended.enabled:
+@@ -2584,6 +2618,8 @@ class GameAgentService:
+             "pending_task": self._pending.task_text if self._pending else None,
+             "last_task_outcome": self._last_task_outcome,
+             "idle_decision_attempts": self._idle_decision_attempts,
++            "server_calls_since_task": self._server_calls_since_task,
++            "server_commands_cached": len(self._server_command_history),
+             "log_cache_size": len(self._log_cache),
+             "screenshot_cache_size": len(self._screenshot_cache),
+         }
+diff --git a/plugin/plugins/game_agent_minecraft/test_query_loop.py b/plugin/plugins/game_agent_minecraft/test_query_loop.py
+new file mode 100644
+index 0000000..970fbdc
+--- /dev/null
++++ b/plugin/plugins/game_agent_minecraft/test_query_loop.py
+@@ -0,0 +1,83 @@
++import json
++import unittest
++
++from utils.tokenize import count_tokens
++
++from .observations import GameObservations
++from .service import GameAgentService
++from .test_observations import frame, event
++
++
++class QueryLoopTests(unittest.IsolatedAsyncioTestCase):
++    def service(self):
++        calls = []
++        service = GameAgentService(logger=None, push_message_fn=lambda **kw: calls.append(kw))
++        service.set_lang('zh')
++        service.configure({'unattended_enabled': True, 'unattended_character': 'YUI'})
++        return service, calls
++
++    def test_telemetry_does_not_hide_actionable_server_text(self):
++        info = GameObservations()
++        info.ingest_state(frame(recentEvents=[
++            event('fixture:ore', 'system', '探矿术找到青金石矿 X=-595 Y=60 Z=-474'),
++            event('fixture:tick1', 'plugin_message', '', data={'channel': 'mcagent:state'}),
++            event('fixture:tick2', 'plugin_message', '', data={'channel': 'mcagent:state'}),
++        ]))
++        self.assertIn('X=-595 Y=60 Z=-474', info.context())
++
++    async def test_server_replies_survive_next_idle_turn_and_are_available_for_full_read(self):
++        service, calls = self.service()
++        await service._on_game_state(frame())
++        service.record_server_command({'command': '/mycli cast prospect', 'status': 'received',
++                                       'messages': ['探矿术找到青金石矿 X=-595 Y=60 Z=-474']})
++        await service._fire_keep_going_nudge()
++        await service._fire_keep_going_nudge()
++        for call in calls[-2:]:
++            text = call['parts'][0]['text']
++            self.assertIn('X=-595 Y=60 Z=-474', text)
++            self.assertIn('minecraft_task', text)
++            self.assertLessEqual(count_tokens(text), 950)
++        observed = await service.observe_game(['server'], 0)
++        self.assertEqual(observed['lastServerCommands'][0]['messages'][0], '探矿术找到青金石矿 X=-595 Y=60 Z=-474')
++        self.assertEqual(service.get_status()['server_calls_since_task'], 1)
++        self.assertIn('minecraft_task', service.server_action_hint())
++
++    async def test_task_claim_resets_query_streak_and_new_connection_forgets_old_replies(self):
++        service, calls = self.service()
++        await service._on_game_state(frame())
++        for n in range(5):
++            service.record_server_command({'command': f'/mycli skills info skill{n}', 'status': 'received', 'messages': [f'guide {n}']})
++        self.assertEqual(len(service._server_command_history), 3)
++        self.assertEqual(service.get_status()['server_calls_since_task'], 5)
++        pending = await service.try_claim_pending('走到安全地点', overwrite=False)
++        self.assertIsNotNone(pending)
++        self.assertEqual(service.get_status()['server_calls_since_task'], 0)
++        self.assertEqual(service.server_action_hint(), '')
++        await service._on_game_state(frame(session='new-connection'))
++        self.assertEqual(service._server_command_history, [])
++
++    async def test_action_cue_keeps_budget_and_last_outcome_with_large_received_data(self):
++        service, calls = self.service()
++        data = frame()
++        data['state']['server']['protection'] = {'enabled': True, 'installed': True}
++        await service._on_game_state(data)
++        service._last_task_outcome = {'task': '此前动作' * 80, 'status': 'failed', 'text': 'failure ' * 200}
++        service.record_server_command({'command': '/mycli spells list 1', 'status': 'received', 'messages': ['技能说明' * 2000]})
++        await service._fire_keep_going_nudge()
++        text = calls[-1]['parts'][0]['text']
++        self.assertLessEqual(count_tokens(text), 950)
++        self.assertIn('minecraft_task', text)
++        self.assertIn('failed', text)
++
++    def test_installed_guard_is_visible_without_requiring_duplicate_manual_break_check(self):
++        info = GameObservations()
++        data = frame()
++        data['state']['server']['protection'] = {'enabled': True, 'installed': True}
++        info.ingest_state(data)
++        summary = json.loads(info.context().split('\n', 1)[1])
++        self.assertTrue(summary['protection']['automaticDigChecks'])
++        data = frame(seq=2)
++        data['state']['server']['protection'] = {'enabled': True, 'installed': False}
++        info.ingest_state(data)
++        summary = json.loads(info.context().split('\n', 1)[1])
++        self.assertFalse(summary['protection']['automaticDigChecks'])

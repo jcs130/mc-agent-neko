@@ -1,0 +1,80 @@
+From 21155dfab24da3cd26a6c4910e507b11312d0a8e Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Thu, 8 Oct 2026 19:54:40 +0800
+Subject: [PATCH 06/29] fix: align idle context and tools with autonomous play
+ permission
+
+---
+ plugin/plugins/game_agent_minecraft/__init__.py     | 13 +++++++++++--
+ plugin/plugins/game_agent_minecraft/prompts.py      |  4 ++++
+ .../test_completion_feedback.py                     |  8 +++++++-
+ 3 files changed, 22 insertions(+), 3 deletions(-)
+
+diff --git a/plugin/plugins/game_agent_minecraft/__init__.py b/plugin/plugins/game_agent_minecraft/__init__.py
+index 7a8912a..56913e3 100644
+--- a/plugin/plugins/game_agent_minecraft/__init__.py
++++ b/plugin/plugins/game_agent_minecraft/__init__.py
+@@ -87,6 +87,15 @@ MINECRAFT_TASK_DESCRIPTION = (
+     "(cue). "
+     "Do not infer or claim results from the task text itself — only from "
+     "actually-observed cues and screenshots.\n\n"
++    "ONGOING AUTONOMOUS PLAY — when the user authorizes you to play on your own, "
++    "that authorization persists until the user stops or pauses. It is a mode, "
++    "not a literal task to relay. While authorized and idle, choose one bounded "
++    "new goal from actual feedback and CALL this tool; after each outcome, choose "
++    "the next feasible goal. Idle and completion cues are opportunities to act "
++    "under that existing authorization, not new permission. Do not merely narrate "
++    "that you are walking, collecting or crafting without dispatching the action. "
++    "A failed method may be replaced by a different method grounded in feedback; "
++    "do not blindly repeat it. A later stop, pause or specific instruction wins.\n\n"
+     "CRITICAL — this tool dispatches actions; it is not an awareness or heartbeat "
+     "tool. A screenshot, log, state update, idle reminder, or task-completion cue "
+     "is context only and is NEVER by itself a task to dispatch. Before "
+@@ -124,8 +133,8 @@ MINECRAFT_TASK_DESCRIPTION = (
+     "Use this tool when master's most recent message asks the character to do "
+     "something new and that request has not already been dispatched, or when a "
+     "keep-going turn identifies a genuinely obvious new action from current game "
+-    "state. Do NOT dispatch merely because a task finished or new awareness "
+-    "context arrived. Do NOT use it for chat, status questions, abstract intent, "
++    "state. Without ongoing autonomous authorization, do NOT dispatch merely "
++    "because a task finished or new awareness context arrived. Do NOT use it for chat, status questions, abstract intent, "
+     "or inventory checks — the inventory is reported to you separately, never "
+     "dispatch a lookup as a task.\n\n"
+     "Parameters:\n"
+diff --git a/plugin/plugins/game_agent_minecraft/prompts.py b/plugin/plugins/game_agent_minecraft/prompts.py
+index 900a4c5..ccad37c 100644
+--- a/plugin/plugins/game_agent_minecraft/prompts.py
++++ b/plugin/plugins/game_agent_minecraft/prompts.py
+@@ -772,3 +772,7 @@ PROMPTS: Dict[str, Dict[str, str]] = {
+         "pt": "O plugin do jogo está sendo encerrado.",
+     },
+ }
++
++# Periodic idle context and active idle nudges must agree on the meaning of
++# ongoing user authorization. Keep all supported locales on the same contract.
++PROMPTS["SYSTEM_PROMPT_IDLE_BODY"] = PROMPTS["KEEP_GOING_BODY"].copy()
+diff --git a/plugin/plugins/game_agent_minecraft/test_completion_feedback.py b/plugin/plugins/game_agent_minecraft/test_completion_feedback.py
+index 5de525f..e852bbe 100644
+--- a/plugin/plugins/game_agent_minecraft/test_completion_feedback.py
++++ b/plugin/plugins/game_agent_minecraft/test_completion_feedback.py
+@@ -1,6 +1,6 @@
+ import unittest
+ 
+-from plugin.plugins.game_agent_minecraft import GameAgentMinecraftPlugin
++from plugin.plugins.game_agent_minecraft import GameAgentMinecraftPlugin, MINECRAFT_TASK_DESCRIPTION
+ from plugin.plugins.game_agent_minecraft import prompts
+ from plugin.plugins.game_agent_minecraft.service import text_signals_blocked
+ 
+@@ -15,6 +15,12 @@ class CompletionFeedbackTests(unittest.TestCase):
+         for lang in prompts.SUPPORTED_LANGS:
+             self.assertIn('minecraft_task', prompts.t('KEEP_GOING_BODY', lang=lang))
+ 
++    def test_idle_context_and_tool_contract_preserve_ongoing_authorization(self):
++        for lang in prompts.SUPPORTED_LANGS:
++            self.assertEqual(prompts.t('SYSTEM_PROMPT_IDLE_BODY', lang=lang), prompts.t('KEEP_GOING_BODY', lang=lang))
++        self.assertIn('ONGOING AUTONOMOUS PLAY', MINECRAFT_TASK_DESCRIPTION)
++        self.assertIn('until the user stops or pauses', MINECRAFT_TASK_DESCRIPTION)
++
+     def test_book_evidence_survives_completion_cue(self):
+         plugin = object.__new__(GameAgentMinecraftPlugin)
+         plugin._lang = "zh"

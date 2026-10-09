@@ -1,0 +1,452 @@
+From 26b3ad340afd47fde99029c13764fcbb995a2520 Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Thu, 8 Oct 2026 21:50:27 +0800
+Subject: [PATCH 08/29] feat(minecraft): keep main sessions alive without a web
+ page
+
+---
+ plugin/plugins/game_agent_minecraft/README.md |  11 ++
+ .../plugins/game_agent_minecraft/plugin.toml  |   5 +
+ .../plugins/game_agent_minecraft/service.py   |   9 +
+ .../game_agent_minecraft/test_unattended.py   | 146 ++++++++++++++
+ .../game_agent_minecraft/unattended.py        | 186 ++++++++++++++++++
+ 5 files changed, 357 insertions(+)
+ create mode 100644 plugin/plugins/game_agent_minecraft/test_unattended.py
+ create mode 100644 plugin/plugins/game_agent_minecraft/unattended.py
+
+diff --git a/plugin/plugins/game_agent_minecraft/README.md b/plugin/plugins/game_agent_minecraft/README.md
+index 0f00550..52eafb7 100644
+--- a/plugin/plugins/game_agent_minecraft/README.md
++++ b/plugin/plugins/game_agent_minecraft/README.md
+@@ -56,6 +56,17 @@ agent 端启动方式由你自己决定：绿色包用户在解压出来的包
+ 
+ ## 配置项
+ 
++无人值守可在 `[game_agent]` 设置 `unattended_enabled=true`、
++`unattended_character="YUI"`（替换为现有角色名）和
++`unattended_main_url="http://127.0.0.1:48911"`。默认关闭，只接受本机地址。
++此模式仍通过 Neko 本体的正式文本会话使用人格、记忆和已注册工具；不创建另一套模型或游戏账号。
++网页会话正常时保持原会话；会话失活持续 10 秒后由插件后台接管。重新打开网页通过本体原有的
++新连接接管机制让后台退出。后台断线以 5–60 秒退避重连，插件停止时取消后台任务并关闭连接。
++这项配置只解决会话生命周期，持续自主行动仍须获得用户授权；后续停止、暂停和具体指令优先。
++
++修改配置后调用原有 `game_agent_reload_config` 即可生效，状态查询的 `unattended` 字段包含
++开关、角色、后台状态、确认启动次数及最近错误类型。现代画面独立于本体聊天会话。
++
+ `plugin.toml` 的 `[game_agent]` 节：
+ 
+ | 字段 | 默认 | 含义 |
+diff --git a/plugin/plugins/game_agent_minecraft/plugin.toml b/plugin/plugins/game_agent_minecraft/plugin.toml
+index 816a816..17bb162 100644
+--- a/plugin/plugins/game_agent_minecraft/plugin.toml
++++ b/plugin/plugins/game_agent_minecraft/plugin.toml
+@@ -27,6 +27,11 @@ auto_start = false
+ enabled = true
+ 
+ [game_agent]
++# Keep the official main text runtime active after its web page closes.
++# Opt-in: requires an explicit character and an existing autonomous-play grant.
++unattended_enabled = false
++unattended_main_url = "http://127.0.0.1:48911"
++unattended_character = ""
+ # WebSocket URI of the local Minecraft agent server. Must speak the JSON
+ # protocol documented in this plugin's README (task / log / screenshot /
+ # task_finished frames).
+diff --git a/plugin/plugins/game_agent_minecraft/service.py b/plugin/plugins/game_agent_minecraft/service.py
+index e233644..28c04b3 100644
+--- a/plugin/plugins/game_agent_minecraft/service.py
++++ b/plugin/plugins/game_agent_minecraft/service.py
+@@ -38,6 +38,7 @@ import json
+ import re
+ import time
+ import uuid
++from .unattended import UnattendedSession
+ from dataclasses import dataclass, field
+ from typing import Any, Callable, Dict, Optional
+ 
+@@ -213,6 +214,10 @@ class GameAgentService:
+         self._client: Optional[GameAgentClient] = None
+         self._client_task: Optional[asyncio.Task] = None
+         self._system_loop_task: Optional[asyncio.Task] = None
++        self._unattended = UnattendedSession(
++            logger=logger,
++            game_connected=lambda: bool(self._client and self._client.is_connected),
++        )
+ 
+         # User-language short code for localizing every push_message cue
+         # and tool result this service emits. Set via ``set_lang`` from
+@@ -433,6 +438,7 @@ class GameAgentService:
+             v = cfg.get(key, default)
+             return bool(v) if isinstance(v, (bool, int)) else default
+ 
++        self._unattended.configure(cfg)
+         url = cfg.get("ws_url")
+         if isinstance(url, str) and url:
+             self._ws_url = url
+@@ -541,12 +547,14 @@ class GameAgentService:
+         # keep_going's ``> 0`` guard fails, and Neko stands still with
+         # no self-prompt to push her into actually dispatching.
+         self._last_task_finished_at = time.time()
++        await self._unattended.start()
+         self._log_info("started, ws_url={}", self._ws_url)
+ 
+     async def stop(self) -> None:
+         """Tear down WS client + loop, and resolve any pending tool call
+         with a "shutdown" status so the @llm_tool handler doesn't hang
+         until its timeout expires."""
++        await self._unattended.stop()
+         # Drain pending handler first so it returns before we kill the
+         # transport that would feed its event.
+         async with self._pending_lock:
+@@ -2216,6 +2224,7 @@ class GameAgentService:
+         return {
+             "ws_url": self._ws_url,
+             "connected": connected,
++            "unattended": self._unattended.status,
+             "viewer": self._client.viewer_info if connected and self._client else None,
+             "task_finished": self._task_finished,
+             "pending_task": self._pending.task_text if self._pending else None,
+diff --git a/plugin/plugins/game_agent_minecraft/test_unattended.py b/plugin/plugins/game_agent_minecraft/test_unattended.py
+new file mode 100644
+index 0000000..23e7bf8
+--- /dev/null
++++ b/plugin/plugins/game_agent_minecraft/test_unattended.py
+@@ -0,0 +1,146 @@
++import asyncio
++import json
++import unittest
++from unittest.mock import AsyncMock, patch
++import httpx
++import websockets
++
++from .unattended import UnattendedSession, loopback_main_url
++
++
++class UnattendedTests(unittest.IsolatedAsyncioTestCase):
++    def create(self, **kwargs):
++        return UnattendedSession(logger=None, game_connected=lambda: True, **kwargs)
++
++    async def test_inactive_main_session_starts_official_text_client(self):
++        worker = self.create()
++        worker.configure({'unattended_enabled': True, 'unattended_character': 'YUI'})
++        worker._read_health = AsyncMock(return_value={'active': False, 'ready': False})
++        worker._serve_session = AsyncMock()
++        clock = [0.0]
++        worker._clock = lambda: clock[0]
++        await worker.cycle()
++        worker._serve_session.assert_not_awaited()
++        clock[0] = 10.0
++        await worker.cycle()
++        worker._serve_session.assert_awaited_once()
++
++    async def test_healthy_browser_session_is_left_in_control(self):
++        worker = self.create()
++        worker.configure({'unattended_enabled': True, 'unattended_character': 'YUI'})
++        worker._read_health = AsyncMock(return_value={'active': True, 'ready': True})
++        worker._serve_session = AsyncMock()
++        await worker.cycle()
++        worker._serve_session.assert_not_awaited()
++        self.assertEqual(worker.status['state'], 'existing_session')
++
++    async def test_disabled_or_disconnected_mode_cannot_start_a_session(self):
++        for config, connected in [({}, True), ({'unattended_enabled': True, 'unattended_character': 'YUI'}, False)]:
++            worker = UnattendedSession(logger=None, game_connected=lambda: connected)
++            worker.configure(config)
++            worker._read_health = AsyncMock()
++            await worker.cycle()
++            worker._read_health.assert_not_awaited()
++
++    async def test_start_is_confirmed_and_ping_detects_browser_takeover(self):
++        worker = self.create()
++        worker.configure({'unattended_enabled': True, 'unattended_character': 'YUI'})
++        sent = []
++        class Socket:
++            async def send(self, raw):
++                sent.append(json.loads(raw))
++            async def recv(self):
++                await asyncio.sleep(0)
++                if len(sent) == 1:
++                    return json.dumps({'type': 'session_started', 'input_mode': 'text', 'request_id': sent[0]['request_id']})
++                raise ConnectionError('browser took ownership')
++        worker._read_health = AsyncMock(return_value={'active': True, 'ready': True})
++        async def tick(_):
++            await asyncio.sleep(0)
++        worker._sleep = tick
++        with self.assertRaises(ConnectionError):
++            await worker._drive_socket(Socket())
++        self.assertEqual(sent[0]['action'], 'start_session')
++        self.assertEqual(sent[0]['input_type'], 'text')
++        self.assertEqual(sent[1], {'action': 'ping'})
++        self.assertEqual(worker.status['starts'], 1)
++
++    async def test_wrong_start_ack_is_not_a_success(self):
++        worker = self.create()
++        worker.configure({'unattended_enabled': True, 'unattended_character': 'YUI'})
++        class Socket:
++            send = AsyncMock()
++            recv = AsyncMock(side_effect=[json.dumps({'type': 'session_started', 'request_id': 'someone-else'}),
++                                         json.dumps({'type': 'session_failed'})])
++        with self.assertRaises(RuntimeError):
++            await worker._drive_socket(Socket())
++        self.assertEqual(worker.status['starts'], 0)
++
++    async def test_cancel_propagates_and_owned_task_is_cleared(self):
++        worker = self.create()
++        worker.configure({'unattended_enabled': True, 'unattended_character': 'YUI'})
++        worker._read_health = AsyncMock(side_effect=asyncio.CancelledError)
++        await worker.start()
++        await asyncio.sleep(0)
++        await worker.stop()
++        self.assertIsNone(worker._task)
++        self.assertEqual(worker.status['state'], 'stopped')
++
++    async def test_one_worker_and_shutdown_close_its_real_socket(self):
++        connected, closed = asyncio.Event(), asyncio.Event()
++        async def handler(socket, *_):
++            message = json.loads(await socket.recv())
++            await socket.send(json.dumps({'type': 'session_started', 'input_mode': 'text',
++                                          'request_id': message['request_id']}))
++            connected.set()
++            await socket.wait_closed()
++            closed.set()
++        async with websockets.serve(handler, '127.0.0.1', 0) as server:
++            port = server.sockets[0].getsockname()[1]
++            worker = self.create()
++            worker.configure({'unattended_enabled': True, 'unattended_character': 'YUI',
++                              'unattended_main_url': f'http://127.0.0.1:{port}'})
++            worker._read_health = AsyncMock(return_value={'active': False, 'ready': False})
++            worker._inactive_since = worker._clock() - 11
++            await worker.start()
++            original = worker._task
++            await worker.start()
++            self.assertIs(worker._task, original)
++            await asyncio.wait_for(connected.wait(), 2)
++            await worker.stop()
++            await asyncio.wait_for(closed.wait(), 2)
++            self.assertIsNone(worker._task)
++
++    async def test_connection_failures_retry_with_bounded_backoff(self):
++        worker = self.create()
++        worker.cycle = AsyncMock(side_effect=ConnectionError)
++        delays = []
++        async def sleep(delay):
++            delays.append(delay)
++            if len(delays) == 6:
++                raise asyncio.CancelledError
++        worker._sleep = sleep
++        with self.assertRaises(asyncio.CancelledError):
++            await worker._run()
++        self.assertEqual(delays, [5, 10, 20, 40, 60, 60])
++
++    async def test_health_requests_the_actual_lifecycle_view(self):
++        worker = self.create()
++        worker.configure({'unattended_enabled': True, 'unattended_character': 'YUI'})
++        def handler(request):
++            self.assertEqual(request.url.params.get('deep'), '1')
++            return httpx.Response(200, json={'current': {'session_lifecycle': {
++                'YUI': {'active': True, 'ready': True}}}})
++        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
++        with patch('plugin.plugins.game_agent_minecraft.unattended.httpx.AsyncClient', return_value=client):
++            self.assertEqual(await worker._read_health(), {'active': True, 'ready': True})
++
++    def test_session_transport_is_restricted_to_loopback(self):
++        self.assertEqual(loopback_main_url('http://127.0.0.1:48911/'), 'http://127.0.0.1:48911')
++        for value in ['http://192.168.3.162:48911', 'https://example.com', 'http://user:pass@127.0.0.1:48911']:
++            with self.assertRaises(ValueError):
++                loopback_main_url(value)
++
++
++if __name__ == '__main__':
++    unittest.main()
+diff --git a/plugin/plugins/game_agent_minecraft/unattended.py b/plugin/plugins/game_agent_minecraft/unattended.py
+new file mode 100644
+index 0000000..819629a
+--- /dev/null
++++ b/plugin/plugins/game_agent_minecraft/unattended.py
+@@ -0,0 +1,186 @@
++"""Opt-in background text client for the existing Neko main runtime.
++
++No model or alternate agent lives here. The official main WebSocket owns
++persona, memory, registered tools and proactive delivery. A newer interactive
++client takes ownership through the server's normal newest-socket-wins protocol.
++"""
++from __future__ import annotations
++
++import asyncio
++import ipaddress
++import json
++import time
++import uuid
++from urllib.parse import quote, urlsplit
++
++import httpx
++import websockets
++
++
++def loopback_main_url(value: str) -> str:
++    parsed = urlsplit(value)
++    try:
++        local = parsed.hostname == 'localhost' or ipaddress.ip_address(parsed.hostname or '').is_loopback
++    except ValueError:
++        local = False
++    if (parsed.scheme not in ('http', 'https') or not local or parsed.username
++            or parsed.password or parsed.path not in ('', '/') or parsed.query or parsed.fragment):
++        raise ValueError('unattended_main_url must be a loopback HTTP origin')
++    return value.rstrip('/')
++
++
++class UnattendedSession:
++    def __init__(self, *, logger, game_connected):
++        self.logger = logger
++        self.game_connected = game_connected
++        self.enabled = False
++        self.main_url = 'http://127.0.0.1:48911'
++        self.character = ''
++        self._task = None
++        self._sleep = asyncio.sleep
++        self._clock = time.monotonic
++        self._inactive_since = None
++        self._config_epoch = 0
++        self._status = {'state': 'disabled', 'starts': 0, 'failures': 0, 'last_error': None}
++
++    @property
++    def status(self):
++        return {**self._status, 'enabled': self.enabled, 'character': self.character,
++                'main_url': self.main_url}
++
++    def configure(self, cfg):
++        old = (self.enabled, self.main_url, self.character)
++        self.enabled = cfg.get('unattended_enabled') is True
++        self.main_url = loopback_main_url(cfg.get('unattended_main_url') or 'http://127.0.0.1:48911')
++        self.character = str(cfg.get('unattended_character') or '').strip()
++        if self.enabled and not self.character:
++            raise ValueError('unattended_character is required when unattended mode is enabled')
++        if old != (self.enabled, self.main_url, self.character):
++            self._config_epoch += 1
++            self._inactive_since = None
++
++    async def start(self):
++        if self._task is None or self._task.done():
++            self._task = asyncio.create_task(self._run(), name='game_agent_minecraft.unattended')
++
++    async def stop(self):
++        task, self._task = self._task, None
++        if task is not None:
++            task.cancel()
++            try:
++                await task
++            except asyncio.CancelledError:
++                pass
++        self._status['state'] = 'stopped'
++
++    async def _read_health(self):
++        async with httpx.AsyncClient(timeout=5.0, trust_env=False) as client:
++            # Lifecycle ownership is exposed only by the diagnostic deep view.
++            # The cheap view intentionally omits it; absence is never "inactive".
++            response = await client.get(self.main_url + '/api/debug/health', params={'deep': '1'})
++            response.raise_for_status()
++        sessions = response.json().get('current', {}).get('session_lifecycle', {})
++        if self.character not in sessions:
++            raise RuntimeError('configured character is absent from the main runtime')
++        return sessions[self.character]
++
++    async def cycle(self):
++        if not self.enabled or not self.game_connected():
++            self._status['state'] = 'disabled' if not self.enabled else 'waiting_for_game'
++            self._inactive_since = None
++            return
++        health = await self._read_health()
++        if health.get('active') and health.get('ready'):
++            self._status['state'] = 'existing_session'
++            self._inactive_since = None
++            return
++        now = self._clock()
++        if self._inactive_since is None:
++            self._inactive_since = now
++        # Let a newly opened UI finish starting its session before claiming it.
++        if now - self._inactive_since < 10.0:
++            self._status['state'] = 'waiting_for_session'
++            return
++        self._status['state'] = 'connecting'
++        await self._serve_session()
++        self._inactive_since = None
++
++    async def _serve_session(self):
++        url = self.main_url.replace('http', 'ws', 1) + '/ws/' + quote(self.character, safe='')
++        async with websockets.connect(url, open_timeout=10, close_timeout=3,
++                                      ping_interval=20, ping_timeout=20, max_size=2**20) as socket:
++            await self._drive_socket(socket)
++
++    async def _drive_socket(self, socket):
++        request_id = 'mc-unattended-' + uuid.uuid4().hex
++        epoch = self._config_epoch
++        started, pong = asyncio.Event(), asyncio.Event()
++
++        async def receive():
++            while True:
++                message = json.loads(await socket.recv())
++                kind = message.get('type')
++                if kind == 'session_started' and message.get('request_id') == request_id:
++                    if message.get('input_mode') != 'text':
++                        raise RuntimeError('unattended session did not enter text mode')
++                    started.set()
++                elif kind == 'pong':
++                    pong.set()
++                elif kind in ('session_failed', 'session_ended_by_server', 'catgirl_switched'):
++                    raise RuntimeError('main session ended: ' + str(kind))
++
++        reader = asyncio.create_task(receive())
++
++        async def wait_signal(event, timeout):
++            waiter = asyncio.create_task(event.wait())
++            try:
++                done, _ = await asyncio.wait((reader, waiter), timeout=timeout,
++                                             return_when=asyncio.FIRST_COMPLETED)
++                if reader in done:
++                    await reader
++                if waiter not in done:
++                    raise TimeoutError('main session acknowledgement timed out')
++            finally:
++                waiter.cancel()
++                await asyncio.gather(waiter, return_exceptions=True)
++
++        try:
++            await socket.send(json.dumps({'action': 'start_session', 'input_type': 'text',
++                                          'new_session': False, 'request_id': request_id}))
++            await wait_signal(started, 25.0)
++            self._status.update(state='background_session', starts=self._status['starts'] + 1,
++                                failures=0, last_error=None)
++            if self.logger:
++                self.logger.info('[unattended] main text session ready for {}', self.character)
++            while self.enabled and self.game_connected() and epoch == self._config_epoch:
++                await self._sleep(5.0)
++                pong.clear()
++                # The official router closes a superseded socket on its next
++                # message. This detects browser takeover without stealing back.
++                await socket.send(json.dumps({'action': 'ping'}))
++                await wait_signal(pong, 10.0)
++        finally:
++            reader.cancel()
++            await asyncio.gather(reader, return_exceptions=True)
++
++    async def _run(self):
++        while True:
++            delay = 5.0
++            try:
++                await self.cycle()
++                self._status['failures'] = 0
++                if self._status['state'] == 'existing_session':
++                    delay = 15.0
++            except asyncio.CancelledError:
++                raise
++            except Exception as exc:
++                failures = self._status['failures'] + 1
++                self._status.update(state='retrying', failures=failures,
++                                    last_error=type(exc).__name__)
++                delay = min(60.0, 5.0 * 2 ** min(failures - 1, 4))
++                # A UI takeover is an ordinary disconnect; give the new owner
++                # time to initialize before considering another background start.
++                self._inactive_since = None
++                if self.logger:
++                    self.logger.info('[unattended] {} — retry in {}s', type(exc).__name__, delay)
++            await self._sleep(delay)

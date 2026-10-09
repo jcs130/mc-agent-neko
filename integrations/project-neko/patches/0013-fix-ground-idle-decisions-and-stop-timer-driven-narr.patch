@@ -1,0 +1,314 @@
+From df32220150d05867ff84c0f7f449d7993ab2c612 Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Thu, 8 Oct 2026 23:16:30 +0800
+Subject: [PATCH 13/29] fix: ground idle decisions and stop timer driven
+ narration
+
+---
+ plugin/plugins/game_agent_minecraft/README.md |  5 ++
+ .../plugins/game_agent_minecraft/prompts.py   | 15 ++++
+ .../plugins/game_agent_minecraft/service.py   | 66 +++++++++++---
+ .../test_idle_decisions.py                    | 87 +++++++++++++++++++
+ .../game_agent_minecraft/test_nudge_timing.py |  4 +-
+ 5 files changed, 163 insertions(+), 14 deletions(-)
+ create mode 100644 plugin/plugins/game_agent_minecraft/test_idle_decisions.py
+
+diff --git a/plugin/plugins/game_agent_minecraft/README.md b/plugin/plugins/game_agent_minecraft/README.md
+index 1c132d5..cc5b2d9 100644
+--- a/plugin/plugins/game_agent_minecraft/README.md
++++ b/plugin/plugins/game_agent_minecraft/README.md
+@@ -132,6 +132,11 @@ agent 端启动方式由你自己决定：绿色包用户在解压出来的包
+ - 时机由 `main_server` 的 proactive_message handler 二次把关（用户/模型说话期间它不会真的打断），
+   插件这层只负责"别 5 秒里发 10 次"
+ 
++无人值守决策会携带完整背包和最近一次真实动作结果，避免下一轮只看见重复的空闲提醒。
++首次空闲决策仍遵循配置间隔；若没有动作被接受且事实没有变化，重试间隔退避到
++30、60、120 秒，新结果或背包/生存状态变化会重置退避。任务进行中的定时更新只用
++`ai_behavior="read"` 提供上下文，不要求角色反复播报尚未完成的计划；完成、危险和玩家聊天仍独立触发处理。
++
+ ## 与原版 (`feat/game-agent-integration`) 的差别
+ 
+ 原方案把所有逻辑硬编码进 `main_logic/core.py` 和
+diff --git a/plugin/plugins/game_agent_minecraft/prompts.py b/plugin/plugins/game_agent_minecraft/prompts.py
+index bcbdb55..7c81d9b 100644
+--- a/plugin/plugins/game_agent_minecraft/prompts.py
++++ b/plugin/plugins/game_agent_minecraft/prompts.py
+@@ -796,3 +796,18 @@ PROMPTS: Dict[str, Dict[str, str]] = {
+ # Periodic idle context and active idle nudges must agree on the meaning of
+ # ongoing user authorization. Keep all supported locales on the same contract.
+ PROMPTS["SYSTEM_PROMPT_IDLE_BODY"] = PROMPTS["KEEP_GOING_BODY"].copy()
++
++PROMPTS.update({
++    "AUTONOMOUS_DECISION_BODY": {
++        "zh": "无人值守游玩已开启。若主人最新明确要求停止或暂停，遵守它；否则现在是行动决策回合：根据下面的真实背包和最近结果，直接调用 minecraft_task 执行一个短而可行的新目标。不要用‘本喵接着挖’等预告代替调用，也不用播报计划。缺少前置物品就先补前置条件，失败后改变方法；派发确认不是完成证据。",
++        "en": "Unattended play is enabled. Obey any latest explicit stop or pause from the user; otherwise this is an action decision: use the inventory and last outcome below to CALL minecraft_task with one short feasible new goal. Do not substitute spoken promises for a call or narrate your plan. Obtain missing prerequisites first and change methods after failure. Dispatch acknowledgement is not completion evidence.",
++    },
++    "LAST_TASK_OUTCOME": {
++        "zh": "最近一次实际执行结果（历史事实，不是正在执行）：目标={task}；状态={status}；反馈={result}",
++        "en": "Last actual action outcome (past fact, not ongoing work): goal={task}; status={status}; feedback={result}",
++    },
++    "IDLE_DECISION_RETRY": {
++        "zh": "上次决策提醒之后没有新的动作被接受，身体仍然空闲。之前的口头预告没有执行；不要重复它。检查失败原因和前置条件，直接调用可行的新动作；若最新指令要求暂停，就保持安静。",
++        "en": "No new action was accepted after the last decision cue; the body is still idle. The previous spoken promise was not executed: do not repeat it. Check failure causes and prerequisites, then call a feasible new action directly; stay quiet if the latest instruction requested a pause.",
++    },
++})
+diff --git a/plugin/plugins/game_agent_minecraft/service.py b/plugin/plugins/game_agent_minecraft/service.py
+index f1839f5..d92e82f 100644
+--- a/plugin/plugins/game_agent_minecraft/service.py
++++ b/plugin/plugins/game_agent_minecraft/service.py
+@@ -344,6 +344,9 @@ class GameAgentService:
+         self._last_in_progress_nudge_at: float = 0.0
+         self._last_keep_going_nudge_at: float = 0.0
+         self._last_task_finished_at: float = 0.0
++        self._last_task_outcome: Optional[Dict[str, Any]] = None
++        self._idle_decision_key = None
++        self._idle_decision_attempts = 0
+ 
+         # Pacing state for inline log push (separate from autonomous nudge).
+         # mc-agent emits a ``log`` frame for each chat-loop turn the in-game
+@@ -959,6 +962,8 @@ class GameAgentService:
+             )
+             self._pending = my_pending
+             self._task_finished = False
++            self._idle_decision_key = None
++            self._idle_decision_attempts = 0
+             self._log_info(
+                 "claim accepted (overwrite={}): {!r}", overwrite, task[:80],
+             )
+@@ -1838,6 +1843,11 @@ class GameAgentService:
+                 )
+                 return
+ 
++            if bucket in ("current", "fifo"):
++                self._last_task_outcome = {
++                    "task": pending.task_text, "status": status, "text": text,
++                }
++
+             if bucket == "current":
+                 self._pending = None
+                 if text:
+@@ -2007,13 +2017,30 @@ class GameAgentService:
+                 ):
+                     since_finish = now - self._last_task_finished_at
+                     since_last_keep = now - self._last_keep_going_nudge_at
++                    # A missed action is not new game progress. Retry the
++                    # decision with backoff instead of making the same idle
++                    # cue speak every ten seconds. New facts reset the delay;
++                    # the first action after a completion still starts promptly.
++                    decision_key = (
++                        self._last_task_finished_at,
++                        tuple(sorted(self._last_inventory.items())),
++                        tuple(sorted(self._last_vitals.items())),
++                    )
++                    if decision_key != self._idle_decision_key:
++                        self._idle_decision_key = decision_key
++                        self._idle_decision_attempts = 0
++                    retry_cooldown = min(_KEEP_GOING_COOLDOWN, self._system_prompt_interval)
++                    if self._idle_decision_attempts:
++                        retry_cooldown = max(retry_cooldown, min(
++                            120.0, 30.0 * 2 ** min(self._idle_decision_attempts - 1, 2)
++                        ))
+                     # No upper bound (see _KEEP_GOING_MAX_WINDOW removal note):
+                     # idle → keep nudging forever, paced by the cooldown.
+                     if (
+                         # Respect a faster configured idle interval, including
+                         # live reloads; pending tasks use their separate branch.
+                         since_finish >= min(_KEEP_GOING_AFTER, self._system_prompt_interval)
+-                        and since_last_keep >= min(_KEEP_GOING_COOLDOWN, self._system_prompt_interval)
++                        and since_last_keep >= retry_cooldown
+                     ):
+                         self._log_debug(
+                             "firing keep_going nudge (since_finish={:.1f}s, "
+@@ -2021,6 +2048,7 @@ class GameAgentService:
+                             since_finish, since_last_keep,
+                         )
+                         await self._fire_keep_going_nudge()
++                        self._idle_decision_attempts += 1
+                         self._last_keep_going_nudge_at = now
+                         continue
+ 
+@@ -2051,13 +2079,10 @@ class GameAgentService:
+                     return
+ 
+     async def _fire_in_progress_nudge(self) -> None:
+-        """Push a "what are you feeling right now?" prompt + latest
+-        screenshot. Goal: the dialog LLM keeps {MASTER_NAME} engaged with
+-        live narration during long actions instead of going silent.
++        """Refresh running-task context without requesting spoken narration.
+ 
+-        Avoid repetition guidance is in the prompt itself — the dialog
+-        LLM is told to use a fresh angle each time, not parrot the same
+-        line it already said.
++        Elapsed time alone is not a new event. Real outcomes, chat and danger
++        have their own active cues; this timer must not make her repeat a plan.
+         """
+         # Pull at most one screenshot so push is cheap; keep cache for
+         # the general nudge to potentially burst more.
+@@ -2089,7 +2114,7 @@ class GameAgentService:
+             self._push_message(
+                 source="game_agent_minecraft",
+                 visibility=[],
+-                ai_behavior="respond",
++                ai_behavior="read",
+                 parts=parts,
+                 priority=4,
+                 coalesce_key="mc_in_progress",
+@@ -2110,12 +2135,26 @@ class GameAgentService:
+         it can ground its next decision.
+         """
+         sections: list[str] = []
++        if self._unattended.enabled:
++            sections.append(prompts.t("AUTONOMOUS_DECISION_BODY", lang=self._lang))
+         vitals = self._vitals_section()
+         if vitals:
+             sections.append(vitals)
+-        inv_line = self._inventory_section_if_changed(top_n=20)
+-        if inv_line:
+-            sections.append(inv_line)
++        # Each decision must be self-contained: proactive turns can be
++        # coalesced or their prior narration removed from dialog history.
++        # Inventory dedup is appropriate for passive updates, not planning.
++        if self._last_inventory_at:
++            items = "、".join(f"{name}×{count}" for name, count in sorted(self._last_inventory.items()))
++            sections.append(prompts.t("BAG_LINE", lang=self._lang, items=items)
++                            if items else prompts.t("BAG_EMPTY_LINE", lang=self._lang))
++        if self._last_task_outcome:
++            outcome = self._last_task_outcome
++            sections.append(prompts.t(
++                "LAST_TASK_OUTCOME", lang=self._lang, task=outcome['task'][:180],
++                status=outcome['status'], result=outcome['text'][:800],
++            ))
++        if self._idle_decision_attempts:
++            sections.append(prompts.t("IDLE_DECISION_RETRY", lang=self._lang))
+         sections.append(prompts.t("KEEP_GOING_BODY", lang=self._lang))
+         body_text = prompts.t("CUE_PREFIX_IDLE", lang=self._lang) + "\n" + "\n".join(sections)
+         parts: list[Dict[str, Any]] = [{"type": "text", "text": body_text}]
+@@ -2238,7 +2277,8 @@ class GameAgentService:
+             # ai_behavior="read" injects it into the model's context without
+             # forcing an AI turn, so it can't make her narrate non-stop or
+             # compete with real alert/completion cues in the pacing manager.
+-            # The specific nudges (in_progress / keep_going) remain "respond".
++            # Running-task timers are passive too; only idle decisions,
++            # real completion, danger and chat events request a response.
+             #
+             # ``coalesce_key`` matters as much as the pacing here. This burst is
+             # a SNAPSHOT of current state, so only the newest one is worth
+@@ -2276,6 +2316,8 @@ class GameAgentService:
+             "viewer": self._client.viewer_info if connected and self._client else None,
+             "task_finished": self._task_finished,
+             "pending_task": self._pending.task_text if self._pending else None,
++            "last_task_outcome": self._last_task_outcome,
++            "idle_decision_attempts": self._idle_decision_attempts,
+             "log_cache_size": len(self._log_cache),
+             "screenshot_cache_size": len(self._screenshot_cache),
+         }
+diff --git a/plugin/plugins/game_agent_minecraft/test_idle_decisions.py b/plugin/plugins/game_agent_minecraft/test_idle_decisions.py
+new file mode 100644
+index 0000000..06d76f0
+--- /dev/null
++++ b/plugin/plugins/game_agent_minecraft/test_idle_decisions.py
+@@ -0,0 +1,87 @@
++import asyncio
++import unittest
++from types import SimpleNamespace
++from unittest.mock import patch
++
++from plugin.plugins.game_agent_minecraft.service import GameAgentService
++
++
++class IdleDecisionTests(unittest.IsolatedAsyncioTestCase):
++    def service(self):
++        calls = []
++        service = GameAgentService(logger=None, push_message_fn=lambda **kw: calls.append(kw))
++        service.set_lang('zh')
++        service.configure({'unattended_enabled': True, 'unattended_character': 'YUI',
++                           'system_prompt_interval_seconds': 10.0})
++        return service, calls
++
++    async def test_each_idle_decision_has_inventory_and_last_failure(self):
++        service, calls = self.service()
++        pending = await service.try_claim_pending('制作熔炉', overwrite=False)
++        await service._on_task_finished({
++            'type': 'task_finished', 'task_id': pending.task_id, 'status': 'failed',
++            'text': 'Crafting furnace needs a reachable crafting table.',
++            'inventory': {'oak_planks': 21, 'cobblestone': 461},
++        })
++        await service._fire_keep_going_nudge()
++        await service._fire_keep_going_nudge()
++        for call in calls:
++            text = call['parts'][-1]['text']
++            self.assertIn('oak_planks×21', text)
++            self.assertIn('reachable crafting table', text)
++            self.assertIn('制作熔炉', text)
++
++    async def test_timer_alone_does_not_request_spoken_progress(self):
++        service, calls = self.service()
++        service._pending = SimpleNamespace(task_text='挖竖井找铁', start_time=1000.0)
++        await service._fire_in_progress_nudge()
++        self.assertFalse(any(c['ai_behavior'] == 'respond' for c in calls))
++
++    async def test_unchanged_idle_does_not_wake_dialogue_every_ten_seconds(self):
++        service, calls = self.service()
++        clock = [1000.0]
++        service._last_task_finished_at = clock[0]
++
++        async def step(_):
++            clock[0] += 0.5
++            if clock[0] > 1025:
++                raise asyncio.CancelledError
++
++        module = 'plugin.plugins.game_agent_minecraft.service'
++        with patch(module + '.asyncio.sleep', step), patch(module + '.time.time', lambda: clock[0]):
++            await service._system_prompt_loop()
++        self.assertEqual(len([c for c in calls if c['ai_behavior'] == 'respond']), 1)
++
++    async def test_new_inventory_resets_retry_backoff(self):
++        service, calls = self.service()
++        clock = [1000.0]
++        service._last_task_finished_at = clock[0]
++
++        async def step(_):
++            clock[0] += 0.5
++            if clock[0] == 1012:
++                service._last_inventory = {'iron_ingot': 3}
++                service._last_inventory_at = clock[0]
++            if clock[0] > 1025:
++                raise asyncio.CancelledError
++
++        module = 'plugin.plugins.game_agent_minecraft.service'
++        with patch(module + '.asyncio.sleep', step), patch(module + '.time.time', lambda: clock[0]):
++            await service._system_prompt_loop()
++        self.assertEqual(len([c for c in calls if c['ai_behavior'] == 'respond']), 2)
++        self.assertIn('iron_ingot×3', calls[-1]['parts'][-1]['text'])
++
++    async def test_foreign_completion_does_not_replace_the_last_accepted_outcome(self):
++        service, calls = self.service()
++        pending = await service.try_claim_pending('制作熔炉', overwrite=False)
++        await service._on_task_finished({'task_id': pending.task_id, 'status': 'failed',
++                                         'text': 'No reachable crafting table.'})
++        await service._on_task_finished({'task_id': 'old-foreign-task', 'status': 'ok',
++                                         'text': 'Iron pickaxe ready.'})
++        await service._fire_keep_going_nudge()
++        self.assertIn('No reachable crafting table', calls[-1]['parts'][-1]['text'])
++        self.assertNotIn('Iron pickaxe ready', calls[-1]['parts'][-1]['text'])
++
++
++if __name__ == '__main__':
++    unittest.main()
+diff --git a/plugin/plugins/game_agent_minecraft/test_nudge_timing.py b/plugin/plugins/game_agent_minecraft/test_nudge_timing.py
+index 16714dd..aff6597 100644
+--- a/plugin/plugins/game_agent_minecraft/test_nudge_timing.py
++++ b/plugin/plugins/game_agent_minecraft/test_nudge_timing.py
+@@ -30,10 +30,10 @@ class NudgeTimingTests(unittest.IsolatedAsyncioTestCase):
+         return [(at, msg['coalesce_key']) for at, msg in calls]
+ 
+     async def test_configured_ten_second_idle_interval_is_honored(self):
+-        self.assertEqual(await self.observe(10.0), [(10.0, 'mc_keep_going'), (20.0, 'mc_keep_going')])
++        self.assertEqual(await self.observe(10.0), [(10.0, 'mc_keep_going')])
+ 
+     async def test_interval_reload_takes_effect_without_restarting_loop(self):
+-        self.assertEqual(await self.observe(45.0, reload_at=12.0), [(12.0, 'mc_keep_going'), (22.0, 'mc_keep_going')])
++        self.assertEqual(await self.observe(45.0, reload_at=12.0), [(12.0, 'mc_keep_going')])
+ 
+     async def test_shorter_idle_interval_does_not_interrupt_pending_task(self):
+         self.assertEqual(await self.observe(10.0, busy=True), [])

@@ -1,0 +1,92 @@
+From 478914573a19abc9f495e3f48fc928c2affee2ad Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Fri, 9 Oct 2026 10:32:52 +0800
+Subject: [PATCH 25/29] fix(minecraft): respect live body activity after task
+ handoff
+
+---
+ .../docs/2026-10-09-query-loop.md             | 20 +++++++++++++++++
+ .../plugins/game_agent_minecraft/service.py   | 11 +++++++---
+ .../game_agent_minecraft/test_query_loop.py   | 22 +++++++++++++++++++
+ 3 files changed, 50 insertions(+), 3 deletions(-)
+
+diff --git a/plugin/plugins/game_agent_minecraft/docs/2026-10-09-query-loop.md b/plugin/plugins/game_agent_minecraft/docs/2026-10-09-query-loop.md
+index befca1d..243fd81 100644
+--- a/plugin/plugins/game_agent_minecraft/docs/2026-10-09-query-loop.md
++++ b/plugin/plugins/game_agent_minecraft/docs/2026-10-09-query-loop.md
+@@ -23,3 +23,23 @@ Verification artifacts start with `neko-stuck-` / `query-loop-` under `D:/neko-m
+ - Local Qwen replay with simulated game tools proposed a short lapis-mining body task in round one. No live game action or chat was sent by the replay. Artifact: `query-loop-replay-patched-20261009.json`.
+ - The short baseline replay also proposed a body task in round one; this replay does not reproduce the production conversation's repeated query history, and is only a compatibility check. The actual failure evidence is the live 20-second capture (`neko-stuck-before-20261009.json`), not a claimed before/after model benchmark.
+ - The fix is plugin-scoped: core's three-round limit is unchanged. Live autonomous dispatch and measured movement/inventory progress remain to be checked before claiming recovery.
++
++## Second cause exposed after reload
++
++The first 55-second observation had one genuine Neko task claim and no tool
++caps. However, that task (and the next one) failed the native body's two-second
++handoff: an independently scheduled kernel skill was still running. Its
++21.25-block movement was **not** evidence that the newly claimed task executed.
++The initial passive verifier used an insufficient claim-plus-movement rule;
++its verdict is superseded by the task's explicit interrupted receipt.
++
++The native kernel must yield autonomy to Neko before connection and between
++missions, as native system prompts already do. Plugin-side idle detection must
++also respect fresh `activity.action`, `activity.skill`, and `activity.digging`
++telemetry after a rejected handoff clears the natural-language busy latch.
++Stale telemetry must not permanently block future nudges. Two new plugin tests
++reproduce these missed busy states before the change; native tests reproduce
++the independent kernel dispatch and startup ownership race.
++
++Native regression suite: 223 tests passed. Plugin suite: 74 tests passed.
++Deployment and genuine task execution are still pending verification.
+diff --git a/plugin/plugins/game_agent_minecraft/service.py b/plugin/plugins/game_agent_minecraft/service.py
+index bc997e5..24800d2 100644
+--- a/plugin/plugins/game_agent_minecraft/service.py
++++ b/plugin/plugins/game_agent_minecraft/service.py
+@@ -1056,9 +1056,14 @@ class GameAgentService:
+         return prompts.t('QUERY_ACTION_HINT', lang=self._lang)
+ 
+     def _mc_agent_busy(self) -> bool:
+-        """True when the mc-agent recently reported it's actively executing.
+-        Fresh within ``_agent_busy_ttl`` — a stale flag (no bot_status_nl for a
+-        while) is treated as not-busy so the loop can resume nudging."""
++        """Use fresh body telemetry as well as the natural-language busy latch.
++        A rejected new task can clear that latch while an old skill is still
++        unwinding. Neither source may keep nudges blocked after it goes stale.
++        """
++        info = self._game_observations
++        activity = info.state.get('activity') if info.fresh else None
++        if isinstance(activity, dict) and any(activity.get(key) for key in ('action', 'skill', 'digging')):
++            return True
+         return bool(self._agent_busy) and (time.time() - self._agent_busy_at) < self._agent_busy_ttl
+ 
+     def _mark_agent_idle(self) -> None:
+diff --git a/plugin/plugins/game_agent_minecraft/test_query_loop.py b/plugin/plugins/game_agent_minecraft/test_query_loop.py
+index 970fbdc..d94f30b 100644
+--- a/plugin/plugins/game_agent_minecraft/test_query_loop.py
++++ b/plugin/plugins/game_agent_minecraft/test_query_loop.py
+@@ -81,3 +81,25 @@ class QueryLoopTests(unittest.IsolatedAsyncioTestCase):
+         info.ingest_state(data)
+         summary = json.loads(info.context().split('\n', 1)[1])
+         self.assertFalse(summary['protection']['automaticDigChecks'])
++
++    async def test_fresh_body_activity_prevents_idle_dispatch_after_a_rejected_handoff(self):
++        service, calls = self.service()
++        data = frame()
++        data['state']['activity'] = {'skill': 'surfaceUp', 'digging': {'name': 'stone'}}
++        await service._on_game_state(data)
++        service._mark_agent_idle()  # the rejected new task must not hide the old live skill
++        self.assertTrue(service._mc_agent_busy())
++        self.assertEqual(service.server_action_hint(), '')
++        next_frame = frame(seq=2)
++        next_frame['state']['activity'] = {'skill': None, 'action': None, 'digging': None}
++        await service._on_game_state(next_frame)
++        self.assertFalse(service._mc_agent_busy())
++
++    async def test_stale_body_activity_does_not_latch_busy_forever(self):
++        service, calls = self.service()
++        data = frame()
++        data['state']['activity'] = {'action': 'mode:mobility'}
++        await service._on_game_state(data)
++        self.assertTrue(service._mc_agent_busy())
++        service._game_observations.observed_at -= 60
++        self.assertFalse(service._mc_agent_busy())

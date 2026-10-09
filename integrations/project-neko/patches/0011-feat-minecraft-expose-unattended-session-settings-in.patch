@@ -1,0 +1,42 @@
+From 3e04c921bd6ae6d7c6a51b0eb03f0ce962e10047 Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Thu, 8 Oct 2026 22:14:48 +0800
+Subject: [PATCH 11/29] feat(minecraft): expose unattended session settings in
+ plugin config
+
+---
+ .../game_agent_minecraft/config.schema.json   | 21 +++++++++++++++++++
+ 1 file changed, 21 insertions(+)
+
+diff --git a/plugin/plugins/game_agent_minecraft/config.schema.json b/plugin/plugins/game_agent_minecraft/config.schema.json
+index ac8d3dd..1673626 100644
+--- a/plugin/plugins/game_agent_minecraft/config.schema.json
++++ b/plugin/plugins/game_agent_minecraft/config.schema.json
+@@ -106,6 +106,27 @@
+         "pt": "Configure conexão ao agente local, espera de tarefas e envio de capturas."
+       },
+       "properties": {
++        "unattended_enabled": {
++          "type": "boolean",
++          "title": "Keep a background text session",
++          "description": "Use the existing main runtime when its web page is disconnected. Continuous gameplay still requires user authorization.",
++          "x-title-i18n": {"zh-CN": "无人值守后台会话", "zh-TW": "無人值守背景會話"},
++          "default": false
++        },
++        "unattended_character": {
++          "type": "string",
++          "title": "Existing character name",
++          "description": "Required when unattended mode is enabled; use an existing main character, for example YUI.",
++          "x-title-i18n": {"zh-CN": "后台会话角色名", "zh-TW": "背景會話角色名稱"},
++          "default": ""
++        },
++        "unattended_main_url": {
++          "type": "string",
++          "title": "Local main runtime URL",
++          "description": "Loopback HTTP origin only, without credentials or a path.",
++          "x-title-i18n": {"zh-CN": "本机 Neko 本体地址", "zh-TW": "本機 Neko 本體位址"},
++          "default": "http://127.0.0.1:48911"
++        },
+         "ws_url": {
+           "type": "string",
+           "title": "Agent WebSocket URL",
