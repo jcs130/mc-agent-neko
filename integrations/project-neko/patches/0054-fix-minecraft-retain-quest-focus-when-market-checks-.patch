@@ -1,0 +1,139 @@
+From d6758ecb38d65cfd1bb60c5816ad6d24e93d6b73 Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Fri, 9 Oct 2026 23:44:03 +0800
+Subject: [PATCH] fix(minecraft): retain quest focus when market checks replace
+ details
+
+---
+ .../docs/2026-10-09-server-play-context.md    |  4 ++-
+ .../server_play_context.py                    | 36 ++++++++++++++-----
+ .../test_server_play_context.py               | 21 +++++++++++
+ 3 files changed, 51 insertions(+), 10 deletions(-)
+
+diff --git a/plugin/plugins/game_agent_minecraft/docs/2026-10-09-server-play-context.md b/plugin/plugins/game_agent_minecraft/docs/2026-10-09-server-play-context.md
+index 7456b6e..bd7b93e 100644
+--- a/plugin/plugins/game_agent_minecraft/docs/2026-10-09-server-play-context.md
++++ b/plugin/plugins/game_agent_minecraft/docs/2026-10-09-server-play-context.md
+@@ -12,6 +12,7 @@
+ - `serverPlay` 从本次连接收到的服务器欢迎消息及当前背包书页提取最多三个类别的入口：居民事务、公会/委托、试炼。保留实际命令或书的槽位、页码；没有收到试炼命令就只给书页位置，不编造命令。
+ - 入口仅是参考；不提取书里的旧血量、旧注册状态或完成状态。当前资格、接取、完成、领奖分别需要真实回执。
+ - `serverPlay.focus` 携带身体缓存中最近的 `MC_MARKET_DETAIL`：任务 ID、服务器返回的阶段、当前阶段目标和回执年龄。插件重建后仍能恢复所选玩法，不依赖猫娘口头记忆。详情仍是参考，不推定已接单或已完成；先核对当前进度，再继续该委托，探矿反馈不代表切换目标。
++- 同一市场频道会被后续 `MC_MARKET_CHECK` 覆盖，因此也读取验收回执的任务、阶段、实际计数、ready 和服务器给出的下一条查询命令。`ready=false`、progress=0 会原样保留，不能把验收失败理解成玩法目标消失或已经完成。
+ - 安全、脱困和目标需要的基本装备优先；满足后继续未完成的服务器玩法目标，减少无止境囤材料。服务器操作和身体动作都是可行的下一步，不强制在服务器操作后再派采矿。
+ - 窄预算先删空字段、未知的展示字段及重复元信息，再使用极端输入兜底。保留省略提示，不能把缺少的材料、权限或威胁信息理解为不存在。
+ - 不增加心跳，不从解析器自动发送游戏命令；忙碌、停止、暂停和社交回合的现有调度边界继续生效。
+@@ -19,13 +20,14 @@
+ 
+ ## 验证范围
+ 
+-使用三份真实状态离线重放，不连接服务器、不派诊断任务或聊天。没有所选委托时，700/400-token 摘要保留事务板、公会入口和试炼书页位置；已有详情时，窄预算优先保留委托 ID、阶段、目标及事务板，其他入口可以省略。整个摘要遵守预算：
++使用四份真实状态离线重放，不连接服务器、不派诊断任务或聊天。没有所选委托时，700/400-token 摘要保留事务板、公会入口和试炼书页位置；已有详情或验收结果时，窄预算优先保留委托 ID、阶段、目标及事务板，其他入口可以省略。整个摘要遵守预算：
+ 
+ | 捕获状态 | 1600 预算 | 700 预算 | 400 预算 | 完整空闲提示 |
+ | --- | ---: | ---: | ---: | ---: |
+ | 地面、铁镐已制作 | 1285 | 682 | 383 | 858 |
+ | 后续地下、工具缺失 | 1181 | 690 | 373 | 894 |
+ | 已选委托、正在交易 | 1473 | 688 | 364 | 身体忙碌，未发新规划 |
++| 验收仍缺交易、已空闲 | 1357 | 652 | 396 | 882 |
+ 
+ 计数为本地 tokenizer 在这两份样本上的结果，不是全部模型请求长度或延迟。回归另覆盖技能说明挤掉后续指引、书页历史状态、窄预算普通背包退化、玩家文字来源、观察后的服务器操作资格、忙碌保护和救援优先级。
+ 
+diff --git a/plugin/plugins/game_agent_minecraft/server_play_context.py b/plugin/plugins/game_agent_minecraft/server_play_context.py
+index c103685..f53c414 100644
+--- a/plugin/plugins/game_agent_minecraft/server_play_context.py
++++ b/plugin/plugins/game_agent_minecraft/server_play_context.py
+@@ -56,21 +56,23 @@ def received_play_routes(welcome, inventory, server=None, now=None):
+                     type(item.get('slot')) is not int):
+                 continue
+             add(str(page.get('text') or ''), f'inventory slot={item["slot"]} page={page["page"]}')
+-    # The body keeps the last server detail packet even if this plugin is
++    # The body keeps the latest server market packet even if this plugin is
+     # recreated. Carry the selected quest, not just the general entry points.
+     # A detail response alone does NOT establish acceptance/current completion.
+     packet = ((server or {}).get('channels') or {}).get('mcagent:market') or {}
+     detail = packet.get('value') if isinstance(packet, dict) else None
+     focus = None
+-    if (isinstance(detail, dict) and detail.get('type') == 'MC_MARKET_DETAIL' and
+-            isinstance(detail.get('id'), str) and 0 < len(detail['id']) <= 64 and
+-            not any(ord(char) < 32 for char in detail['id'])):
+-        focus = {'id': detail['id'][:64], 'source': 'mcagent:market'}
++    kind = detail.get('type') if isinstance(detail, dict) else None
++    ident = detail.get('id' if kind == 'MC_MARKET_DETAIL' else 'task') if isinstance(detail, dict) else None
++    if (kind in ('MC_MARKET_DETAIL', 'MC_MARKET_CHECK') and isinstance(ident, str) and
++            0 < len(ident) <= 64 and not any(ord(char) < 32 for char in ident)):
++        focus = {'id': ident, 'source': 'mcagent:market'}
+         if isinstance(detail.get('title'), str):
+             focus['title'] = detail['title'][:64]
+         for key in ('currentStep', 'stepCount'):
+-            if type(detail.get(key)) is int and 1 <= detail[key] <= 1000:
+-                focus[key] = detail[key]
++            child = detail.get('step' if kind == 'MC_MARKET_CHECK' and key == 'currentStep' else key)
++            if type(child) is int and 1 <= child <= 1000:
++                focus[key] = child
+         steps = detail.get('steps')
+         for step in steps[:64] if isinstance(steps, list) else []:
+             if (not isinstance(step, dict) or type(step.get('index')) is not int or
+@@ -80,6 +82,20 @@ def received_play_routes(welcome, inventory, server=None, now=None):
+                              for key in ('index', 'title', 'description', 'goal', 'target', 'site')
+                              if isinstance((child := step.get(key)), str) or type(child) is int}
+             break
++        if kind == 'MC_MARKET_CHECK':
++            evidence = detail.get('evidence')
++            evidence = evidence if isinstance(evidence, dict) else {}
++            focus['step'] = {key: child[:112] if isinstance(child, str) else child
++                             for key in ('goal', 'target')
++                             if isinstance((child := evidence.get(key)), str) or type(child) is int}
++            if type(detail.get('progress')) is int:
++                focus['step']['progress'] = detail['progress']
++            if type(detail.get('ready')) is bool:
++                focus['ready'] = detail['ready']
++            commands = detail.get('nextCommands')
++            if isinstance(commands, list):
++                focus['nextCommands'] = [cmd for cmd in commands if isinstance(cmd, str) and
++                    cmd.startswith('/mycli ') and len(cmd) <= 200 and not any(ord(c) < 32 for c in cmd)][:2]
+         stamp = packet.get('observedAt')
+         if (type(stamp) in (int, float) and math.isfinite(stamp) and
+                 type(now) in (int, float) and math.isfinite(now)):
+@@ -104,6 +120,8 @@ def shorten_play_routes(play):
+                 play['routes'][topic] = f'inventory:{page[1]}:{page[2]}'
+     if play.get('focus'):
+         focus = play['focus']
+-        play['focus'] = {key: focus[key] for key in ('id', 'currentStep', 'ageSeconds') if key in focus}
++        play['focus'] = {key: focus[key] for key in ('id', 'currentStep', 'ageSeconds', 'ready') if key in focus}
+         if focus.get('step'):
+-            play['focus']['step'] = {key: focus['step'][key] for key in ('goal', 'target') if key in focus['step']}
++            play['focus']['step'] = {key: focus['step'][key] for key in ('goal', 'target', 'progress') if key in focus['step']}
++        if focus.get('nextCommands'):
++            play['focus']['nextCommands'] = focus['nextCommands'][:1]
+diff --git a/plugin/plugins/game_agent_minecraft/test_server_play_context.py b/plugin/plugins/game_agent_minecraft/test_server_play_context.py
+index 2cd3e3f..b4712c9 100644
+--- a/plugin/plugins/game_agent_minecraft/test_server_play_context.py
++++ b/plugin/plugins/game_agent_minecraft/test_server_play_context.py
+@@ -131,6 +131,27 @@ class ServerPlayContextTests(unittest.TestCase):
+             'type': 'MC_SPELL_ERROR', 'id': 'fake_quest', 'currentStep': 9}}
+         self.assertNotIn('focus', info.focused_view()['serverPlay'])
+ 
++    def test_market_check_replaces_detail_without_losing_the_selected_quest(self):
++        data = gameplay_frame()
++        data['state']['server']['channels']['mcagent:market'] = {
++            'observedAt': data['observedAt'], 'value': {
++                'type': 'MC_MARKET_CHECK', 'task': 'tm_first_spell', 'step': 2,
++                'ready': False, 'progress': 0, 'target': 1,
++                'evidence': {'goal': 'trade', 'observedProgress': 0, 'target': 1},
++                'nextCommands': ['/mycli guild market tm_first_spell', '/mycli guild status']}}
++        info = GameObservations()
++        info.ingest_state(data)
++        for budget in (700, 400):
++            text = info.focused_context(max_tokens=budget)
++            focus = json.loads(text.split('\n', 1)[1])['serverPlay']['focus']
++            self.assertEqual(focus['id'], 'tm_first_spell')
++            self.assertEqual(focus['currentStep'], 2)
++            self.assertFalse(focus['ready'])
++            self.assertEqual(focus['step']['goal'], 'trade')
++            self.assertEqual(focus['step']['progress'], 0)
++            self.assertIn('/mycli guild market tm_first_spell', str(focus))
++            self.assertLessEqual(count_tokens(text), budget)
++
+     def test_player_welcome_text_cannot_supply_server_command_routes(self):
+         data = welcome_frame(texts=['居民事务板 /mycli world erase'])
+         data['state']['server']['welcome']['messages'][0]['source'] = 'player'

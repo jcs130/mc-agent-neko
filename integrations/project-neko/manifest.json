@@ -1,9 +1,9 @@
 {
   "upstreamRepository": "https://github.com/Project-N-E-K-O/N.E.K.O",
   "baseCommit": "fb2a2e731a8c954478d08678b0c8cf40e8145a54",
-  "sourceCommit": "822fac7b5468a038fa1e72580e866e62112ee3ea",
+  "sourceCommit": "d6758ecb38d65cfd1bb60c5816ad6d24e93d6b73",
   "scope": "plugin/plugins/game_agent_minecraft",
-  "resultPluginTree": "76153519cb88b766ed9425b3ee5e8b177c6c92bc",
+  "resultPluginTree": "d6611bcbba488136c4536709339cecd501645bb6",
   "patches": [
     {
       "file": "0001-chore-configure-text-only-local-Qwen-Minecraft-trial.patch",
@@ -212,12 +212,20 @@
     {
       "file": "0052-fix-minecraft-distinguish-rejected-casts-from-gamepl.patch",
       "sha256": "16109b60b8c9acbbde30c01f6c9d21bea28db72cf5d688ccaae5b653f58d9719"
+    },
+    {
+      "file": "0053-fix-minecraft-carry-selected-quest-steps-across-plug.patch",
+      "sha256": "d74f358e17673954ecf191449ccb37a8759295d69463774bbbfe7f6b8d0d04d2"
+    },
+    {
+      "file": "0054-fix-minecraft-retain-quest-focus-when-market-checks-.patch",
+      "sha256": "e82cdab4f6f923350dcda9a604e8aae433f24a179558371cdf0c6831e0436913"
     }
   ],
   "verification": {
     "appliedInOrderToBase": true,
     "resultPluginTreeMatchesSource": true,
-    "pluginTestsPassed": 164,
+    "pluginTestsPassed": 167,
     "hostCallbackTestsPassed": 195,
     "hostFileBlobsMatchSource": true,
     "nativeSourceTestsPassed": 450,
@@ -321,13 +329,14 @@
     "longRunReliabilityProven": false
   },
   "serverPlayContextVerification": {
-    "offlineCapturedStateReplays": 2,
+    "offlineCapturedStateReplays": 4,
     "boardGuildTrialRoutesRetainedAt700And400": true,
     "completeIdleCueTokens": [
-      835,
-      895
+      858,
+      894,
+      882
     ],
-    "pluginTestsPassed": 164,
+    "pluginTestsPassed": 167,
     "injectedLiveGameActions": false,
     "liveObservationHasAllRoutes": true,
     "liveIdleCueTokens": [
@@ -346,6 +355,17 @@
     "firstStageObservedBeforeCastCorrectionReload": true,
     "finalReloadHadPendingTask": false,
     "finalReloadBodyBusy": false,
-    "longRunReliabilityProven": false
+    "longRunReliabilityProven": false,
+    "entryRouteReplayCount": 2,
+    "selectedQuestReplayCount": 2,
+    "selectedQuestRetainedAt700And400": true,
+    "busyCaptureTriggeredNoIdlePrompt": true,
+    "marketCheckFocusRetained": true,
+    "liveFocusSurvivedReload": true,
+    "liveFocusedCueTokens": [
+      847,
+      859
+    ],
+    "mainModelTurnContainedSelectedQuest": true
   }
 }

@@ -51,7 +51,7 @@ python -m unittest discover -s plugin/plugins/game_agent_minecraft -t .
 git rev-parse HEAD:plugin/plugins/game_agent_minecraft
 ```
 
-The exported plugin passed 164 tests. The manifest records the exact reproduced
+The exported plugin passed 167 tests. The manifest records the exact reproduced
 plugin tree and host-file blobs. The host callback/media regression suite passed
 195 tests, including six new Minecraft budget tests. The latest native source
 suite passed 450 tests; this contribution branch's full `node --test` discovery
@@ -175,7 +175,7 @@ require an unrelated physical task afterwards. Acceptance, completion and reward
 each require actual server receipts.
 
 Two captured-state replays retained all three entry points at both 700 and 400
-tokens. Complete idle cues were 835 and 895 tokens; no diagnostic game commands
+tokens. Complete idle cues were 858 and 894 tokens; no diagnostic game commands
 were sent. See the exported plugin's `docs/2026-10-09-server-play-context.md` for
 the reproduced failure and regression scope. These checks establish information
 delivery, not successful quest acceptance or trial completion.
@@ -193,8 +193,25 @@ chat or skill commands were injected.
 The final follow-up distinguishes skill queries from actual cast syntax and
 marks structured server errors as rejection, with the server's correction
 candidates. Namespaced telemetry identifiers are not assumed to be cast IDs.
-That guidance was added after the first-stage evidence above. Both patches are
+That guidance was added after the first-stage evidence above. These changes are
 deployed; the final reload occurred with no pending task and no busy body.
+
+The selected quest detail now survives plugin recreation through the body's
+received `mcagent:market` state. `serverPlay.focus` carries the quest ID, reported
+stage, next goal and receipt age; it remains a reference to verify, never an
+inferred acceptance or completion. At tight budgets this focus takes priority
+over unrelated activity entrances. This addresses an observed switch back to
+coal after a reload and an incidental prospecting reply. A third captured-state
+replay retained `tm_first_spell`, stage 2 and goal `trade` at 700 and 400 tokens;
+the busy body did not trigger another idle decision. The source suite passed
+167 tests. Long-run goal adherence and whole-contract completion remain unproven.
+
+The market channel can replace a detail packet with `MC_MARKET_CHECK`. That
+schema is also projected, preserving its task/stage, actual progress, readiness
+and received correction commands. A fourth real-state replay retained stage 2,
+goal `trade`, progress 0, `ready=false` and the exact detail query at both budgets;
+its complete idle cue was 882 tokens. Final live observation after reload
+confirmed the same quest focus, including the unfulfilled trade requirement.
 At that context-budget delivery, the plugin suite passed 155 tests, the native
 source passed 426, and the contribution branch passed 432. Current code/vision
 verification is recorded above and in the linked capability report below.

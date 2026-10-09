@@ -1,0 +1,220 @@
+From a5d6d2e0602c12102d69d61dfc49a50ef2b9defa Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Fri, 9 Oct 2026 23:38:17 +0800
+Subject: [PATCH] fix(minecraft): carry selected quest steps across plugin
+ reloads
+
+---
+ .../game_agent_minecraft/decision_context.py  | 23 +++++++++-
+ .../docs/2026-10-09-server-play-context.md    | 10 +++--
+ .../plugins/game_agent_minecraft/prompts.py   |  4 +-
+ .../server_play_context.py                    | 43 ++++++++++++++++++-
+ .../test_server_play_context.py               | 31 +++++++++++++
+ 5 files changed, 102 insertions(+), 9 deletions(-)
+
+diff --git a/plugin/plugins/game_agent_minecraft/decision_context.py b/plugin/plugins/game_agent_minecraft/decision_context.py
+index 7b3979d..f7193da 100644
+--- a/plugin/plugins/game_agent_minecraft/decision_context.py
++++ b/plugin/plugins/game_agent_minecraft/decision_context.py
+@@ -199,7 +199,7 @@ def build_focused_view(info, *, mode='decision', max_events=6, max_tokens=1600,
+                 compact['server'] = {'scoreboards': titles}
+             welcome = info.server_welcome()
+             if mode == 'decision':
+-                play = received_play_routes(welcome, inv)
++                play = received_play_routes(welcome, inv, server, info.clock())
+                 if play:
+                     value['serverPlay'] = play
+             if welcome and welcome.get('messages'):
+@@ -309,11 +309,32 @@ def build_focused_view(info, *, mode='decision', max_events=6, max_tokens=1600,
+                 if key.endswith('Omitted'):
+                     resources.pop(key)
+         value['detailsRequired'] = True
++    if (count_tokens(render()) > max_tokens and
++            value.get('protection', {}).get('automaticDigChecks') is True):
++        # The executor rechecks every dig. Keep an actual scoped denial ahead
++        # of a historical tentative allowance for a different coordinate.
++        value['protection'].pop('lastCheck', None)
++        value['detailsRequired'] = True
++    if count_tokens(render()) > max_tokens and value.get('serverPlay', {}).get('focus'):
++        # An ongoing server goal outranks entrances to unrelated activities.
++        for key in ('trial', 'guild'):
++            if count_tokens(render()) > max_tokens:
++                value['serverPlay']['routes'].pop(key, None)
++                value['detailsRequired'] = True
+     if count_tokens(render()) > max_tokens:
+         for key in ('named', 'wood', 'pickaxes'):
+             if key in resources and count_tokens(render()) > max_tokens:
+                 resources[key] = {'details': 'minecraft_observe(detail="full",sections=["inventory"])'}
+         value['detailsRequired'] = True
++    if count_tokens(render()) > max_tokens:
++        # Three identical inventory pointers cost more than useful facts.
++        # Name the omitted groups once; the callback header supplies the tool.
++        missing = [key for key in ('named', 'wood', 'pickaxes')
++                   if isinstance(resources.get(key), dict) and 'details' in resources[key]]
++        if missing:
++            for key in missing:
++                resources.pop(key)
++            resources['omitted'] = missing
+     if count_tokens(render()) > max_tokens:
+         # Only adversarial/extreme source labels reach this branch. Preserve
+         # freshness and vitals and make the lack of detail unambiguous.
+diff --git a/plugin/plugins/game_agent_minecraft/docs/2026-10-09-server-play-context.md b/plugin/plugins/game_agent_minecraft/docs/2026-10-09-server-play-context.md
+index 087ad80..7456b6e 100644
+--- a/plugin/plugins/game_agent_minecraft/docs/2026-10-09-server-play-context.md
++++ b/plugin/plugins/game_agent_minecraft/docs/2026-10-09-server-play-context.md
+@@ -11,6 +11,7 @@
+ - 欢迎摘录先按紧急救援、保护和玩法分类，避免同一类技能说明占满名额。
+ - `serverPlay` 从本次连接收到的服务器欢迎消息及当前背包书页提取最多三个类别的入口：居民事务、公会/委托、试炼。保留实际命令或书的槽位、页码；没有收到试炼命令就只给书页位置，不编造命令。
+ - 入口仅是参考；不提取书里的旧血量、旧注册状态或完成状态。当前资格、接取、完成、领奖分别需要真实回执。
++- `serverPlay.focus` 携带身体缓存中最近的 `MC_MARKET_DETAIL`：任务 ID、服务器返回的阶段、当前阶段目标和回执年龄。插件重建后仍能恢复所选玩法，不依赖猫娘口头记忆。详情仍是参考，不推定已接单或已完成；先核对当前进度，再继续该委托，探矿反馈不代表切换目标。
+ - 安全、脱困和目标需要的基本装备优先；满足后继续未完成的服务器玩法目标，减少无止境囤材料。服务器操作和身体动作都是可行的下一步，不强制在服务器操作后再派采矿。
+ - 窄预算先删空字段、未知的展示字段及重复元信息，再使用极端输入兜底。保留省略提示，不能把缺少的材料、权限或威胁信息理解为不存在。
+ - 不增加心跳，不从解析器自动发送游戏命令；忙碌、停止、暂停和社交回合的现有调度边界继续生效。
+@@ -18,13 +19,14 @@
+ 
+ ## 验证范围
+ 
+-使用两份真实状态离线重放，不连接服务器、不派诊断任务或聊天。700/400-token 主动摘要均保留收到的事务板、公会入口和试炼书页位置，整个摘要遵守预算：
++使用三份真实状态离线重放，不连接服务器、不派诊断任务或聊天。没有所选委托时，700/400-token 摘要保留事务板、公会入口和试炼书页位置；已有详情时，窄预算优先保留委托 ID、阶段、目标及事务板，其他入口可以省略。整个摘要遵守预算：
+ 
+ | 捕获状态 | 1600 预算 | 700 预算 | 400 预算 | 完整空闲提示 |
+ | --- | ---: | ---: | ---: | ---: |
+-| 地面、铁镐已制作 | 1285 | 682 | 383 | 835 |
+-| 后续地下、工具缺失 | 1180 | 689 | 372 | 895 |
++| 地面、铁镐已制作 | 1285 | 682 | 383 | 858 |
++| 后续地下、工具缺失 | 1181 | 690 | 373 | 894 |
++| 已选委托、正在交易 | 1473 | 688 | 364 | 身体忙碌，未发新规划 |
+ 
+ 计数为本地 tokenizer 在这两份样本上的结果，不是全部模型请求长度或延迟。回归另覆盖技能说明挤掉后续指引、书页历史状态、窄预算普通背包退化、玩家文字来源、观察后的服务器操作资格、忙碌保护和救援优先级。
+ 
+-这些验证证明入口和正确决策提示可以送到模型，不等于已经加入公会、接受委托或完成试炼；上述进展必须以部署后的实际服务器回执验收。
++这些离线验证证明入口、所选玩法及决策提示可以送到模型，不等于完成委托或试炼；实际进展必须以部署后的服务器回执验收。
+diff --git a/plugin/plugins/game_agent_minecraft/prompts.py b/plugin/plugins/game_agent_minecraft/prompts.py
+index 484b755..df79994 100644
+--- a/plugin/plugins/game_agent_minecraft/prompts.py
++++ b/plugin/plugins/game_agent_minecraft/prompts.py
+@@ -803,8 +803,8 @@ PROMPTS.update({
+         "en": "Use game chat only for genuine player replies, help or cooperation; keep tool calls/plans/progress local. You may initiate a private conversation with a real online player using minecraft_chat(player=...). Keep private replies private. Avoid repetition and stop nudging nonresponders; failed whispers never fall back to public chat.",
+     },
+     "AUTONOMOUS_DECISION_BODY": {
+-        "zh": "无人值守有效，停止/暂停优先。先处理危险、脱困和当前目标必需的装备；安全且够用后优先推进 serverPlay 的居民事务、公会委托或试炼，不反复囤材料。沿用未完成玩法目标，每次执行一个短步骤：minecraft_task 操作，minecraft_server 按收到的指引推进；不要做完服务器操作又强行派采矿。serverPlay 只是入口，书页不是当前进度；查真实回执确认资格、接取、完成、领奖，未知先查所选玩法指引，不猜命令。失败换方法，可用已知回城技能或私聊求助。最多补查1项缺失事实，留一轮行动。自动挖掘检查仍禁止绕过 deny/unknown。",
+-        "en": "Unattended play is enabled; stop/pause wins. Resolve danger, escape and equipment needed for the current goal. Once safe and equipped, prioritize received serverPlay routes: village affairs, guild commissions or trials; do not stockpile indefinitely. Continue an unfinished gameplay goal one short step at a time: minecraft_task for movement/actions, minecraft_server for documented server actions. A server action need not be followed by mining. Routes/books are references, not current progress: verify eligibility, acceptance, completion and rewards from actual replies; read the selected guide rather than invent syntax. On failure change methods, use known recovery or private help. Query at most one missing fact, reserve an action round, never bypass deny/unknown.",
++        "zh": "无人值守有效，停止/暂停优先。先处理危险、脱困和当前目标必需的装备；安全且够用后先核对并继续 serverPlay.focus 的委托，不因探矿回执转去挖煤；没有 focus 再从 routes 选居民事务、公会或试炼，不反复囤材料。沿用未完成玩法目标，每次执行一个短步骤：minecraft_task 操作，minecraft_server 按收到的指引推进；不要做完服务器操作又强行派采矿。serverPlay 只是入口，书页不是当前进度；查真实回执确认资格、接取、完成、领奖，未知先查所选玩法指引，不猜命令。失败换方法，可用已知回城技能或私聊求助。最多补查1项缺失事实，留一轮行动。自动挖掘检查仍禁止绕过 deny/unknown。",
++        "en": "Unattended play is enabled; stop/pause wins. Resolve danger, escape and equipment needed for the current goal. Once safe/equipped, verify and continue serverPlay.focus; incidental prospecting feedback is not a new goal. Without focus, choose village/guild/trial routes; do not stockpile indefinitely. Continue an unfinished gameplay goal one short step at a time: minecraft_task for movement/actions, minecraft_server for documented server actions. A server action need not be followed by mining. Routes/books are references, not current progress: verify eligibility, acceptance, completion and rewards from actual replies; read the selected guide rather than invent syntax. On failure change methods, use known recovery or private help. Query at most one missing fact, reserve an action round, never bypass deny/unknown.",
+     },
+     "RECOVERY_POLICY": {
+         "zh": "先核对当前工具、木料和工作台，只解决一个可行的前置步骤。连续失败就改用已知脱困技能或私聊在线玩家求助；不要只换措辞重试，也别把等树长成等长链塞进短任务。停止/暂停优先。",
+diff --git a/plugin/plugins/game_agent_minecraft/server_play_context.py b/plugin/plugins/game_agent_minecraft/server_play_context.py
+index 506a34e..c103685 100644
+--- a/plugin/plugins/game_agent_minecraft/server_play_context.py
++++ b/plugin/plugins/game_agent_minecraft/server_play_context.py
+@@ -6,6 +6,7 @@ or a location to read; neither is evidence that a quest was accepted/completed.
+ from __future__ import annotations
+ 
+ import re
++import math
+ 
+ 
+ _TOPICS = (
+@@ -16,7 +17,7 @@ _TOPICS = (
+ _COMMAND = re.compile(r'/mycli(?:[ \t]+(?:[a-z_][a-z0-9_:-]*|[0-9]+|<[a-z_][a-z0-9_]*>))*', re.I)
+ 
+ 
+-def received_play_routes(welcome, inventory):
++def received_play_routes(welcome, inventory, server=None, now=None):
+     routes, ranks = {}, {}
+ 
+     def add(text, location):
+@@ -55,7 +56,40 @@ def received_play_routes(welcome, inventory):
+                     type(item.get('slot')) is not int):
+                 continue
+             add(str(page.get('text') or ''), f'inventory slot={item["slot"]} page={page["page"]}')
+-    return {'referenceOnly': True, 'routes': routes} if routes else None
++    # The body keeps the last server detail packet even if this plugin is
++    # recreated. Carry the selected quest, not just the general entry points.
++    # A detail response alone does NOT establish acceptance/current completion.
++    packet = ((server or {}).get('channels') or {}).get('mcagent:market') or {}
++    detail = packet.get('value') if isinstance(packet, dict) else None
++    focus = None
++    if (isinstance(detail, dict) and detail.get('type') == 'MC_MARKET_DETAIL' and
++            isinstance(detail.get('id'), str) and 0 < len(detail['id']) <= 64 and
++            not any(ord(char) < 32 for char in detail['id'])):
++        focus = {'id': detail['id'][:64], 'source': 'mcagent:market'}
++        if isinstance(detail.get('title'), str):
++            focus['title'] = detail['title'][:64]
++        for key in ('currentStep', 'stepCount'):
++            if type(detail.get(key)) is int and 1 <= detail[key] <= 1000:
++                focus[key] = detail[key]
++        steps = detail.get('steps')
++        for step in steps[:64] if isinstance(steps, list) else []:
++            if (not isinstance(step, dict) or type(step.get('index')) is not int or
++                    step['index'] != focus.get('currentStep')):
++                continue
++            focus['step'] = {key: child[:112] if isinstance(child, str) else child
++                             for key in ('index', 'title', 'description', 'goal', 'target', 'site')
++                             if isinstance((child := step.get(key)), str) or type(child) is int}
++            break
++        stamp = packet.get('observedAt')
++        if (type(stamp) in (int, float) and math.isfinite(stamp) and
++                type(now) in (int, float) and math.isfinite(now)):
++            focus['ageSeconds'] = max(0, round(now - stamp / 1000))
++    if not routes and not focus:
++        return None
++    play = {'referenceOnly': True, 'routes': routes}
++    if focus:
++        play['focus'] = focus
++    return play
+ 
+ 
+ def shorten_play_routes(play):
+@@ -68,3 +102,8 @@ def shorten_play_routes(play):
+             page = re.search(r'inventory slot=(\d+) page=(\d+)', route)
+             if page:
+                 play['routes'][topic] = f'inventory:{page[1]}:{page[2]}'
++    if play.get('focus'):
++        focus = play['focus']
++        play['focus'] = {key: focus[key] for key in ('id', 'currentStep', 'ageSeconds') if key in focus}
++        if focus.get('step'):
++            play['focus']['step'] = {key: focus['step'][key] for key in ('goal', 'target') if key in focus['step']}
+diff --git a/plugin/plugins/game_agent_minecraft/test_server_play_context.py b/plugin/plugins/game_agent_minecraft/test_server_play_context.py
+index 965dbe1..2cd3e3f 100644
+--- a/plugin/plugins/game_agent_minecraft/test_server_play_context.py
++++ b/plugin/plugins/game_agent_minecraft/test_server_play_context.py
+@@ -100,6 +100,37 @@ class ServerPlayContextTests(unittest.TestCase):
+         info.online = False
+         self.assertNotIn('serverPlay', info.focused_view())
+ 
++    def test_server_quest_detail_survives_plugin_recreation_and_small_idle_budget(self):
++        data = gameplay_frame()
++        data['state']['server']['channels']['mcagent:market'] = {
++            'observedAt': data['observedAt'] - 65000,
++            'value': {'type': 'MC_MARKET_DETAIL', 'id': 'tm_first_spell', 'title': '导师实操',
++                      'currentStep': 2, 'stepCount': 2, 'steps': [
++                          {'index': 1, 'goal': 'skill_cast', 'target': 1},
++                          {'index': 2, 'goal': 'trade', 'target': 1, 'title': '认识补给商',
++                           'description': '去村庄集市，与补给商交易。'}]}}
++        # A fresh plugin must recover its focus from the body's received state,
++        # without any transient task latch, spoken promise or local history.
++        info = GameObservations()
++        info.ingest_state(data)
++        for budget in (700, 400):
++            text = info.focused_context(max_tokens=budget)
++            play = json.loads(text.split('\n', 1)[1])['serverPlay']
++            self.assertEqual(play['focus']['id'], 'tm_first_spell')
++            self.assertEqual(play['focus']['currentStep'], 2)
++            self.assertEqual(play['focus']['step']['goal'], 'trade')
++            self.assertTrue(play['referenceOnly'], 'detail alone is not proof of acceptance or completion')
++            self.assertLessEqual(count_tokens(text), budget)
++        full = info.focused_view()['serverPlay']['focus']
++        self.assertGreaterEqual(full['ageSeconds'], 65)
++        self.assertIn('认识补给商', str(full))
++
++    def test_no_quest_focus_is_invented_from_an_unrelated_channel_or_old_book(self):
++        info = self.info()
++        info.state['server']['channels']['mcagent:market'] = {'value': {
++            'type': 'MC_SPELL_ERROR', 'id': 'fake_quest', 'currentStep': 9}}
++        self.assertNotIn('focus', info.focused_view()['serverPlay'])
++
+     def test_player_welcome_text_cannot_supply_server_command_routes(self):
+         data = welcome_frame(texts=['居民事务板 /mycli world erase'])
+         data['state']['server']['welcome']['messages'][0]['source'] = 'player'
