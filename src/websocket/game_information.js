@@ -130,15 +130,17 @@ export function collectGameState(agent, presentation = {}) {
             biome: below?.biome?.name ?? below?.biome ?? null, spawnPoint: point(bot.spawnPoint) },
         inventory: { counts, selectedHotbar: bot.quickBarSlot, held: itemState(bot.heldItem),
             slots: slots.map(itemState).filter(Boolean) },
-        nearby: { radius: 32, entities: entities.slice(0, 32).map(entity => ({ id: entity.id, name: entity.name,
+        // Keep local collision facts and real chat targets ahead of verbose
+        // entity metadata. Otherwise a crowded scene hides how to get unstuck.
+        nearby: { radius: 32, onlinePlayers: Object.keys(bot.players ?? {}).slice(0, 64),
+            under: blockState(below), feet: pos ? blockState(blockAt(0, 0, 0)) : null,
+            head: pos ? blockState(blockAt(0, 1, 0)) : null,
+            entities: entities.slice(0, 32).map(entity => ({ id: entity.id, name: entity.name,
             type: entity.type, username: entity.username, displayName: gameText(entity.displayName),
             customName: gameText(entity.metadata?.[2]),
             position: point(entity.position), distance: Math.round(distance(pos, entity.position) * 10) / 10,
             health: finite(entity.health), equipment: entity.equipment?.map(item => itemState(item)),
             metadata: entity.metadata })), entitiesOmitted: Math.max(0, entities.length - 32),
-            onlinePlayers: Object.keys(bot.players ?? {}).slice(0, 64),
-            under: blockState(below), feet: pos ? blockState(blockAt(0, 0, 0)) : null,
-            head: pos ? blockState(blockAt(0, 1, 0)) : null,
             sampledBlocks: [...blocks.values()], sampleRadius: 4,
             signs: presentation.signs ?? [] },
         window: window ? { id: window.id, type: window.type, title: gameText(window.title),
@@ -395,18 +397,20 @@ export class GameInformation {
         if (this.presentation.actionBar && now - this.presentation.actionBar.observedAt > 10000) this.presentation.actionBar = null;
         for (const [kind, value] of Object.entries(this.presentation.titles)) if (now - value.observedAt > 15000) delete this.presentation.titles[kind];
         // A large book/plugin payload must not consume another section's budget.
-        const raw = collectGameState(this.agent, this.presentation), state = {}, truncated = [];
+        const raw = collectGameState(this.agent, this.presentation), state = {}, truncated = [], sectionOmissions = [];
         const budgets = { self: 8000, world: 2000, activity: 3000, server: 20000, window: 24000,
             inventory: 24000, nearby: 12000, coverage: 1000 };
         for (const [section, budget] of Object.entries(budgets)) {
             const bounded = boundedGameValue(raw[section], budget);
             state[section] = bounded.value;
-            truncated.push(...bounded.truncated.map(path => `$.${section}${path.slice(1)}`));
+            const paths = bounded.truncated.map(path => `$.${section}${path.slice(1)}`);
+            if (paths.length) sectionOmissions.push(paths[0]);
+            truncated.push(...paths);
         }
         return { type: 'game_state', schemaVersion: 1, sessionId: this.sessionId, seq: ++this.stateSeq,
             observedAt: now, online: this.online && this.bot._client?.state === 'play' && this.bot._client?.socket?.destroyed !== true, state,
             recentEvents: this.events.filter(event => now - event.observedAt < 120000).slice(-48),
-            truncated: truncated.slice(0, 32), droppedEvents: this.dropped };
+            truncated: [...new Set([...sectionOmissions, ...truncated])].slice(0, 32), droppedEvents: this.dropped };
     }
 
     sendState(client) {

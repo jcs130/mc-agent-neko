@@ -58,6 +58,22 @@ test('snapshot retains body, world, inventory, menu, scoreboard and loaded surro
     assert.equal(state.server.tablist.footer, '输入 /help 查看功能');
 });
 
+test('large entity metadata cannot hide collision blocks, online players or nearby truncation', t => {
+    const { bot, information } = fixture(t);
+    bot.entities[2].metadata = Array(128).fill('large entity payload '.repeat(800));
+    information.presentation.recipeBook = {
+        pages: Array.from({ length: 80 }, () => ({ a: { b: { c: { d: { e: { f: 'deep payload' } } } } } })),
+    };
+    const frame = information.snapshot();
+    assert.equal(frame.state.nearby.under?.name, 'stone');
+    assert.equal(frame.state.nearby.feet?.name, 'stone');
+    assert.equal(frame.state.nearby.head?.name, 'stone');
+    assert.deepEqual(frame.state.nearby.onlinePlayers, ['Friend_1']);
+    assert.equal(frame.state.nearby.entities[0].name, 'zombie');
+    assert.ok(frame.truncated.some(path => path.startsWith('$.nearby')),
+        'earlier section truncations must not hide the nearby omission notice');
+});
+
 test('login gameplay instructions survive event expiry, eviction, respawn and a late reader', async t => {
     let clock = 1000;
     const { agent, bot, information } = fixture(t, { now: () => clock });
