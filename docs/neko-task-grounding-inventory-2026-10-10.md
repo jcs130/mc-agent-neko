@@ -48,8 +48,8 @@ Neko autonomy owner are unchanged. No periodic model call was added.
 
 Regression tests reproduced unobserved completion, stale failure termination
 and merchant inventory disagreement before their fixes. The final native
-checkout passed **541/541** tests, and this contribution branch passed
-**564/564**, using `node --test`. Coverage includes late-task isolation,
+checkout passed **552/552** tests, and this contribution branch passed
+**575/575**, using `node --test`. Coverage includes late-task isolation,
 read-only completion, real action failure, explicit player termination, active
 merchant/container slot mapping, cursor exclusion, custom names, equipment,
 capacity, held items and nonmutation.
@@ -65,3 +65,32 @@ guild commissions or all server trials. Wheat remained at three during the
 failed harvest attempts; no completed wheat commission is claimed. Audible
 desktop speech remains unverified, with intermittent playback-end watchdogs
 recorded separately from successful TTS delivery.
+
+## Disconnect recovery found during passive follow-up
+
+The player then moved 10.89 blocks under a genuine autonomous task and observed
+both a wandering trader and the mentor's custom menu. A later inventory query
+showed 2 iron ingots and 3 emeralds. The server subsequently kicked the player
+with `disconnect.spam`; the exact outgoing trigger is not established, so no
+chat-rate or server configuration change is attributed as a fix.
+
+Passive follow-up exposed three local recovery defects:
+
+- Every respawn started another WebSocket server on 48909, producing
+  `EADDRINUSE`. Start now reuses the existing listener and its clients; close
+  clears only the matching listener, allowing a later explicit restart.
+- A stop waiting on an old action continued after the game body was replaced,
+  then reconnected the healthy replacement after its 15-second wait. Stop,
+  late completion/error and timeout callbacks now check their original body
+  and action, releasing only the retired action's state.
+- The underlying window operation could remain pending after disconnect,
+  keeping self-prompt teardown and the next task handoff waiting indefinitely.
+  The executor's await now also terminates on its own body's `end` event,
+  reports interruption and removes its temporary listener. Normal generated
+  code protection and the same-body wedge backstop are retained.
+
+The regression cases reproduced duplicate listener allocation, cross-body
+interruption and an unresolved action wait before their fixes. The final full
+suite counts above include those cases. No server disconnect or test gameplay
+was deliberately triggered. Recovery requires loading the changed native
+process; restarting only Neko's main service is unnecessary.
