@@ -1,9 +1,9 @@
 {
   "upstreamRepository": "https://github.com/Project-N-E-K-O/N.E.K.O",
   "baseCommit": "fb2a2e731a8c954478d08678b0c8cf40e8145a54",
-  "sourceCommit": "6848fcefcacdc2735d7ec4f3fa00f041fd389187",
+  "sourceCommit": "144beaa42225eb0729c64cce6f6bbafdd9210a6b",
   "scope": "plugin/plugins/game_agent_minecraft",
-  "resultPluginTree": "7656d069035027047bfeaec372c3dd220679f1a9",
+  "resultPluginTree": "1ff3f05a64dd02748d81c5a1165b5df9f85a22bf",
   "patches": [
     {
       "file": "0001-chore-configure-text-only-local-Qwen-Minecraft-trial.patch",
@@ -232,12 +232,20 @@
     {
       "file": "0057-fix-speak-Minecraft-item-and-skill-names-in-Chinese.patch",
       "sha256": "107aa9b786333bcddbee767eeb43e71b65240c07e8fbb158c1707b82bb48be41"
+    },
+    {
+      "file": "0058-fix-preserve-backpack-and-material-selling-facts-in-.patch",
+      "sha256": "323c8bcc9138881f5fef4d1d958269c4fb6d7167c8dce207b05d1489319b55e4"
+    },
+    {
+      "file": "0059-fix-distinguish-storage-providers-without-restrictin.patch",
+      "sha256": "89d1fdcb236584e6e32d9d96cb8be2d2d3fbe718a2b5f3b5662b627c9ba307b9"
     }
   ],
   "verification": {
     "appliedInOrderToBase": true,
     "resultPluginTreeMatchesSource": true,
-    "pluginTestsPassed": 167,
+    "pluginTestsPassed": 189,
     "hostCallbackTestsPassed": 195,
     "hostFileBlobsMatchSource": true,
     "nativeSourceTestsPassed": 450,
@@ -455,5 +463,59 @@
     "diagnosticLiveGameActions": 0,
     "subsequentAutonomousInferenceObserved": true,
     "longContextStressTested": false
+  },
+  "economyStorageVerification": {
+    "date": "2026-10-10",
+    "nativeSourceCommit": "5238e6453e183ddb866a3a0eb0b9fdc83d1978ff",
+    "pluginSourceCommit": "144beaa42225eb0729c64cce6f6bbafdd9210a6b",
+    "nativeTestsPassed": 517,
+    "contributionTestsPassed": 540,
+    "pluginTestsPassed": 189,
+    "portableStorageTestsPassed": 15,
+    "pluginPatchCount": 59,
+    "pluginSeriesReplayMatchesSource": true,
+    "namedBackpackRetainedAt700Tokens": true,
+    "feasibleMaterialSellingOffersPrioritized": true,
+    "actualLiveMerchantSaleVerified": false,
+    "bareBackpackAliasOpenedUnrelatedBetonQuestMenu": true,
+    "minepacksNamespaceOpenedOrdinary54SlotBackpack": true,
+    "liveBackpackOccupiedSlots": 54,
+    "liveAppleRoundTrip": {
+      "before": {
+        "storage": 5,
+        "player": 0
+      },
+      "withdrawReopened": {
+        "storage": 4,
+        "player": 1
+      },
+      "depositReopened": {
+        "storage": 5,
+        "player": 0
+      }
+    },
+    "sameIdWindowReplacementGuarded": true,
+    "serverCarriedItemChecked": true,
+    "rewardContainerDistinctFromOrdinaryBackpack": true,
+    "liveSkillCompassRewardButtonObserved": true,
+    "rewardButtonReportedPages": 10,
+    "rewardButtonReportedCapacity": 540,
+    "rewardButtonReportedRemoteManaCost": 2,
+    "liveRewardOpeningPrerequisite": {
+      "skill": "travel",
+      "reason": "not_learned"
+    },
+    "actualLiveRewardStorageOpened": false,
+    "actualLiveRewardTransferVerified": false,
+    "diagnosticPublicChatMessagesSent": 0,
+    "itemsDiscarded": 0,
+    "skillPointsSpent": 0,
+    "corticoReferenceRevision": "f0db612",
+    "corticoMitLicenseRetained": true,
+    "localModelLoadedAfterReload": true,
+    "minecraftPluginRunningAfterReload": true,
+    "unattendedGuardianRestored": true,
+    "lanViewerHttpStatus": 200,
+    "longRunSurvivalProven": false
   }
 }

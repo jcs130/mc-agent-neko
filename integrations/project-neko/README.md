@@ -1,6 +1,13 @@
 # Project N.E.K.O. companion patches
 
-The latest survival repair retains actual melee equipment in bounded planning
+The latest storage repair retains named backpacks and feasible material-selling
+offers in bounded planning context. Its native tools distinguish the ordinary
+Minepacks warehouse from the personal reward container and a conflicting
+BetonQuest menu. They verify real window, slot and cursor updates. See
+[the economy and storage report](../../docs/neko-economy-storage-2026-10-10.md)
+for the live command collision, verified round trip and reward prerequisite.
+
+The survival repair retains actual melee equipment in bounded planning
 and emergency context, including unknown inventory states. It pairs with the
 body's corrected combat/retreat handoff for unarmed players, swarms and nearby
 wall-blocked mobs. Task inventory deltas and real action receipts also preserve
@@ -58,18 +65,22 @@ python -m unittest discover -s plugin/plugins/game_agent_minecraft -t .
 git rev-parse HEAD:plugin/plugins/game_agent_minecraft
 ```
 
-The exported plugin passed 167 tests. The manifest records the exact reproduced
+The exported plugin passed 189 tests. All 59 ordered plugin patches reproduce
+the committed source. The manifest records the exact reproduced
 plugin tree and host-file blobs. The host callback/media regression suite passed
-195 tests, including six new Minecraft budget tests. The latest native source
-suite passed 450 tests; this contribution branch's full `node --test` discovery
-passed 476 tests. The host/native counts are retained from their last unchanged
-delivery. The existing
-mineDown contract test also passed.
+195 tests at its last unchanged delivery, including six Minecraft budget tests.
+The current native source suite passed 517 tests; this contribution branch's
+full `node --test` discovery passed 540 tests. The existing mineDown contract
+test also passed.
 
 Follow the patched plugin's README for the existing N.E.K.O. plugin lifecycle,
 viewer and unattended settings. On the Minecraft body, set
 `external_autonomy_owner` to `"neko"` when N.E.K.O. owns autonomous decisions;
 set `server_protection` to `"mycli"` only on a server advertising that protocol.
+When the bare `/backpack` alias is owned by another plugin, set
+`backpack_command` to `"/minepacks:backpack open"` on a server advertising
+Minepacks. Other servers can leave this optional setting `null` to use the
+observed named item's shortcut.
 Use the existing plugin configuration APIs to apply live settings. Start N.E.K.O.
 and its Minecraft plugin together; loading patches alone does not start gameplay.
 
