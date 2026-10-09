@@ -1,9 +1,9 @@
 {
   "upstreamRepository": "https://github.com/Project-N-E-K-O/N.E.K.O",
   "baseCommit": "fb2a2e731a8c954478d08678b0c8cf40e8145a54",
-  "sourceCommit": "1d67415fbdb0d7790e68f7141271f1fd8989d173",
+  "sourceCommit": "88b2c2c1ae8ab32f4512079da80bf0895bbc53ee",
   "scope": "plugin/plugins/game_agent_minecraft",
-  "resultPluginTree": "7a0ef08e7b9f3943386c9f0ff4a6f1472fa1d290",
+  "resultPluginTree": "fa5e8e4a5f8d53cc0800fd33e7ccddd1b3007664",
   "patches": [
     {
       "file": "0001-chore-configure-text-only-local-Qwen-Minecraft-trial.patch",
@@ -120,11 +120,15 @@
     {
       "file": "0029-docs-record-protection-context-deployment-evidence.patch",
       "sha256": "2d21f6c94710329ba021abc1355caade85d46dfeb2a8b76c0d729b03bf201013"
+    },
+    {
+      "file": "0030-fix-pace-Minecraft-decisions-by-meaningful-changes-i.patch",
+      "sha256": "d38fd067ec4065e0fe7bdc1ca0fe0a45b44ec7bfc28602e525d4c0411b8968fe"
     }
   ],
   "verification": {
     "appliedInOrderToBase": true,
     "resultPluginTreeMatchesSource": true,
-    "pluginTestsPassed": 77
+    "pluginTestsPassed": 83
   }
 }

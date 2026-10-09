@@ -1,0 +1,370 @@
+From 88b2c2c1ae8ab32f4512079da80bf0895bbc53ee Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Fri, 9 Oct 2026 11:46:55 +0800
+Subject: [PATCH] fix: pace Minecraft decisions by meaningful changes instead
+ of packet ticks
+
+Nearby entity motion and sampled-block churn reset idle backoff in real captures. Keep fresh observations while deduplicating passive callbacks, share running-task updates, and retain skill readiness, rescue and conversation cues. Verified with 83 plugin tests and a 300-second replay of 150 captured snapshots.
+---
+ plugin/plugins/game_agent_minecraft/README.md |   9 ++
+ .../2026-10-09-adaptive-heartbeat-plan.md     |  16 +++
+ .../game_agent_minecraft/observations.py      |  47 ++++++-
+ .../plugins/game_agent_minecraft/service.py   |  34 ++++-
+ .../test_adaptive_heartbeat.py                | 131 ++++++++++++++++++
+ 5 files changed, 225 insertions(+), 12 deletions(-)
+ create mode 100644 plugin/plugins/game_agent_minecraft/docs/2026-10-09-adaptive-heartbeat-plan.md
+ create mode 100644 plugin/plugins/game_agent_minecraft/test_adaptive_heartbeat.py
+
+diff --git a/plugin/plugins/game_agent_minecraft/README.md b/plugin/plugins/game_agent_minecraft/README.md
+index bd3f8a0..3539bbc 100644
+--- a/plugin/plugins/game_agent_minecraft/README.md
++++ b/plugin/plugins/game_agent_minecraft/README.md
+@@ -56,6 +56,15 @@ agent 端启动方式由你自己决定：绿色包用户在解压出来的包
+ 
+ ## 配置项
+ 
++自主调度与游戏数据传输分开计时。空闲后的首次提醒仍遵循
++`system_prompt_interval_seconds`（最多等待30秒）；未派发新动作时按30、60、120秒退避，
++任务结果、关键状态变化重新允许及时决策。附近实体走动、采样方块集合变化、世界时钟和
++`mcagent:state` 周期计数不会清空退避计数；技能就绪、职业和队友倒地变化仍会更新决策。
++完整信息仍保留在 `minecraft_observe` 中。
++被动状态仅在决策相关事实改变时推送，最短间隔15秒；进行中计时器共享同一去重入口。
++玩家聊天、私聊、重要服务器反馈和危急生存事件继续使用独立触发通路。
++`game_agent_status.autonomy` 可查看身体忙碌状态、活动标签、重试间隔及最后决策时间。
++
+ 支持 `/mycli protect` 的服务器可在 MC Agent 设置中加入 `server_protection: "mycli"`。
+ MC 侧会在每次实际挖掘前查询权限；拒绝的坐标会从采集和破坏寻路候选中排除，
+ 拒绝原因通过 `game_state.state.server.protection` 与 `protection` 事件送给本插件。
+diff --git a/plugin/plugins/game_agent_minecraft/docs/2026-10-09-adaptive-heartbeat-plan.md b/plugin/plugins/game_agent_minecraft/docs/2026-10-09-adaptive-heartbeat-plan.md
+new file mode 100644
+index 0000000..eb698f5
+--- /dev/null
++++ b/plugin/plugins/game_agent_minecraft/docs/2026-10-09-adaptive-heartbeat-plan.md
+@@ -0,0 +1,16 @@
++# Adaptive Minecraft heartbeat implementation plan
++
++**Goal:** Recover from stale native skill labels and stop periodic unchanged facts from prompting repeated plans.
++
++**Architecture:** Keep native body-state maintenance active under external Neko ownership. Track custom-skill invocation identity so a late nested invocation cannot restore a finished parent. In the Neko plugin, separate fresh observation transport from decision-worthy changes and pace unchanged retries independently.
++
++**Tech stack:** Node.js native tests; Python asyncio/unittest; existing WebSocket bridge and plugin SDK.
++
++**Spec:** User report of a stalled avatar and repeated 10-second calls; captured online state at y=66 has no task/action/digging but skill=chopWood, and passive callbacks arrive about every 12 seconds.
++
++Constraints: Keep game actions owned by Neko; preserve vital reflexes, permission checks, welcome information and private/public chat routing. Do not inject diagnostic gameplay or chat. Keep Neko changes inside this plugin; publish as companion patches in the existing MC fork.
++
++- [ ] Reproduce late-child and identical-name skill ownership failures, and the gated native cleanup watchdog. Fix only state ownership/maintenance; run native regression and full suites.
++- [ ] Replay real snapshots through the idle loop and passive publisher. Assert clock/entity/packet noise cannot reset backoff or accumulate passive updates; assert real inventory/chat/outcome changes still reach decisions. Implement bounded change-based publishing and 30/60/120-second unchanged retries, retaining prompt first decisions.
++- [ ] Verify full plugin suite and real runtime health. Deploy through owned lifecycle, observe autonomous task dispatch/progress without injected actions, record any remaining limitation.
++- [ ] Commit, append companion patches and manifest verification, and push the existing fork branch.
+diff --git a/plugin/plugins/game_agent_minecraft/observations.py b/plugin/plugins/game_agent_minecraft/observations.py
+index 856209a..25a76f8 100644
+--- a/plugin/plugins/game_agent_minecraft/observations.py
++++ b/plugin/plugins/game_agent_minecraft/observations.py
+@@ -113,15 +113,49 @@ class GameObservations:
+         self.truncated = [*(source_clipped[:32] if isinstance(source_clipped, list) else []), *clipped]
+         self.dropped = frame.get('droppedEvents', 0)
+         self.ingest_events({**frame, 'events': frame.get('recentEvents', [])})
+-        # Clock ticks and transport timestamps must not reset idle backoff.
++        # A fresh packet is not fresh progress. Keep the complete state above
++        # for observe(), but use decision facts to pace autonomous retries.
++        own, world, inv, activity, nearby, server = (self.state.get(key) or {} for key in
++            ('self', 'world', 'inventory', 'activity', 'nearby', 'server'))
++        position = own.get('position') or {}
++        tod = world.get('timeOfDay')
++        phase = None if type(tod) not in (int, float) else (
++            'day' if tod < 12000 else 'dusk' if tod < 13000 else 'night' if tod < 23000 else 'dawn')
++        protocol = (server.get('channels') or {}).get('mcagent:state')
++        protocol = protocol.get('value') if isinstance(protocol, dict) else None
++        protocol = protocol if isinstance(protocol, dict) else {}
++        decision = {
++            'online': self.online,
++            'self': {key: own.get(key) for key in ('health', 'food', 'oxygen', 'equipment')},
++            'position': {key: math.floor(value) for key, value in position.items()
++                         if type(value) in (int, float) and math.isfinite(value)},
++            'effects': own.get('effects'),
++            'world': {**{key: world.get(key) for key in ('version', 'dimension', 'gameMode', 'weather')}, 'phase': phase},
++            'inventory': {key: inv.get(key) for key in ('counts', 'held')},
++            'activity': {key: activity.get(key) for key in ('action', 'skill', 'digging', 'usingHeldItem')},
++            'mobility': {key: (activity.get('mobility') or {}).get(key) for key in ('state', 'enclosed')},
++            'window': self.state.get('window'),
++            # The sampled set follows moving entities and changes ordering/
++            # membership while our feet and surroundings stay the same.
++            'nearby': {key: nearby.get(key) for key in ('under', 'feet', 'head', 'signs')},
++            'server': {key: value for key, value in server.items()
++                       if key not in ('channels', 'protection', 'welcome', 'recipeBook')},
++            'channels': {key: value for key, value in (server.get('channels') or {}).items()
++                         if key != 'mcagent:state'},
++            'server_player_state': {key: protocol.get(key) for key in
++                                    ('abilities', 'equipmentEffects', 'trialRescue', 'profession')},
++            'protection': {key: (server.get('protection') or {}).get(key)
++                           for key in ('enabled', 'installed', 'lastBlocked')},
++        }
+         def meaningful(value):
+             if isinstance(value, dict):
+-                return {key: meaningful(child) for key, child in value.items()
+-                        if key not in ('observedAt', 'age', 'timeOfDay', 'sha256')}
++                return {key: (child > 0 if key.endswith('RemainingMs') and type(child) in (int, float)
++                              else meaningful(child)) for key, child in value.items()
++                        if key not in ('observedAt', 'age', 'timeOfDay', 'sha256', 'since', 'duration')}
+             if isinstance(value, list):
+                 return [meaningful(child) for child in value]
+             return value
+-        signature = hashlib.sha256(json.dumps(meaningful(self.state), sort_keys=True).encode()).hexdigest()
++        signature = hashlib.sha256(json.dumps(meaningful(decision), sort_keys=True).encode()).hexdigest()
+         if signature != self._fingerprint:
+             self._fingerprint = signature
+             self.decision_revision += 1
+@@ -149,7 +183,10 @@ class GameObservations:
+         for ident, event in list(self.events.items()):
+             if self.clock() - event['observedAt'] / 1000 > 120 or len(self.events) > 128:
+                 self.events.pop(ident, None)
+-        if added:
++        if any(event.get('kind') not in ('actionbar', 'plugin_message', 'server_record')
++               or (event.get('kind') == 'plugin_message' and isinstance(event.get('data'), dict) and
++                   str(event['data'].get('channel', '')).endswith(':event'))
++               for event in added):
+             self.decision_revision += 1
+         return added
+ 
+diff --git a/plugin/plugins/game_agent_minecraft/service.py b/plugin/plugins/game_agent_minecraft/service.py
+index 24800d2..59d0d9e 100644
+--- a/plugin/plugins/game_agent_minecraft/service.py
++++ b/plugin/plugins/game_agent_minecraft/service.py
+@@ -298,6 +298,7 @@ class GameAgentService:
+         self._game_observations = GameObservations(clock=lambda: time.time())
+         self._game_state_waiters: list[asyncio.Future] = []
+         self._game_context_push_at = 0.0
++        self._game_context_revision = None
+         self._server_welcome_session: Optional[str] = None
+         self._server_welcome_seen: set[str] = set()
+         self._server_command_history: list[dict[str, Any]] = []
+@@ -883,7 +884,7 @@ class GameAgentService:
+         new_events = [event for ident, event in self._game_observations.events.items() if ident not in previous_ids]
+         if new_events:
+             await self._handle_game_events(new_events)
+-        elif time.time() - self._game_context_push_at >= 10:
++        else:
+             await self._push_game_context(attention=False)
+ 
+     async def _push_server_welcome(self) -> None:
+@@ -953,19 +954,22 @@ class GameAgentService:
+                 finally:
+                     self._game_attention_flush_task = None
+             self._game_attention_flush_task = asyncio.create_task(flush(), name='minecraft.game_attention')
+-        elif now - self._game_context_push_at >= 10:
++        else:
+             await self._push_game_context(attention=False)
+ 
+     async def _push_game_context(self, *, attention: bool) -> None:
+         try:
+             async with self._ingame_chat_push_lock:
++                revision = (self._game_observations.session_id, self._game_observations.decision_revision)
+                 if attention:
+                     self._game_attention_ids.intersection_update(self._game_observations.events)
+                     self._game_attention_pending = bool(self._game_attention_ids)
+                     if not self._game_attention_pending or time.time() - self._game_attention_at < 5:
+                         return
+-                elif time.time() - self._game_context_push_at < 10:
+-                    return
++                else:
++                    if (revision == self._game_context_revision or
++                            time.time() - self._game_context_push_at < 15):
++                        return
+                 context = self._game_observations.context(max_tokens=400 if attention else 700)
+                 if not context:
+                     return
+@@ -995,11 +999,14 @@ class GameAgentService:
+                                'Keep @neko/! in the existing command route. New text alone must not interrupt an action.\n'
+                                + prompts.t('PLAYER_COMMUNICATION_POLICY', lang=self._lang) + '\n'
+                                + json.dumps(details, ensure_ascii=False) + '\n' + context)
+-                await asyncio.to_thread(self._push_message, source='game_agent_minecraft', visibility=[],
++                result = await asyncio.to_thread(self._push_message, source='game_agent_minecraft', visibility=[],
+                                         ai_behavior='respond' if attention else 'read',
+                                         parts=[{'type': 'text', 'text': context}], priority=5 if attention else 4,
+                                         coalesce_key='mc_game_attention' if attention else 'mc_game_information')
++                if isinstance(result, dict) and result.get('submitted') is False:
++                    return
+                 self._game_context_push_at = time.time()
++                self._game_context_revision = revision
+                 if attention:
+                     self._game_attention_at = time.time()
+                     self._game_attention_ids.difference_update(attention_ids)
+@@ -2276,11 +2283,11 @@ class GameAgentService:
+                     # decision with backoff instead of making the same idle
+                     # cue speak every ten seconds. New facts reset the delay;
+                     # the first action after a completion still starts promptly.
+-                    decision_key = (
++                    decision_key = (self._last_task_finished_at, self._game_observations.decision_revision) if self._game_observations.fresh else (
+                         self._last_task_finished_at,
+                         tuple(sorted(self._last_inventory.items())),
+                         tuple((key, self._last_vitals.get(key)) for key in
+-                              ('hp', 'food', 'hostiles', 'x', 'y', 'z', 'mob', 'held', 'pickFx', 'armor')),
++                              ('hp', 'food', 'x', 'y', 'z', 'mob', 'held', 'pickFx', 'armor')),
+                         self._game_observations.decision_revision,
+                     )
+                     if decision_key != self._idle_decision_key:
+@@ -2341,6 +2348,11 @@ class GameAgentService:
+         Elapsed time alone is not a new event. Real outcomes, chat and danger
+         have their own active cues; this timer must not make her repeat a plan.
+         """
++        if self._game_observations.available:
++            # Share one change-based publisher with snapshot updates instead
++            # of appending a second copy every 30 seconds for elapsed time.
++            await self._push_game_context(attention=False)
++            return
+         # Pull at most one screenshot so push is cheap; keep cache for
+         # the general nudge to potentially burst more.
+         parts: list[Dict[str, Any]] = []
+@@ -2623,6 +2635,14 @@ class GameAgentService:
+             "pending_task": self._pending.task_text if self._pending else None,
+             "last_task_outcome": self._last_task_outcome,
+             "idle_decision_attempts": self._idle_decision_attempts,
++            "autonomy": {
++                "body_busy": self._mc_agent_busy(),
++                "decision_revision": self._game_observations.decision_revision,
++                "last_idle_decision_at": self._last_keep_going_nudge_at,
++                "unchanged_retry_seconds": min(120.0, 30.0 * 2 ** min(max(0, self._idle_decision_attempts - 1), 2)),
++                "passive_state_min_interval_seconds": 15.0,
++                "activity": self._game_observations.state.get('activity') if self._game_observations.fresh else None,
++            },
+             "server_calls_since_task": self._server_calls_since_task,
+             "server_commands_cached": len(self._server_command_history),
+             "log_cache_size": len(self._log_cache),
+diff --git a/plugin/plugins/game_agent_minecraft/test_adaptive_heartbeat.py b/plugin/plugins/game_agent_minecraft/test_adaptive_heartbeat.py
+new file mode 100644
+index 0000000..a316c3b
+--- /dev/null
++++ b/plugin/plugins/game_agent_minecraft/test_adaptive_heartbeat.py
+@@ -0,0 +1,131 @@
++import asyncio
++import unittest
++from types import SimpleNamespace
++from unittest.mock import patch
++
++from .service import GameAgentService
++
++
++class AdaptiveHeartbeatTests(unittest.IsolatedAsyncioTestCase):
++    def service(self, clock):
++        calls = []
++        service = GameAgentService(logger=None, push_message_fn=lambda **kw: calls.append((clock[0], kw)))
++        service.configure({'unattended_enabled': True, 'unattended_character': 'YUI',
++                           'system_prompt_interval_seconds': 10.0})
++        service._client = SimpleNamespace(is_connected=True)
++        service._last_task_finished_at = clock[0]
++        return service, calls
++
++    def frame(self, clock, seq):
++        return {'schemaVersion': 1, 'sessionId': 'heartbeat-fixture', 'seq': seq,
++                'observedAt': clock[0] * 1000, 'online': True, 'recentEvents': [],
++                'state': {'self': {'position': {'x': 101.5, 'y': 66, 'z': 203.5}, 'health': 20,
++                                   'food': 20, 'oxygen': 20},
++                          'world': {'dimension': 'overworld', 'timeOfDay': 1000 + seq, 'age': seq},
++                          'activity': {'action': '', 'skill': None, 'digging': None,
++                                       'mobility': {'state': 'FREE', 'since': 1000}},
++                          'inventory': {'counts': {'iron_ingot': 3}},
++                          'nearby': {'sampledBlocks': [{'name': 'stone', 'position': {'x': seq, 'y': 64, 'z': 200}}],
++                                     'entities': [{'id': 12, 'name': 'villager',
++                                                  'position': {'x': 103 + seq/10, 'y': 66, 'z': 204}}]},
++                          'server': {'channels': {'mcagent:state': {'observedAt': clock[0]*1000,
++                                      'value': {'tick': seq, 'mana': 20 + seq % 10}}}}}}
++
++    async def test_clock_entity_and_routine_server_telemetry_do_not_reset_backoff(self):
++        clock = [1000.0]
++        service, calls = self.service(clock)
++        seq = [0]
++
++        async def step(_):
++            clock[0] += .5
++            if clock[0] > 1090:
++                raise asyncio.CancelledError
++            if clock[0] % 2 == 0:
++                seq[0] += 1
++                await service._on_game_state(self.frame(clock, seq[0]))
++
++        module = 'plugin.plugins.game_agent_minecraft.service'
++        with patch(module + '.time.time', lambda: clock[0]), patch(module + '.asyncio.sleep', step):
++            await service._system_prompt_loop()
++        wakes = [stamp - 1000 for stamp, call in calls if call['ai_behavior'] == 'respond']
++        self.assertEqual(wakes, [10.0, 40.0], 'unchanged idle should back off to 30 then 60 seconds')
++
++    async def test_unchanged_facts_are_not_requeued_and_inventory_change_is_published(self):
++        clock = [1000.0]
++        service, calls = self.service(clock)
++        module = 'plugin.plugins.game_agent_minecraft.service'
++        with patch(module + '.time.time', lambda: clock[0]):
++            for seq in range(20):
++                clock[0] = 1000 + seq * 2
++                await service._on_game_state(self.frame(clock, seq))
++            self.assertEqual(len(calls), 1, 'routine ticks must not append duplicate passive callbacks')
++            clock[0] = 1040
++            changed = self.frame(clock, 21)
++            changed['state']['inventory']['counts']['oak_log'] = 2
++            await service._on_game_state(changed)
++        self.assertEqual(len(calls), 2)
++        self.assertIn('oak_log', calls[-1][1]['parts'][0]['text'])
++        self.assertTrue(all(call['ai_behavior'] == 'read' for _, call in calls))
++
++    async def test_running_task_timer_does_not_requeue_unchanged_context(self):
++        clock = [1000.0]
++        service, calls = self.service(clock)
++        service._pending = SimpleNamespace(task_text='寻找木材', start_time=1000)
++        service._task_finished = False
++        module = 'plugin.plugins.game_agent_minecraft.service'
++        with patch(module + '.time.time', lambda: clock[0]):
++            await service._on_game_state(self.frame(clock, 1))
++            for stamp in (1030, 1060, 1090):
++                clock[0] = stamp
++                await service._on_game_state(self.frame(clock, stamp))
++                await service._fire_in_progress_nudge()
++        self.assertEqual(len(calls), 1)
++
++    async def test_new_private_message_bypasses_passive_state_throttle(self):
++        clock = [1000.0]
++        service, calls = self.service(clock)
++        module = 'plugin.plugins.game_agent_minecraft.service'
++        with patch(module + '.time.time', lambda: clock[0]):
++            await service._on_game_state(self.frame(clock, 1))
++            clock[0] += 1
++            data = self.frame(clock, 2)
++            data['recentEvents'] = [{'id': 'new-whisper', 'kind': 'whisper', 'player': 'Friend_1',
++                                    'text': '要不要一起去矿洞？', 'observedAt': clock[0] * 1000}]
++            await service._on_game_state(data)
++        self.assertEqual(calls[-1][1]['ai_behavior'], 'respond')
++        self.assertIn('Friend_1', calls[-1][1]['parts'][0]['text'])
++
++    async def test_rejected_passive_push_does_not_mark_facts_delivered(self):
++        clock = [1000.0]
++        service, calls = self.service(clock)
++        attempts = []
++        def submit(**kw):
++            attempts.append(kw)
++            return {'submitted': len(attempts) > 1}
++        service._push_message = submit
++        module = 'plugin.plugins.game_agent_minecraft.service'
++        with patch(module + '.time.time', lambda: clock[0]):
++            await service._on_game_state(self.frame(clock, 1))
++            clock[0] += 16
++            await service._on_game_state(self.frame(clock, 2))
++        self.assertEqual(len(attempts), 2)
++
++    async def test_skill_readiness_and_downed_teammates_remain_decision_changes(self):
++        clock = [1000.0]
++        service, _ = self.service(clock)
++        info = service._game_observations
++        module = 'plugin.plugins.game_agent_minecraft.service'
++        with patch(module + '.time.time', lambda: clock[0]):
++            revisions = []
++            for seq, cooldown, downed in ((1, 3000, []), (2, 2000, []), (3, 0, []), (4, 0, ['Friend_1'])):
++                data = self.frame(clock, seq)
++                data['state']['server']['channels']['mcagent:state']['value'].update(
++                    abilities=[{'id': 'mycli:prospect', 'cooldownRemainingMs': cooldown}],
++                    trialRescue={'downedTeammates': downed})
++                await service._on_game_state(data)
++                revisions.append(info.decision_revision)
++        self.assertEqual(revisions, [1, 1, 2, 3])
++
++
++if __name__ == '__main__':
++    unittest.main()
