@@ -1,5 +1,6 @@
 import { plainText } from './books.js';
 import { isMerchantWindow, merchantOffers, waitForMerchantOffers } from './merchant_trades.js';
+import { backpackSource, describeBackpackWindow } from './portable_storage.js';
 
 // Mineflayer's openVillager assumes a vanilla merchant window and rejects
 // server NPCs backed by generic inventory menus (also leaking its trade-list
@@ -33,6 +34,7 @@ export async function openNpcTradingInterface(bot, entity) {
 export function describeMenu(bot) {
     const window = bot.currentWindow;
     if (!window) return 'No server menu is open. Use the relevant item or interact first.';
+    if (backpackSource(window)) return describeBackpackWindow(bot);
     const end = Math.min(window.inventoryStart, window.slots.length);
     if (!Number.isInteger(end) || end < 0) return 'Menu slot boundaries are unavailable.';
     const lines = [`MENU id=${window.id} type=${window.type} title=${plainText(window.title).slice(0, 160)}`,

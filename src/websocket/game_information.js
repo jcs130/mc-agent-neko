@@ -3,10 +3,23 @@ import { plainText } from '../agent/library/books.js';
 import { readItemIdentity } from '../agent/library/item_identity.js';
 import { activeServerCommand } from './server_commands.js';
 import { applyMerchantTrades, merchantOffers } from '../agent/library/merchant_trades.js';
+import { backpackSource } from '../agent/library/portable_storage.js';
 
 // Observation only: this module never sends game packets, chat or actions.
 const finite = value => typeof value === 'number' && Number.isFinite(value) ? value : null;
 const point = value => value ? { x: finite(value.x), y: finite(value.y), z: finite(value.z) } : null;
+
+function loadedContainers(bot, position) {
+    if (!position || typeof bot.findBlocks !== 'function') return [];
+    const matching = Object.values(bot.registry?.blocksByName || {}).filter(block =>
+        /^(?:chest|trapped_chest|barrel|ender_chest|(?:\w+_)?shulker_box)$/.test(block.name)).map(block => block.id);
+    if (!matching.length) return [];
+    try {
+        return bot.findBlocks({ matching, maxDistance: 16, count: 6 }).map(pos => bot.blockAt(pos))
+            .filter(Boolean).map(block => ({ name: block.name, position: point(block.position),
+                distance: Math.round(distance(position, block.position) * 10) / 10 }));
+    } catch { return []; }
+}
 
 function guardOwnOxygen(bot) {
     const key = bot.registry?.entitiesByName?.player?.metadataKeys?.indexOf('air_supply');
@@ -168,6 +181,7 @@ export function collectGameState(agent, presentation = {}) {
         // Keep local collision facts and real chat targets ahead of verbose
         // entity metadata. Otherwise a crowded scene hides how to get unstuck.
         nearby: { radius: 32, onlinePlayers: Object.keys(bot.players ?? {}).slice(0, 64),
+            containers: loadedContainers(bot, pos),
             under: blockState(below), feet: pos ? blockState(blockAt(0, 0, 0)) : null,
             head: pos ? blockState(blockAt(0, 1, 0)) : null,
             entities: entities.slice(0, 32).map(entity => ({ id: entity.id, name: entity.name,
@@ -180,6 +194,7 @@ export function collectGameState(agent, presentation = {}) {
             signs: presentation.signs ?? [] },
         window: window ? { id: window.id, type: window.type, title: gameText(window.title),
             inventoryStart: window.inventoryStart, inventoryEnd: window.inventoryEnd,
+            portableStorage: backpackSource(window),
             merchantOffers: merchantOffers(window),
             selectedItem: itemState(window.selectedItem), slots: window.slots?.map(itemState).filter(Boolean),
             properties: presentation.windowProperties ?? {}, trades: presentation.trades ?? null } : null,

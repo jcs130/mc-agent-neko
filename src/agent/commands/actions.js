@@ -2,6 +2,7 @@ import * as skills from '../library/skills.js';
 import { sendServerCommand } from '../../websocket/server_commands.js';
 import { clickMenuSlot, describeMenu } from '../library/menus.js';
 import { tradeAtWindow } from '../library/merchant_trades.js';
+import { openBackpack, moveBackpackItem, describeBackpackWindow } from '../library/portable_storage.js';
 import settings from '../settings.js';
 import convoManager from '../conversation.js';
 
@@ -913,6 +914,31 @@ export const actionsList = [
             slot: { type: 'int', description: 'Nonempty menu slot returned by !window; player inventory slots are excluded.' },
         },
         perform: (agent, windowId, slot) => clickMenuSlot(agent.bot, windowId, slot),
+    },
+    {
+        name: '!openBackpack',
+        description: 'Open a received named backpack by exact inventory slot, even if its base ID is player_head. Reads the actual storage window; never places a head. Use !inventory to find the custom label and slot.',
+        params: { slot: { type: 'int', description: 'Observed inventory slot of the named backpack.', domain: [9, 46] } },
+        perform: runAsAction(async (agent, slot) => {
+            const result = await openBackpack(agent.bot, slot);
+            skills.log(agent.bot, result.message);
+            if (result.success) skills.log(agent.bot, describeBackpackWindow(agent.bot));
+            return result.success;
+        }),
+    },
+    {
+        name: '!moveBackpackItem',
+        description: 'Transfer one observed source slot in the CURRENT verified backpack. A source in player inventory deposits; a storage source withdraws. Query !window for current ID and both slot ranges. Requires real server confirmation, refuses nested backpacks and full destinations.',
+        params: {
+            window_id: { type: 'int', description: 'Verified backpack window ID from !window.', domain: [1, Number.MAX_SAFE_INTEGER] },
+            slot: { type: 'int', description: 'Observed nonempty source slot from !window; not the separate inventory slot numbering.', domain: [0, 91] },
+            count: { type: 'int', description: 'Positive quantity no greater than the observed source stack.', domain: [1, 65] },
+        },
+        perform: runAsAction(async (agent, windowId, slot, count) => {
+            const result = await moveBackpackItem(agent.bot, windowId, slot, count);
+            skills.log(agent.bot, result.message);
+            return result.success;
+        }),
     },
     {
         name: '!useOn',
