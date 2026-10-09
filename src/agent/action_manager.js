@@ -25,6 +25,8 @@ export class ActionManager {
 
     async stop(fromTimeout = false) {
         if (!this.executing) return;
+        const bot = this.agent.bot, actionFn = this.currentActionFn;
+        const sameAction = () => this.agent.bot === bot && this.currentActionFn === actionFn;
 
         let waitTime = 0;
         const checkInterval = 300; // Check every 300ms
@@ -34,7 +36,7 @@ export class ActionManager {
         const maxWaitTime = 15000; // 15s interrupt window before escalating
         let lastLogTime = 0;
 
-        while (this.executing && waitTime < maxWaitTime) {
+        while (this.executing && sameAction() && waitTime < maxWaitTime) {
             this.agent.requestInterrupt();
 
             // Only log occasionally to avoid spam
@@ -47,6 +49,10 @@ export class ActionManager {
             waitTime += checkInterval;
         }
 
+        if (!sameAction()) {
+            this._releaseRetiredAction(bot, actionFn);
+            return;
+        }
         if (this.executing) {
             // ★2026-07-08 用户令: 动作 15s 拒绝停止【绝不 process.exit】。强制放行(置 executing=false,
             //   让重连后的新动作能跑) + reconnectNow 重进世界。挂死的旧动作攥着旧 bot, 重连后对旧 bot
@@ -74,6 +80,18 @@ export class ActionManager {
         this.resume_name = null;
     }
 
+    _releaseRetiredAction(bot, actionFn) {
+        if (this.agent.bot === bot) return false;
+        // A disconnected action cannot stop or clear work on its replacement.
+        // If nothing replaced that action yet, release only its old busy flag.
+        if (this.currentActionFn === actionFn) {
+            this.executing = false;
+            this.currentActionLabel = '';
+            this.currentActionFn = null;
+        }
+        return true;
+    }
+
     async _executeResume(actionLabel = null, actionFn = null, timeout = 10) {
         const new_resume = actionFn != null;
         if (new_resume) { // start new resume
@@ -93,6 +111,7 @@ export class ActionManager {
 
     async _executeAction(actionLabel, actionFn, timeout = 10) {
         let TIMEOUT;
+        const bot = this.agent.bot;
         try {
             if (this.last_action_time > 0) {
                 let time_diff = Date.now() - this.last_action_time;
@@ -131,6 +150,7 @@ export class ActionManager {
                 console.log(`action "${actionLabel}" trying to interrupt current action "${this.currentActionLabel}"`);
             }
             await this.stop();
+            if (this.agent.bot !== bot) return { success: false, message: 'Action interrupted by connection change before execution.', interrupted: true, timedout: false };
 
             // clear bot logs and reset interrupt code
             this.agent.clearBotLogs();
@@ -146,6 +166,10 @@ export class ActionManager {
 
             // start the action
             await actionFn();
+            if (this._releaseRetiredAction(bot, actionFn)) {
+                clearTimeout(TIMEOUT);
+                return { success: false, message: 'Action interrupted by connection change; reobserve the current game state.', interrupted: true, timedout: false };
+            }
 
             // mark action as finished + cleanup
             this.executing = false;
@@ -167,6 +191,10 @@ export class ActionManager {
             // return action status report
             return { success: true, message: output, interrupted, timedout };
         } catch (err) {
+            if (this._releaseRetiredAction(bot, actionFn)) {
+                clearTimeout(TIMEOUT);
+                return { success: false, message: `Action interrupted by connection change: ${err.message || err}`, interrupted: true, timedout: false };
+            }
             this.executing = false;
             this.currentActionLabel = '';
             this.currentActionFn = null;
@@ -229,7 +257,9 @@ export class ActionManager {
     }
 
     _startTimeout(TIMEOUT_MINS = 10) {
+        const bot = this.agent.bot, actionFn = this.currentActionFn;
         return setTimeout(async () => {
+            if (!this.executing || this.agent.bot !== bot || this.currentActionFn !== actionFn) return;
             console.warn(`Code execution timed out after ${TIMEOUT_MINS} minutes. Attempting force stop.`);
             this.timedout = true;
             this.agent.history.add('system', `Code execution timed out after ${TIMEOUT_MINS} minutes. Attempting force stop.`);
