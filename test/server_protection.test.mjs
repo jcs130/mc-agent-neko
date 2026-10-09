@@ -181,3 +181,18 @@ test('an asynchronously emitted structured denial also supersedes tentative perm
     await assert.rejects(bot.dig(target), /original_building/);
     assert.equal(guard.isDenied('break', target.position), true);
 });
+
+test('explicit permission queries update the body cache without starting an action', async () => {
+    const { sendServerCommand } = await import('../src/websocket/server_commands.js');
+    const bot = fixture();
+    const guard = await install(bot);
+    let response = reply('deny', false);
+    bot.chat = () => bot.emit('messagestr', 'MC_PROTECTION ' + JSON.stringify(response.records[0].value), 'system');
+    const query = { command: '/mycli protect break -574 73 -505', readOnly: true };
+    await sendServerCommand(bot, query, { quietMs: 2, timeoutMs: 40 });
+    assert.equal(guard.isDenied('break', target.position), true);
+    assert.equal(bot.digs.length, 0);
+    response = reply();
+    await sendServerCommand(bot, query, { quietMs: 2, timeoutMs: 40 });
+    assert.equal(guard.isDenied('break', target.position), true, 'a tentative reply cannot erase an unexpired known denial');
+});

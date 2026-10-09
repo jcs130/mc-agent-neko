@@ -115,6 +115,19 @@ export function installServerProtection(bot, {
         if (position !== 'system' || sender) return;
         const text = String(line).replace(/§[0-9a-fk-or]/gi, '').trim();
         if (/^MC_PROTECTION\s+\{/.test(text) || /\/mycli protect (?:break|break\|place)/.test(text)) enabled = true;
+        const query = activeServerCommand(bot)?.command;
+        if (query && text.startsWith('MC_PROTECTION ')) {
+            try {
+                const value = JSON.parse(text.slice('MC_PROTECTION '.length));
+                const p = coordinates(value);
+                if (p && value.schemaVersion === 1 && value.status === 'deny' && value.allowed === false &&
+                    value.world === worldName(bot) && /^(break|place|container|use)$/.test(value.action) &&
+                    query === `/mycli protect ${value.action} ${p.x} ${p.y} ${p.z}`) {
+                    remember({ action: value.action, world: value.world, ...p, status: 'deny', allowed: false,
+                        reason: String(value.reason || 'server_denied').slice(0, 240), source: 'server_query', observedAt: now() });
+                }
+            } catch { /* only a matching valid server record can add a denial */ }
+        }
         if (!activeDig || activeServerCommand(bot)) return;
         let reason;
         const match = /^MC_PROTECTION\s+(\{.*\})$/.exec(text);
