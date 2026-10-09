@@ -20,3 +20,12 @@ Neko's natural-language idle latch missed the still-active structured skill.
 Regression tests cover startup reservation, survival/companion yielding,
 ownership changing during an awaited decision, explicit task availability,
 and preserving interrupts without taking the body.
+
+Validation: 223 native tests passed; the companion plugin's 74 tests passed.
+The deployment config explicitly sets `external_autonomy_owner: "neko"`.
+A passive 55-second observation of a genuine Neko mining mission recorded
+16 blocks of movement, inventory changes, and 17 active snapshots, with no
+independent kernel commit or failed body handoff. The existing local Qwen
+endpoint and LAN viewer were healthy. See trial artifacts
+`query-loop-actual-task-20261009.json` and
+`neko-stuck-final-health-20261009.json` under `D:/neko-mc-trial/`.
