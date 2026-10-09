@@ -54,7 +54,7 @@ git rev-parse HEAD:plugin/plugins/game_agent_minecraft
 The exported plugin passed 155 tests. The manifest records the exact reproduced
 plugin tree and host-file blobs. The host callback/media regression suite passed
 195 tests, including six new Minecraft budget tests. The matching native body
-passed 405 tests; this contribution branch passed 411 tests. The existing
+passed 426 tests; this contribution branch passed 432 tests. The existing
 mineDown contract test also passed.
 
 Follow the patched plugin's README for the existing N.E.K.O. plugin lifecycle,
@@ -162,8 +162,8 @@ selection can still be wrong; no diagnostic gameplay commands were injected.
 
 See the exported plugin's
 `docs/2026-10-09-decision-context-budget.md` for the scheduling table and limits.
-The final plugin suite passed 155 tests, the matching native source passed 405,
-and this contribution branch passed 411.
+The final plugin suite passed 155 tests, the matching native source passed 426,
+and this contribution branch passed 432.
 
 After the final reload, a separate passive window confirmed another autonomous
 task with 5.2 blocks of movement and no handoff failure. A subsequent fresh
@@ -172,6 +172,18 @@ previously 128 and 17). The body reported completion and the main model dispatch
 its next task. Health was 20 and food 17. The viewer returned HTTP 200 and the
 supervisor reported all services ready with zero recoveries. This verifies a
 short task transition, not the correctness or eventual success of the next goal.
+
+The native executor also preserves explicit failed action results and stops the
+remaining fixed batch on failure or argument rejection. Default fixed batches
+contain at most three commands; after a completed action takes the accumulated
+batch to 30 seconds, the model receives a fresh decision boundary. Healthy skills
+are not forcibly stopped by this batch budget. A reflex invocation is bound to
+its original body and cannot interrupt itself merely because a watchdog reset
+its active flag. Retired-body completions cannot clear a new mode invocation.
+See [the action feedback and learning audit](../../docs/neko-action-feedback-and-learning-2026-10-09.md)
+for the root causes, regression scope and the currently disabled generated-code
+path. Experience memory and existing skill discovery are enabled; automatic
+skill evaluation/promotion and model-weight training are not implemented.
 
 ## Approved host bridge fix
 

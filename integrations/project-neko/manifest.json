@@ -212,8 +212,8 @@
     "pluginTestsPassed": 155,
     "hostCallbackTestsPassed": 195,
     "hostFileBlobsMatchSource": true,
-    "nativeSourceTestsPassed": 405,
-    "contributionTestsPassed": 411,
+    "nativeSourceTestsPassed": 426,
+    "contributionTestsPassed": 432,
     "existingMineDownContractTestsPassed": 1
   },
   "hostPatches": [
@@ -257,5 +257,25 @@
     "finalReloadHandoffFailures": 0,
     "finalReloadLocalModelReady": true,
     "finalReloadLanViewerHttpStatus": 200
+  },
+  "actionFeedbackVerification": {
+    "newOfflineTestsPassed": 21,
+    "nativeSourceTestsPassed": 426,
+    "contributionTestsPassed": 432,
+    "defaultBatchCommands": 3,
+    "batchBudgetSeconds": 30,
+    "budgetOnlyBetweenCompletedCommands": true,
+    "explicitFailureCancelsRemainder": true,
+    "sameReflexInvocationCoalesced": true,
+    "retiredBodyDoesNotReleaseNewBody": true,
+    "generatedCodeEnabled": false,
+    "automaticSkillPromotionImplemented": false,
+    "diagnosticGameTasksOrChatSent": 0,
+    "passiveTaskTransitionObserved": true,
+    "passiveMovementBlocks": 3.55,
+    "passiveInventoryChanged": true,
+    "passiveHandoffFailures": 0,
+    "supervisorRecoveriesInReloadedSession": 0,
+    "longRunReliabilityProven": false
   }
 }
