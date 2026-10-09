@@ -7,6 +7,7 @@ import pf from 'mineflayer-pathfinder';
 import Vec3 from 'vec3';
 import { unclimbVines } from './vine_unstick.js';
 import { openNpcTradingInterface } from './menus.js';
+import { threatCanReachBot } from '../combat_policy.js';
 import settings from "../../../settings.js";
 import path from 'path';
 import { pathToFileURL } from 'url';
@@ -1144,7 +1145,7 @@ export async function defendSelf(bot, range=9) {
     // 打不动怪不选为目标 — 否则 mode 层不 engage 它, 但为别的怪进来的 defendSelf 内循环又会
     // 把它捞回来, 断路器被驱动层旁路。被它真打中时 modes 层会立即摘除黑名单 (挨打必还手)。
     const _engageable = (entity) => {
-        if (!mc.isHostile(entity)) return false;
+        if (!mc.isHostile(entity) || /creeper/i.test(entity.name || '') || !threatCanReachBot(bot, entity)) return false;
         const m = bot._futileMobIds;
         return !(m instanceof Map) || entity.id == null || !((m.get(entity.id) || 0) > Date.now());
     };

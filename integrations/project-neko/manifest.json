@@ -1,9 +1,9 @@
 {
   "upstreamRepository": "https://github.com/Project-N-E-K-O/N.E.K.O",
   "baseCommit": "fb2a2e731a8c954478d08678b0c8cf40e8145a54",
-  "sourceCommit": "d6758ecb38d65cfd1bb60c5816ad6d24e93d6b73",
+  "sourceCommit": "13681e1e9d6802ad674940f4408a956d5a9ea98e",
   "scope": "plugin/plugins/game_agent_minecraft",
-  "resultPluginTree": "d6611bcbba488136c4536709339cecd501645bb6",
+  "resultPluginTree": "8a9c8464d03d86731cfecd6dbd2faf7f871c7185",
   "patches": [
     {
       "file": "0001-chore-configure-text-only-local-Qwen-Minecraft-trial.patch",
@@ -220,6 +220,10 @@
     {
       "file": "0054-fix-minecraft-retain-quest-focus-when-market-checks-.patch",
       "sha256": "e82cdab4f6f923350dcda9a604e8aae433f24a179558371cdf0c6831e0436913"
+    },
+    {
+      "file": "0055-fix-minecraft-retain-combat-equipment-for-survival-p.patch",
+      "sha256": "c6cfd8d51ac0969759aa33a2a4af50c3fb466b485cad99875ff6c8c72e8009c4"
     }
   ],
   "verification": {
@@ -367,5 +371,15 @@
       859
     ],
     "mainModelTurnContainedSelectedQuest": true
+  },
+  "survivalCombatRepairVerification": {
+    "date": "2026-10-10",
+    "nativeTestsPassed": 507,
+    "pluginTestsPassed": 172,
+    "combatHandoffTestsPassed": 11,
+    "pluginSeriesReplayMatchesSource": true,
+    "pluginPatchCount": 55,
+    "addedLintErrors": 0,
+    "longRunSurvivalProven": false
   }
 }

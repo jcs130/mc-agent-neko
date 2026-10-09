@@ -21,6 +21,7 @@ import { resolve as arbitrate, setBodyOwner, releaseBodyOwner, currentOwner as a
 import { foodInstinctsEnabled } from './framework/contracts.js';
 import { chooseHealingPotion, shouldAutoEat } from './framework/healing_reflex.js';
 import { observeStallContext, recoveryMovedEnough } from './stall_recovery.js';
+import { hasMeleeWeapon, threatCanReachBot } from './combat_policy.js';
 
 const FAMINE_FOOD_RE = /cooked_|_bread|^bread$|apple|golden_apple|carrot|potato|beef|porkchop|chicken|mutton|cod|salmon|melon_slice|sweet_berries|_stew|rabbit|baked_|rotten_flesh|spider_eye/;
 const NORMAL_FOOD_RE = /cooked_|_bread|^bread$|apple|golden_apple|carrot|potato|beef|porkchop|chicken|mutton|cod|salmon|melon_slice|sweet_berries|_stew|rabbit|baked_/;
@@ -282,7 +283,7 @@ function armoredSoloBrawl(bot) {
         let worn = false;
         for (let i = 5; i <= 8; i++) { if (sl[i] && armorRe.test(sl[i].name || '')) { worn = true; break; } }   // 穿戴中才减伤
         if (!worn) return false;
-        return bot.inventory.items().some(i => /_sword$|_axe$/.test(i.name) && !/pickaxe/.test(i.name));   // 有武器才谈死战
+        return hasMeleeWeapon(bot);
     } catch (e) { return false; }
 }
 
@@ -617,13 +618,6 @@ const modes_list = [
                 //   ★唯一兜底 (用户: "被打到后照常逃跑/防御/战斗, 其他情况不管, 越近判定越准所以没事"):
                 //   4s 内被打到 = 铁证够得到 → 门 OFF, 全部照算。creeper 天然不进此门 (threat_radar 不给它
                 //   算 reach → 永无 connected=false → 永不被滤; 主防御走 nearestCreeper)。
-                const _hurt4 = Date.now() - (bot.lastDamageTime || 0) < 4000;
-                const _reach = bot._threatReach;
-                const _unreachable = (e) => {
-                    if (_hurt4 || !_reach) return false;
-                    const r = _reach[e.id];
-                    return !!(r && (Date.now() - r.at) < 4000 && r.connected === false);
-                };
                 return Object.values(bot.entities).filter(e => {
                     if (!(e && e !== bot.entity && e.position && mc.isHostile(e))) return false;
                     if (e.position.distanceTo(bot.entity.position) >= 10) return false;
@@ -631,9 +625,9 @@ const modes_list = [
                     // "威胁"物理够不到bot(y71骷髅 vs y62bot 整夜零命中),却让 sp 永久占
                     // 身体,凿崖/作业层结构性饿死。近战怪隔≥5格高差打不到人;远程怪(skeleton/
                     // stray/pillager/witch)箭/药水越高差保留。creeper 走 nearestCreeper 不受影响。)
-                    if (/skeleton|stray|pillager|witch|blaze|ghast/.test((e.name || '').toLowerCase())) return !_unreachable(e);
+                    if (/skeleton|stray|pillager|witch|blaze|ghast/.test((e.name || '').toLowerCase())) return threatCanReachBot(bot, e);
                     if (Math.abs(e.position.y - bot.entity.position.y) >= 5) return false;
-                    return !_unreachable(e);   // ★水平连通性门 (见上): 隔墙/隔沟够不到 → 不算威胁
+                    return threatCanReachBot(bot, e);   // Fresh wall/path evidence is shared with combat.
                 });
             } catch (e) { return []; }
         },
@@ -856,20 +850,19 @@ const modes_list = [
                 return best;
             } catch (e) { return null; }
         },
-        // ★2026-07-07 甲兵贴脸僵尸死战 (用户令 · 尽量精准): 穿戴护甲时, 僵尸类怪(zombie/husk/drowned,
-        // 含 zombie_villager)贴脸(<3.5b) → 站撸不逃、不夜宿, 让位 self_defense 的 shieldFight。
-        // 依据: 护甲把僵尸近战伤压得很低, 而"贴脸时逃跑"=被同速僵尸背刺(逃跑反挨打更亏), 站撸更省血。
-        // 精准边界:
-        //   · 仅"贴脸"生效 — 怪一旦离身(>3.5b)立即恢复常规逃跑/夜宿判定, 不追不冒进。
-        //   · 仅"穿戴"护甲(slot 5-8)成立 — 背包里的甲不减伤, 那时站撸=裸战送死, 不适用。
-        //   · 铁律例外(绝不越): 8格内有苦力怕(贴脸爆炸秒杀, 甲无效)→ 不适用, 交常规逃跑分支拉开距离;
-        //     hp≤4掉血/溺水/着火 硬地板由 arbiter.vitalNow 独立夺体逃命 — 顶着恐惧打, 但绝不站着自杀。
+        // Yield retreat/shelter only to an executable close zombie fight:
+        // worn armor, a melee weapon, fewer than three nearby attackers, and no
+        // close creeper. Armor by itself cannot trigger self_defense.
         armoredZombieBrawl: function (bot) {
             try {
-                if (!bot || !bot.entity) return false;
+                if (!bot || !bot.entity || !hasMeleeWeapon(bot)) return false;
                 const p = bot.entity.position;
+                const hostiles = this.nearbyHostiles(bot);
+                // self_defense refuses a three-mob swarm. Never suppress retreat
+                // for a fight that the receiving mode cannot actually execute.
+                if (hostiles.filter(e => e.position.distanceTo(p) < 8).length >= 3) return false;
                 let creeperClose = false, zombiePointBlank = false;
-                for (const e of Object.values(bot.entities || {})) {
+                for (const e of hostiles) {
                     if (!(e && e.position && e.name)) continue;
                     const d = e.position.distanceTo(p);
                     if (/creeper/i.test(e.name) && d < 8) { creeperClose = true; break; }   // 爆炸威胁优先, 直接不适用
@@ -914,10 +907,10 @@ const modes_list = [
                     e && e.position && e.name && _HR0.test(e.name) && e.position.distanceTo(bot.entity.position) < 8);
                 if (_near8.length === 1 && !/creeper/i.test(_near8[0].name)
                     && _near8[0].position.distanceTo(bot.entity.position) < 4.5
-                    && bot.inventory.items().some(i => /_sword$|_axe$/.test(i.name))) return false;
+                    && hasMeleeWeapon(bot)) return false;
             }
-            // ★ARMORED ZOMBIE BRAWL (见 armoredZombieBrawl): 穿甲 + 僵尸类贴脸 → 死战不逃, 越过下方所有
-            // 常规退避档(无盾被远程 / 无盾打不过 / 僵尸群围殴)。仅贴脸生效, creeper/vitalNow 硬地板不越。
+            // Equipped close zombie fights can yield to self_defense; unarmed
+            // bodies and swarms must retain a real retreat path.
             if (this.armoredZombieBrawl(bot)) return false;
             // ★ARMORED SOLO BRAWL (见模块级 armoredSoloBrawl): 穿甲 + 有武器 + 全场仅一只非苦力怕怪 →
             // 死战不逃, 越过下方所有常规退避档(无盾被远程 / 无盾打不过)。含骷髅远射。creeper/vitalNow 不越。
@@ -928,19 +921,12 @@ const modes_list = [
             // Always back away from a creeper within 6 (shieldFight also avoids, but
             // fleeing here is higher priority so we disengage before it detonates).
             if (hostiles.some(e => (e.name || '').toLowerCase().includes('creeper') && e.position.distanceTo(bot.entity.position) < 8)) return true;
-            const hasWeapon = bot.inventory.items().some(i => /_sword$|_axe$/.test(i.name));
+            const hasWeapon = hasMeleeWeapon(bot);
             const hasShield = bot.inventory.items().some(i => i.name === 'shield') || (bot.inventory.slots[45] && bot.inventory.slots[45].name === 'shield');
             const recentlyHurt = Date.now() - bot.lastDamageTime < 3000;
-            // ★HEALTHY-UNARMED BOOTSTRAP EXIT (fix: respawn-unarmed perpetual dig-in livelock).
-            // A fresh respawn carries no weapon. Fleeing / "digging in" forever vs a single melee
-            // mob at full hp means the bot can NEVER chop wood and craft a sword — it just spams
-            // "Outmatched — digging in!" ~3x/second, gets anchored→MAROONED, and stays locked until
-            // it dies, respawns unarmed, and repeats (the whole multi-hour stall). Facing exactly
-            // ONE non-ranged, non-creeper mob, do NOT flee: let the bot move and bootstrap
-            // (or punch it). One melee mob can't kill a full-hp bot before it acts. Ranged/creeper/
-            // swarm/recently-hurt-by-skeleton are all handled above and still flee.
-            if (!hasWeapon && hostiles.length === 1
-                && !/skeleton|stray|creeper|witch|ghast|blaze|pillager/i.test(hostiles[0].name || '')) return false;
+            // A distant melee mob still permits bootstrap work via the distance
+            // gate below. Once it closes in or deals damage, an unarmed body
+            // must retreat: self_defense requires a real melee weapon.
             // With a sword AND shield we can actually WIN (block arrows/hits, close,
             // strike) — don't flee, let self_defense's shieldFight take it. Only flee
             // when truly outmatched: critically low, or genuinely swarmed (3+).
@@ -1188,7 +1174,7 @@ const modes_list = [
             // swarm) DON'T shelter — let self_defense stand and kill the mobs (a human with iron
             // sword+shield drops 1-2 zombies trivially). Only bunker when NAKED/weak/swarmed
             // (the early-game case the night instinct was actually for).
-            const hasSword = bot.inventory.items().some(i => /_sword$/.test(i.name));
+            const hasWeapon = hasMeleeWeapon(bot);
             const hasShield = bot.inventory.items().some(i => i.name === 'shield') || (bot.inventory.slots[45] && bot.inventory.slots[45].name === 'shield');
             const hostiles = this.nearbyHostiles(bot);
             const swarm = hostiles.length;
@@ -1203,11 +1189,11 @@ const modes_list = [
             const _RANGED = /skeleton|stray|witch|ghast|blaze|pillager/i;
             const _me = bot.entity.position;
             const _closest = swarm ? Math.min(...hostiles.map(e => e.position.distanceTo(_me))) : 99;
-            const soloMeleeFinisher = hasSword && swarm === 1 && _closest < 4.5
+            const soloMeleeFinisher = hasWeapon && swarm === 1 && _closest < 4.5
                 && !/creeper/i.test(hostiles[0].name || '')
                 && !_RANGED.test(hostiles[0].name || '');
             if (soloMeleeFinisher) return false;
-            const canWin = hasSword && hasShield && swarm < 3;
+            const canWin = hasWeapon && hasShield && swarm < 3;
             return !canWin;
         },
         // ★CREEPER PUNCH-BACK (P0 enclosed-pocket creeper death — proactive primitive #1).
@@ -3602,14 +3588,16 @@ const modes_list = [
             // was a suicidal conflict with self_preservation's back-off reflex). Creepers are
             // handled ONLY by self_pres (sprint to >9 blocks). self_defense never engages them.
             // ★C360: 黑名单(futile-fight 断路器)mob 不 engage — 见 recordFightOutcome 注释。
-            const enemy = world.getNearestEntityWhere(bot, entity => mc.isHostile(entity) && !/creeper/i.test(entity.name || '') && !isFutileMob(bot, entity), range);
+            const enemy = world.getNearestEntityWhere(bot, entity => mc.isHostile(entity)
+                && threatCanReachBot(bot, entity) && !/creeper/i.test(entity.name || '') && !isFutileMob(bot, entity), range);
             // Combat is selected from the live threat and available equipment, never
             // from an absolute-health gate. Without a weapon we leave the body to the
             // other threat handlers; a shield only selects the guarded combat path.
-            const hasWeapon = bot.inventory.items().some(i => /_sword$|_axe$/.test(i.name));
+            const hasWeapon = hasMeleeWeapon(bot);
             const hasShield = bot.inventory.items().some(i => i.name === 'shield') || (bot.inventory.slots[45] && bot.inventory.slots[45].name === 'shield');
-            const swarmed = world.getNearestEntityWhere(bot, entity => mc.isHostile(entity), 6) &&
-                Object.values(bot.entities).filter(e => e && mc.isHostile(e) && e.position && e.position.distanceTo(bot.entity.position) < 8).length >= 3;
+            const swarmed = world.getNearestEntityWhere(bot, entity => mc.isHostile(entity) && threatCanReachBot(bot, entity), 6) &&
+                Object.values(bot.entities).filter(e => e && mc.isHostile(e) && e.position
+                    && threatCanReachBot(bot, e) && e.position.distanceTo(bot.entity.position) < 8).length >= 3;
             // ★C353 (T-0063): DISENGAGE the unreachable ranged trap. If we're boxed in a closed pocket
             // and the only threat is a wall-blocked skeleton/stray/pillager we can never melee, stop
             // whiffing at it — return so mobility's POCKET escape (idx 2948, otherwise starved by our

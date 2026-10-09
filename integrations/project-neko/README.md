@@ -1,5 +1,10 @@
 # Project N.E.K.O. companion patches
 
+The latest survival repair retains actual melee equipment in bounded planning
+and emergency context, including unknown inventory states. It pairs with the
+body's corrected combat/retreat handoff for unarmed players, swarms and nearby
+wall-blocked mobs. See [the evidence and verification report](../../docs/neko-survival-combat-2026-10-10.md).
+
 This directory carries the matching Project N.E.K.O. Minecraft plugin changes
 alongside the Minecraft body in this fork. The ordered plugin series includes
 scoped protection receipts, adaptive heartbeat pacing, readable custom items,

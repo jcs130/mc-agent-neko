@@ -1,0 +1,126 @@
+From 13681e1e9d6802ad674940f4408a956d5a9ea98e Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Sat, 10 Oct 2026 01:33:34 +0800
+Subject: [PATCH] fix(minecraft): retain combat equipment for survival planning
+
+---
+ .../game_agent_minecraft/observations.py      | 16 +++++
+ .../plugins/game_agent_minecraft/prompts.py   |  4 +-
+ .../test_survival_equipment_context.py        | 59 +++++++++++++++++++
+ 3 files changed, 77 insertions(+), 2 deletions(-)
+ create mode 100644 plugin/plugins/game_agent_minecraft/test_survival_equipment_context.py
+
+diff --git a/plugin/plugins/game_agent_minecraft/observations.py b/plugin/plugins/game_agent_minecraft/observations.py
+index a696625..3dd4004 100644
+--- a/plugin/plugins/game_agent_minecraft/observations.py
++++ b/plugin/plugins/game_agent_minecraft/observations.py
+@@ -238,10 +238,26 @@ class GameObservations:
+                   'name': str(item['customName'])[:48]}
+                  for item in slots if item.get('customName')]
+         absent = 0 if complete else None
++        melee = {name[:64]: count for name, count in sorted(counts.items())
++                 if name.endswith(('_sword', '_axe'))}
++        own = self.state.get('self') or {}
++        offhand = own.get('offhand') or {}
++        shield = counts.get('shield', absent)
++        if isinstance(offhand, dict) and offhand.get('name') == 'shield':
++            shield = max(shield or 0, 1)
++        combat = {'melee': dict(list(melee.items())[:4]) if melee or complete else None,
++                  'shield': shield}
++        if len(melee) > 4:
++            combat['meleeOmitted'] = len(melee) - 4
++        equipment = own.get('equipment')
++        if isinstance(equipment, list):
++            combat['wornArmor'] = sum(1 for item in equipment if isinstance(item, dict)
++                and str(item.get('name') or '').endswith(('_helmet', '_chestplate', '_leggings', '_boots')))
+         wood = {name[:64]: count for name, count in counts.items()
+                 if name.endswith(('_log', '_wood', '_stem', '_hyphae', '_planks'))
+                 or name == 'bamboo_block'}
+         resources = {
++            'combat': combat,
+             'pickaxes': picks[:6],
+             'wood': dict(list(wood.items())[:6]),
+             'sticks': counts.get('stick', absent),
+diff --git a/plugin/plugins/game_agent_minecraft/prompts.py b/plugin/plugins/game_agent_minecraft/prompts.py
+index df79994..b96f250 100644
+--- a/plugin/plugins/game_agent_minecraft/prompts.py
++++ b/plugin/plugins/game_agent_minecraft/prompts.py
+@@ -803,8 +803,8 @@ PROMPTS.update({
+         "en": "Use game chat only for genuine player replies, help or cooperation; keep tool calls/plans/progress local. You may initiate a private conversation with a real online player using minecraft_chat(player=...). Keep private replies private. Avoid repetition and stop nudging nonresponders; failed whispers never fall back to public chat.",
+     },
+     "AUTONOMOUS_DECISION_BODY": {
+-        "zh": "无人值守有效，停止/暂停优先。先处理危险、脱困和当前目标必需的装备；安全且够用后先核对并继续 serverPlay.focus 的委托，不因探矿回执转去挖煤；没有 focus 再从 routes 选居民事务、公会或试炼，不反复囤材料。沿用未完成玩法目标，每次执行一个短步骤：minecraft_task 操作，minecraft_server 按收到的指引推进；不要做完服务器操作又强行派采矿。serverPlay 只是入口，书页不是当前进度；查真实回执确认资格、接取、完成、领奖，未知先查所选玩法指引，不猜命令。失败换方法，可用已知回城技能或私聊求助。最多补查1项缺失事实，留一轮行动。自动挖掘检查仍禁止绕过 deny/unknown。",
+-        "en": "Unattended play is enabled; stop/pause wins. Resolve danger, escape and equipment needed for the current goal. Once safe/equipped, verify and continue serverPlay.focus; incidental prospecting feedback is not a new goal. Without focus, choose village/guild/trial routes; do not stockpile indefinitely. Continue an unfinished gameplay goal one short step at a time: minecraft_task for movement/actions, minecraft_server for documented server actions. A server action need not be followed by mining. Routes/books are references, not current progress: verify eligibility, acceptance, completion and rewards from actual replies; read the selected guide rather than invent syntax. On failure change methods, use known recovery or private help. Query at most one missing fact, reserve an action round, never bypass deny/unknown.",
++        "zh": "无人值守有效，停止/暂停优先。先处理危险、脱困和当前目标必需的装备；combat.melee={} 表示确认无剑/斧，安全后用现有材料补一把并验证产物，护甲/镐不算近战武器；null 是未知，先查。安全且够用后先核对并继续 serverPlay.focus 的委托，不因探矿回执转去挖煤；没有 focus 再从 routes 选居民事务、公会或试炼，不反复囤材料。沿用未完成玩法目标，每次执行一个短步骤：minecraft_task 操作，minecraft_server 按收到的指引推进；不要做完服务器操作又强行派采矿。serverPlay 只是入口，书页不是当前进度；查真实回执确认资格、接取、完成、领奖，未知先查所选玩法指引，不猜命令。失败换方法，可用已知回城技能或私聊求助。最多补查1项缺失事实，留一轮行动。自动挖掘检查仍禁止绕过 deny/unknown。",
++        "en": "Unattended play is enabled; stop/pause wins. Resolve danger, escape and equipment needed for the current goal. combat.melee={} confirms no sword/axe: once safe, craft one from available supplies and verify the item; armor/pickaxes are not melee weapons. null means unknown: observe first. Once safe/equipped, verify and continue serverPlay.focus; incidental prospecting feedback is not a new goal. Without focus, choose village/guild/trial routes; do not stockpile indefinitely. Continue an unfinished gameplay goal one short step at a time: minecraft_task for movement/actions, minecraft_server for documented server actions. A server action need not be followed by mining. Routes/books are references, not current progress: verify eligibility, acceptance, completion and rewards from actual replies; read the selected guide rather than invent syntax. On failure change methods, use known recovery or private help. Query at most one missing fact, reserve an action round, never bypass deny/unknown.",
+     },
+     "RECOVERY_POLICY": {
+         "zh": "先核对当前工具、木料和工作台，只解决一个可行的前置步骤。连续失败就改用已知脱困技能或私聊在线玩家求助；不要只换措辞重试，也别把等树长成等长链塞进短任务。停止/暂停优先。",
+diff --git a/plugin/plugins/game_agent_minecraft/test_survival_equipment_context.py b/plugin/plugins/game_agent_minecraft/test_survival_equipment_context.py
+new file mode 100644
+index 0000000..cf84940
+--- /dev/null
++++ b/plugin/plugins/game_agent_minecraft/test_survival_equipment_context.py
+@@ -0,0 +1,59 @@
++import unittest
++
++from utils.tokenize import count_tokens
++from .observations import GameObservations
++from .test_observations import frame
++
++
++class SurvivalEquipmentContextTests(unittest.TestCase):
++    def observations(self):
++        data = frame()
++        data['state']['self'].update(health=20, food=20,
++            equipment=[{'slot': 5, 'name': 'iron_helmet'}, {'slot': 6, 'name': 'chainmail_chestplate'}])
++        data['state']['inventory']['counts'] = {
++            **{f'decorative_item_{index}': 1 for index in range(40)},
++            'wooden_pickaxe': 1, 'iron_ingot': 14, 'stick': 22, 'crafting_table': 1, 'wheat': 2}
++        data['state']['nearby'] = {'entities': [{'name': 'zombie', 'distance': 4.7}]}
++        observations = GameObservations()
++        self.assertTrue(observations.ingest_state(data))
++        return observations
++
++    def test_crowded_unarmed_inventory_keeps_combat_gap_and_available_materials(self):
++        observations = self.observations()
++        view = observations.focused_view(mode='decision', max_tokens=700)
++        self.assertEqual(view['resources']['combat']['melee'], {})
++        self.assertEqual(view['resources']['combat']['shield'], 0)
++        self.assertEqual(view['resources']['combat']['wornArmor'], 2)
++        self.assertEqual(view['resources']['iron']['ingots'], 14)
++        self.assertEqual(view['resources']['sticks'], 22)
++        self.assertEqual(view['resources']['stations']['crafting_table'], 1)
++        self.assertNotIn('wheat', view['state']['inventory']['foodCounts'])
++        self.assertLessEqual(count_tokens(observations.focused_context(mode='decision', max_tokens=700)), 700)
++
++    def test_actual_weapons_and_offhand_shield_survive_emergency_projection(self):
++        observations = self.observations()
++        observations.state['inventory']['counts']['iron_sword'] = 1
++        observations.state['self']['offhand'] = {'name': 'shield', 'count': 1}
++        view = observations.focused_view(mode='survival', max_tokens=550, max_events=0)
++        self.assertEqual(view['resources']['combat']['melee'], {'iron_sword': 1})
++        self.assertEqual(view['resources']['combat']['shield'], 1)
++        self.assertLessEqual(count_tokens(observations.focused_context(mode='survival', max_tokens=550, max_events=0)), 550)
++
++    def test_partial_counts_do_not_assert_absent_weapons_or_shields(self):
++        observations = self.observations()
++        observations.truncated = ['$.inventory.counts']
++        resources = observations.operational_resources()
++        self.assertIsNone(resources['combat']['melee'])
++        self.assertIsNone(resources['combat']['shield'])
++        self.assertTrue(resources['countsIncomplete'])
++
++    def test_pickaxe_and_armor_are_not_reported_as_melee_weapons(self):
++        observations = self.observations()
++        counts = observations.state['inventory']['counts']
++        counts.update(diamond_pickaxe=1, iron_chestplate=1, stone_axe=1)
++        resources = observations.operational_resources()
++        self.assertEqual(resources['combat']['melee'], {'stone_axe': 1})
++
++    def test_running_projection_does_not_add_equipment_planning(self):
++        view = self.observations().focused_view(mode='running', max_tokens=350, max_events=0)
++        self.assertNotIn('resources', view)
+-- 
+2.55.0.windows.5
+
