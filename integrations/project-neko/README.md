@@ -1,8 +1,8 @@
 # Project N.E.K.O. companion plugin patches
 
 This directory carries the matching Project N.E.K.O. Minecraft plugin changes
-alongside the Minecraft body in this fork. It contains 30 ordered Git patches,
-including scoped protection receipts and change-based autonomous heartbeat pacing.
+alongside the Minecraft body in this fork. It contains 31 ordered Git patches,
+including scoped protection receipts, adaptive heartbeat pacing and collision facts for recovery.
 
 The series targets [Project-N-E-K-O/N.E.K.O](https://github.com/Project-N-E-K-O/N.E.K.O)
 at commit `fb2a2e731a8c954478d08678b0c8cf40e8145a54`. It changes only
@@ -44,8 +44,8 @@ python -m unittest discover -s plugin/plugins/game_agent_minecraft -t .
 git rev-parse HEAD:plugin/plugins/game_agent_minecraft
 ```
 
-The exported plugin passed 83 tests. Applying the complete series to the pinned
-base reproduced plugin tree `fa5e8e4a5f8d53cc0800fd33e7ccddd1b3007664` exactly.
+The exported plugin passed 84 tests. Applying the complete series to the pinned
+base reproduced plugin tree `977447c231ccf155bf5f3604b2d7313145c03ce1` exactly.
 
 Follow the patched plugin's README for the existing N.E.K.O. plugin lifecycle,
 viewer and unattended settings. On the Minecraft body, set

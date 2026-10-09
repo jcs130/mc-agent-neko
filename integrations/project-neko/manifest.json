@@ -1,9 +1,9 @@
 {
   "upstreamRepository": "https://github.com/Project-N-E-K-O/N.E.K.O",
   "baseCommit": "fb2a2e731a8c954478d08678b0c8cf40e8145a54",
-  "sourceCommit": "88b2c2c1ae8ab32f4512079da80bf0895bbc53ee",
+  "sourceCommit": "2ebb30257424bc572baaa0d09656063ec7af7a5b",
   "scope": "plugin/plugins/game_agent_minecraft",
-  "resultPluginTree": "fa5e8e4a5f8d53cc0800fd33e7ccddd1b3007664",
+  "resultPluginTree": "977447c231ccf155bf5f3604b2d7313145c03ce1",
   "patches": [
     {
       "file": "0001-chore-configure-text-only-local-Qwen-Minecraft-trial.patch",
@@ -124,11 +124,15 @@
     {
       "file": "0030-fix-pace-Minecraft-decisions-by-meaningful-changes-i.patch",
       "sha256": "d38fd067ec4065e0fe7bdc1ca0fe0a45b44ec7bfc28602e525d4c0411b8968fe"
+    },
+    {
+      "file": "0031-fix-retain-collision-facts-in-compact-Minecraft-deci.patch",
+      "sha256": "35b1c4b6d40d3e6dbbb0318dfbeb47daa310bfbb0dca6bbccbe0ae6694bf600a"
     }
   ],
   "verification": {
     "appliedInOrderToBase": true,
     "resultPluginTreeMatchesSource": true,
-    "pluginTestsPassed": 83
+    "pluginTestsPassed": 84
   }
 }

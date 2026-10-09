@@ -1,0 +1,90 @@
+From 2ebb30257424bc572baaa0d09656063ec7af7a5b Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Fri, 9 Oct 2026 12:05:58 +0800
+Subject: [PATCH] fix: retain collision facts in compact Minecraft decisions
+
+---
+ plugin/plugins/game_agent_minecraft/README.md   |  1 +
+ .../docs/2026-10-09-adaptive-heartbeat-plan.md  | 12 ++++++++----
+ .../game_agent_minecraft/observations.py        |  7 +++++++
+ .../game_agent_minecraft/test_observations.py   | 17 +++++++++++++++++
+ 4 files changed, 33 insertions(+), 4 deletions(-)
+
+diff --git a/plugin/plugins/game_agent_minecraft/README.md b/plugin/plugins/game_agent_minecraft/README.md
+index 3539bbc..028e05b 100644
+--- a/plugin/plugins/game_agent_minecraft/README.md
++++ b/plugin/plugins/game_agent_minecraft/README.md
+@@ -266,6 +266,7 @@ MC 侧设置 `chat_ingame=false` 后，身体的工具调用和行动解说仅
+ `welcomeContextPartsPushed` 分别记录缓存消息数和成功提交的阅读分段数。
+ 
+ 所有信息带采集时间和来源。超过 45 秒或离线的数据不会作为当前状态；新会话清理旧缓存。
++脱困决策摘要保留脚下、脚部和头部的已接收方块名；这些碰撞事实不会随一般 nearby 栏目缩略成查询链接而丢失。
+ 事件保留 120 秒。采集和模型上下文均有容量限制，截断、丢弃数量和未知内容显式标注。
+ 未知二进制插件数据只保留频道、长度和摘要；未收到的服务器内部信息、未加载地形仍然未知。
+ 服务器声明某条命令也不等于本账号已获准执行。玩家/NPC/服务器文本是观察数据，不具有指令权限。
+diff --git a/plugin/plugins/game_agent_minecraft/docs/2026-10-09-adaptive-heartbeat-plan.md b/plugin/plugins/game_agent_minecraft/docs/2026-10-09-adaptive-heartbeat-plan.md
+index eb698f5..ebdcfa1 100644
+--- a/plugin/plugins/game_agent_minecraft/docs/2026-10-09-adaptive-heartbeat-plan.md
++++ b/plugin/plugins/game_agent_minecraft/docs/2026-10-09-adaptive-heartbeat-plan.md
+@@ -10,7 +10,11 @@
+ 
+ Constraints: Keep game actions owned by Neko; preserve vital reflexes, permission checks, welcome information and private/public chat routing. Do not inject diagnostic gameplay or chat. Keep Neko changes inside this plugin; publish as companion patches in the existing MC fork.
+ 
+-- [ ] Reproduce late-child and identical-name skill ownership failures, and the gated native cleanup watchdog. Fix only state ownership/maintenance; run native regression and full suites.
+-- [ ] Replay real snapshots through the idle loop and passive publisher. Assert clock/entity/packet noise cannot reset backoff or accumulate passive updates; assert real inventory/chat/outcome changes still reach decisions. Implement bounded change-based publishing and 30/60/120-second unchanged retries, retaining prompt first decisions.
+-- [ ] Verify full plugin suite and real runtime health. Deploy through owned lifecycle, observe autonomous task dispatch/progress without injected actions, record any remaining limitation.
+-- [ ] Commit, append companion patches and manifest verification, and push the existing fork branch.
++- [x] Reproduce late-child and identical-name skill ownership failures, and the gated native cleanup watchdog. Fix only state ownership/maintenance; run native regression and full suites.
++- [x] Replay real snapshots through the idle loop and passive publisher. Assert clock/entity/packet noise cannot reset backoff or accumulate passive updates; assert real inventory/chat/outcome changes still reach decisions. Implement bounded change-based publishing and 30/60/120-second unchanged retries, retaining prompt first decisions.
++- [x] Verify full plugin suite and real runtime health. Deploy through owned lifecycle, observe autonomous task dispatch/progress without injected actions, record any remaining limitation.
++- [x] Commit, append companion patches and manifest verification, and push the existing fork branch.
++
++Heartbeat verification: native 230/230, plugin 83/83; five real snapshots replayed for 300 simulated seconds produced idle cues at 10/40/100/220 seconds and one passive state publication. Deployed code no longer reports the stale chopWood label. Desktop auto-goodbye was a separate gate; its auto-cat switch was turned off through the official UI. Natural task calls resumed and position changed from x=-575 to x=-561 by 12:04, with health/food 20. Failed movement/attack attempts remain limitations, not evidence of success.
++
++Follow-up observation: crowded entity metadata consumed the native nearby budget before feet/head/under blocks. Native serialization now prioritizes those facts; the matching plugin context keeps their received names even when the generic nearby section is shortened. The added snapshot/context regressions failed before their fixes; full suites now pass native 231/231 and plugin 84/84. Deployment verification of this follow-up is recorded separately after reload.
+diff --git a/plugin/plugins/game_agent_minecraft/observations.py b/plugin/plugins/game_agent_minecraft/observations.py
+index 25a76f8..dcafb0d 100644
+--- a/plugin/plugins/game_agent_minecraft/observations.py
++++ b/plugin/plugins/game_agent_minecraft/observations.py
+@@ -322,6 +322,13 @@ class GameObservations:
+                    'recentEventsNewestFirst': [{key: short(event.get(key), 200) for key in ('id', 'kind', 'player', 'text')}
+                                               for event in reversed(view['recentEvents'])],
+                    'contextSummary': True}
++        if summary:
++            # These three blocks explain collisions even when the general
++            # nearby section is reduced to a tool link by the callback budget.
++            collision = {key: short(nearby[key]['name'], 80) for key in ('under', 'feet', 'head')
++                         if isinstance(nearby.get(key), dict) and nearby[key].get('name')}
++            if collision:
++                compact['collision'] = collision
+         welcome = self.server_welcome()
+         if welcome and welcome['messages']:
+             compact['serverWelcome'] = {'messages': len(welcome['messages']),
+diff --git a/plugin/plugins/game_agent_minecraft/test_observations.py b/plugin/plugins/game_agent_minecraft/test_observations.py
+index 6588250..8657e5c 100644
+--- a/plugin/plugins/game_agent_minecraft/test_observations.py
++++ b/plugin/plugins/game_agent_minecraft/test_observations.py
+@@ -74,6 +74,23 @@ class ObservationTests(unittest.IsolatedAsyncioTestCase):
+         for evidence in ('101', 'oxygen', 'overworld', 'raw_iron', 'POCKET', '任务进度', '公会菜单', 'mana'):
+             self.assertIn(evidence, text)
+ 
++    async def test_collision_blocks_survive_compact_decision_context(self):
++        from utils.tokenize import count_tokens
++        service, _ = self.service()
++        data = frame()
++        data['state']['nearby'] = {
++            'under': {'name': 'grass_block'}, 'feet': {'name': 'sweet_berry_bush'},
++            'head': {'name': 'oak_leaves'},
++            'entities': [{'name': 'zombie', 'distance': 1.2}],
++        }
++        data['state']['inventory']['counts'] = {f'long_item_name_{index}': 64 for index in range(32)}
++        service._game_observations.ingest_state(data)
++        text = service._game_observations.context(max_tokens=500)
++        summary = json.loads(text.split('\n', 1)[1])
++        self.assertEqual(summary.get('collision'), {
++            'under': 'grass_block', 'feet': 'sweet_berry_bush', 'head': 'oak_leaves'})
++        self.assertLessEqual(count_tokens(text), 500)
++
+     async def test_snapshot_and_event_batch_do_not_double_reply_and_long_private_text_survives(self):
+         service, calls = self.service()
+         message = '矿洞的求助说明' * 70 + '请从东边入口过来'
