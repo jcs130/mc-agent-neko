@@ -1,9 +1,9 @@
 {
   "upstreamRepository": "https://github.com/Project-N-E-K-O/N.E.K.O",
   "baseCommit": "fb2a2e731a8c954478d08678b0c8cf40e8145a54",
-  "sourceCommit": "2ebb30257424bc572baaa0d09656063ec7af7a5b",
+  "sourceCommit": "3535fe145ddd38b5eec5aa7deae6dd6efc07e21d",
   "scope": "plugin/plugins/game_agent_minecraft",
-  "resultPluginTree": "977447c231ccf155bf5f3604b2d7313145c03ce1",
+  "resultPluginTree": "8e176e11a7773be3348a0fdfd7e6c87c2936ca4f",
   "patches": [
     {
       "file": "0001-chore-configure-text-only-local-Qwen-Minecraft-trial.patch",
@@ -128,11 +128,38 @@
     {
       "file": "0031-fix-retain-collision-facts-in-compact-Minecraft-deci.patch",
       "sha256": "35b1c4b6d40d3e6dbbb0318dfbeb47daa310bfbb0dca6bbccbe0ae6694bf600a"
+    },
+    {
+      "file": "0032-fix-retain-operational-inventory-in-bounded-autonomo.patch",
+      "sha256": "4b284522e31f9e929d5e0dd30f266b40d0714e926b60733330c7c82af67823a5"
+    },
+    {
+      "file": "0033-fix-ground-priority-completion-decisions-in-fresh-st.patch",
+      "sha256": "fbfc35b7d1e0d6cb07c3321ec88c70bb0c2610b9485aa14b956300475d2d02e3"
+    },
+    {
+      "file": "0034-fix-bound-crowded-operational-summaries-with-explici.patch",
+      "sha256": "3902b88e321bb113684df6847d743217cac4b9439bacabbd889288e47c4213ba"
+    },
+    {
+      "file": "0035-docs-record-verified-recovery-fixes-and-host-transpo.patch",
+      "sha256": "39004fc7447bdf70f92749549d54ae31cbd2758903e36d1269dc62992b04f4ab"
     }
   ],
   "verification": {
     "appliedInOrderToBase": true,
     "resultPluginTreeMatchesSource": true,
-    "pluginTestsPassed": 84
+    "pluginTestsPassed": 98
+  },
+  "hostBridgeBudgetProposal": {
+    "file": "proposals/minecraft-host-bridge-budget.patch",
+    "sha256": "14adce16932eba3d0242e9d935e0f084c5346aa57876a9b8ef2a7b72e3c7908b",
+    "status": "prepared-not-applied-awaiting-escalation",
+    "path": "plugin/server/messaging/proactive_bridge.py",
+    "baseFileBlob": "4952e4d558bc872039205ff15cbdb0eb0cd61d7d",
+    "appliesAfterPluginSeries": true,
+    "replayedBeforeTokens": 200,
+    "replayedAfterTokens": 840,
+    "unrelatedPluginAndLegacyLimitsUnchanged": true
   }
 }

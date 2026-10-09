@@ -1,0 +1,80 @@
+From c6a64d8d75e839f1f68e41cd937dc5e3e46960b1 Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Fri, 9 Oct 2026 17:38:44 +0800
+Subject: [PATCH 34/35] fix: bound crowded operational summaries with explicit
+ omissions
+
+Drop redundant detail links before trimming long resource lists, retain at least one known tool/material/identity, and report omitted entries. Reproduced 513 tokens for a 400-token request; complete Minecraft plugin suite passes 98 tests.
+---
+ .../game_agent_minecraft/observations.py      | 20 ++++++++++++++++++
+ .../test_grounded_recovery.py                 | 21 +++++++++++++++++++
+ 2 files changed, 41 insertions(+)
+
+diff --git a/plugin/plugins/game_agent_minecraft/observations.py b/plugin/plugins/game_agent_minecraft/observations.py
+index d8ffd3e..9648500 100644
+--- a/plugin/plugins/game_agent_minecraft/observations.py
++++ b/plugin/plugins/game_agent_minecraft/observations.py
+@@ -253,6 +253,8 @@ class GameObservations:
+             resources['countsIncomplete'] = True
+         if len(named) > 4:
+             resources['namedOmitted'] = len(named) - 4
++        if len(picks) > 6:
++            resources['pickaxesOmitted'] = len(picks) - 6
+         if len(wood) > 6:
+             resources['woodOmitted'] = len(wood) - 6
+         return resources
+@@ -486,4 +488,22 @@ class GameObservations:
+             # both actual target scopes/results before repeating that provenance.
+             for key in ('lastCheck', 'lastBlocked'):
+                 compact['protection'][key].pop('source', None)
++        if summary:
++            # The shared header already points to the full observation tool.
++            # Remove repeated tool links before dropping any resource facts.
++            for section in ('coverage', 'window', 'activity', 'inventory', 'nearby', 'server', 'world'):
++                if count_tokens(render()) <= max_tokens:
++                    break
++                if summary.get(section) == {'details': 'minecraft_observe'}:
++                    summary.pop(section)
++        resources = compact.get('resources') or {}
++        for key in ('named', 'wood', 'pickaxes'):
++            entries = resources.get(key) or []
++            while count_tokens(render()) > max_tokens and len(entries) > 1:
++                if isinstance(entries, dict):
++                    entries.pop(next(reversed(entries)))
++                else:
++                    entries.pop()
++                omitted = key + 'Omitted'
++                resources[omitted] = resources.get(omitted, 0) + 1
+         return render()
+diff --git a/plugin/plugins/game_agent_minecraft/test_grounded_recovery.py b/plugin/plugins/game_agent_minecraft/test_grounded_recovery.py
+index 4ecfabf..49e1922 100644
+--- a/plugin/plugins/game_agent_minecraft/test_grounded_recovery.py
++++ b/plugin/plugins/game_agent_minecraft/test_grounded_recovery.py
+@@ -95,6 +95,27 @@ class OperationalInventoryTests(unittest.TestCase):
+         observations.context(max_tokens=400)
+         self.assertEqual(data, before)
+ 
++    def test_many_real_supplies_keep_a_bounded_honest_recovery_summary(self):
++        data = crowded_frame()
++        inventory = data['state']['inventory']
++        for material in ('wooden', 'stone', 'iron', 'golden', 'diamond', 'netherite'):
++            inventory['counts'][material + '_pickaxe'] = 1
++            inventory['slots'].append({'slot': len(inventory['slots']) + 6,
++                'name': material + '_pickaxe', 'count': 1, 'durabilityUsed': 3, 'maxDurability': 100})
++        for wood in ('oak', 'spruce', 'birch', 'jungle', 'acacia', 'dark_oak'):
++            inventory['counts'][wood + '_log'] = 32
++        for n in range(3):
++            inventory['slots'].append({'slot': n + 36, 'name': 'blaze_rod', 'count': 1,
++                'customName': '服务器自定义的特别长名称灵纹法杖' + str(n)})
++        resources = self.summary(data, 400)['resources']
++        self.assertTrue(resources['pickaxes'])
++        self.assertTrue(resources['wood'])
++        self.assertEqual(resources['named'][0]['name'], '灵纹法杖')
++        self.assertEqual(resources['stations'], {'crafting_table': 0, 'furnace': 0})
++        self.assertEqual(len(resources['pickaxes']) + resources.get('pickaxesOmitted', 0), 6)
++        self.assertEqual(len(resources['wood']) + resources.get('woodOmitted', 0), 6)
++        self.assertEqual(len(resources['named']) + resources.get('namedOmitted', 0), 4)
++
+ 
+ class RecoveryDecisionTests(unittest.IsolatedAsyncioTestCase):
+     async def service(self):

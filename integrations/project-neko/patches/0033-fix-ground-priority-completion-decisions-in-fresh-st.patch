@@ -1,0 +1,342 @@
+From a8e28a5cf608911fe62658d5b394a27d02a9cd70 Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Fri, 9 Oct 2026 17:29:56 +0800
+Subject: [PATCH 33/35] fix: ground priority completion decisions in fresh
+ state and failure history
+
+Completion callbacks could precede passive state and exceed the host token cap, leaving Neko to plan from stale counts and only one outcome. Reserve fresh resource context, retain bounded matched-task history, and include prerequisite-aware recovery guidance. Ignore foreign and retroactive results and clear history for new game sessions.
+---
+ .../plugins/game_agent_minecraft/__init__.py  |  32 +++++-
+ .../plugins/game_agent_minecraft/prompts.py   |   8 +-
+ .../plugins/game_agent_minecraft/service.py   |  54 ++++++++-
+ .../test_grounded_recovery.py                 | 106 ++++++++++++++++++
+ 4 files changed, 187 insertions(+), 13 deletions(-)
+
+diff --git a/plugin/plugins/game_agent_minecraft/__init__.py b/plugin/plugins/game_agent_minecraft/__init__.py
+index e1e1530..6e2f6dc 100644
+--- a/plugin/plugins/game_agent_minecraft/__init__.py
++++ b/plugin/plugins/game_agent_minecraft/__init__.py
+@@ -627,7 +627,11 @@ class GameAgentMinecraftPlugin(NekoPluginBase):
+         elif status.strip().lower() == "ok" and text_signals_blocked(detail):
+             status = blocked_label
+ 
+-        inv = result.get("inventory")
++        service = getattr(self, '_service', None)
++        fresh_context = (service._game_observations.context(max_tokens=400)
++                         if service and service._game_observations.fresh else '')
++        recovery_context = service.recovery_context() if service else ''
++        inv = result.get("inventory") if not fresh_context else None
+         inv_line = ""
+         if isinstance(inv, dict) and inv:
+             items = sorted(
+@@ -681,10 +685,6 @@ class GameAgentMinecraftPlugin(NekoPluginBase):
+             "COMPLETION_HEAD_LINE", lang=self._lang,
+             head_verb=head_verb, query=query[:100], status=status,
+         )]
+-        if detail:
+-            lines.append(prompts.t(
+-                "COMPLETION_FEEDBACK_LINE", lang=self._lang, detail=detail[:12500]
+-            ))
+         if inv_line:
+             lines.append(inv_line)
+         if is_blocked:
+@@ -693,8 +693,28 @@ class GameAgentMinecraftPlugin(NekoPluginBase):
+             lines.append(prompts.t("COMPLETION_FOLLOWUP_SUCCESS", lang=self._lang))
+         else:
+             lines.append(prompts.t("COMPLETION_FOLLOWUP_FAILED", lang=self._lang))
++            lines.append(prompts.t('RECOVERY_POLICY', lang=self._lang))
+         lines.append(prompts.t("INTERNAL_STATE_GAG", lang=self._lang))
+-        return prompts.t("CUE_PREFIX_DONE", lang=self._lang) + "\n" + "\n".join(lines)
++        if recovery_context:
++            lines.append(recovery_context)
++        if fresh_context:
++            lines.append(fresh_context)
++        prefix = prompts.t("CUE_PREFIX_DONE", lang=self._lang) + '\n'
++        # This priority-7 callback can run before passive facts are consumed.
++        # Reserve its fresh resources/recovery facts before fitting feedback;
++        # otherwise the host's 1,000-token cap silently chops them off.
++        from utils.tokenize import count_tokens, truncate_to_tokens
++        reserved = count_tokens(prefix + '\n'.join(lines))
++        budget = max(0, min(600, 940 - reserved))
++        if detail and budget:
++            if count_tokens(detail) > budget:
++                tail = detail[-1200:]
++                while count_tokens(tail) > budget // 3 and tail:
++                    tail = tail[max(1, len(tail) // 4):]
++                head = truncate_to_tokens(detail, max(0, budget - count_tokens(tail) - 10))
++                detail = head + '\n[…]\n' + tail
++            lines.insert(1, prompts.t('COMPLETION_FEEDBACK_LINE', lang=self._lang, detail=detail))
++        return prefix + '\n'.join(lines)
+ 
+     # ------------------------------------------------------------------
+     # Hosted surface UI context
+diff --git a/plugin/plugins/game_agent_minecraft/prompts.py b/plugin/plugins/game_agent_minecraft/prompts.py
+index 65a0ec1..44f39aa 100644
+--- a/plugin/plugins/game_agent_minecraft/prompts.py
++++ b/plugin/plugins/game_agent_minecraft/prompts.py
+@@ -803,8 +803,12 @@ PROMPTS.update({
+         "en": "Use game chat only for genuine player replies, help or cooperation; keep tool calls/plans/progress local. You may initiate a private conversation with a real online player using minecraft_chat(player=...). Keep private replies private. Avoid repetition and stop nudging nonresponders; failed whispers never fall back to public chat.",
+     },
+     "AUTONOMOUS_DECISION_BODY": {
+-        "zh": "无人值守已开启；遵守最新停止/暂停指令。根据已附新鲜状态，直接用 minecraft_task 执行短且安全的目标，不用预告代替行动。回合可能只有3轮工具调用：最多补查1项真正缺失的关键事实，必须留一轮行动；不要重复查已有状态/技能目录。automaticDigChecks=true 时挖掘会自动检查保护，禁止绕过 deny/unknown。失败就换办法，派发不等于完成。",
+-        "en": "Unattended play is enabled; honor the latest stop/pause. Use the attached fresh facts to CALL minecraft_task for one short safe goal, not a spoken promise. A turn may have only 3 tool rounds: query at most ONE genuinely missing essential fact and reserve a round for action. Do not repeat supplied state or known skill catalogues. automaticDigChecks=true means digging checks protection automatically; never bypass deny/unknown. Change methods after failure; dispatch is not completion.",
++        "zh": "无人值守有效，停止/暂停优先。按新鲜状态核对工具、木料和工作台，先补齐前置条件，再用 minecraft_task 执行一个短目标，不用预告代替行动。连续失败时换可行方法，考虑已知回城/脱困技能或私聊在线玩家求助；不派发等树长成等长链。最多补查1项缺失事实，留一轮行动，别重复查已有目录。automaticDigChecks=true 时自动检查保护，禁止绕过 deny/unknown。派发不等于完成。",
++        "en": "Unattended play is enabled; stop/pause wins. Check fresh tools, wood and workstations; resolve prerequisites before CALLING minecraft_task for one short goal. After repeated failures change methods: consider documented recovery skills or private help from an online player. Do not put tree-growth waits in short tasks. Query at most ONE missing fact and reserve a round for action; do not repeat known catalogues. automaticDigChecks=true checks digging permissions; never bypass deny/unknown. Dispatch is not completion.",
++    },
++    "RECOVERY_POLICY": {
++        "zh": "先核对当前工具、木料和工作台，只解决一个可行的前置步骤。连续失败就改用已知脱困技能或私聊在线玩家求助；不要只换措辞重试，也别把等树长成等长链塞进短任务。停止/暂停优先。",
++        "en": "Check current tools, wood and workstations; resolve one feasible prerequisite. Repeated failure needs another method, a documented recovery skill or private help from an online player. Do not reword the same failure or wait for tree growth in a short task. Stop/pause wins.",
+     },
+     "LAST_TASK_OUTCOME": {
+         "zh": "最近一次实际执行结果（历史事实，不是正在执行）：目标={task}；状态={status}；反馈={result}",
+diff --git a/plugin/plugins/game_agent_minecraft/service.py b/plugin/plugins/game_agent_minecraft/service.py
+index 59d0d9e..fb6976d 100644
+--- a/plugin/plugins/game_agent_minecraft/service.py
++++ b/plugin/plugins/game_agent_minecraft/service.py
+@@ -359,6 +359,8 @@ class GameAgentService:
+         self._last_keep_going_nudge_at: float = 0.0
+         self._last_task_finished_at: float = 0.0
+         self._last_task_outcome: Optional[Dict[str, Any]] = None
++        self._recent_task_outcomes: list[Dict[str, Any]] = []
++        self._task_failure_streak = 0
+         self._idle_decision_key = None
+         self._idle_decision_attempts = 0
+ 
+@@ -866,6 +868,9 @@ class GameAgentService:
+         if previous_session != self._game_observations.session_id:
+             self._server_command_history.clear()
+             self._server_calls_since_task = 0
++            self._recent_task_outcomes.clear()
++            self._task_failure_streak = 0
++            self._last_task_outcome = None
+         for waiter in self._game_state_waiters:
+             if not waiter.done():
+                 waiter.set_result(True)
+@@ -1038,6 +1043,8 @@ class GameAgentService:
+         result['source'] = 'live' if refreshed else 'cached'
+         result['status'] = 'ok' if result['fresh'] else 'unavailable'
+         result['lastTaskOutcome'] = self._last_task_outcome
++        result['recentTaskOutcomes'] = list(self._recent_task_outcomes)
++        result['failureStreak'] = self._task_failure_streak
+         result['lastServerCommands'] = list(self._server_command_history) if self._game_observations.fresh else []
+         result, clipped = bounded_value(result, 48000)
+         result['responseTruncated'] = clipped
+@@ -1062,6 +1069,39 @@ class GameAgentService:
+             return ''
+         return prompts.t('QUERY_ACTION_HINT', lang=self._lang)
+ 
++    def _record_task_outcome(self, pending: PendingTask, status: str, text: str) -> None:
++        self._last_task_outcome = {'task': pending.task_text, 'status': status, 'text': text}
++        entry = {'taskId': pending.task_id, 'sessionId': self._game_observations.session_id,
++                 'observedAt': time.time(), 'task': pending.task_text[:180],
++                 'status': status[:40], 'text': text[:240]}
++        self._recent_task_outcomes = [entry, *self._recent_task_outcomes][:8]
++        normalized = status.strip().lower()
++        if normalized == 'ok' and not text_signals_blocked(text):
++            self._task_failure_streak = 0
++        elif normalized not in ('interrupted', 'superseded'):
++            self._task_failure_streak = min(99, self._task_failure_streak + 1)
++
++    def recovery_context(self, max_tokens=110) -> str:
++        """Prior matched outcomes, kept separate from current inventory facts."""
++        if not self._recent_task_outcomes:
++            return ''
++        from utils.tokenize import count_tokens
++        previous = self._recent_task_outcomes[1:3]
++        value = {'failureStreak': self._task_failure_streak, 'previousTaskOutcomes': [
++            {'task': item['task'][:32], 'status': item['status'], 'reason': item['text'].split('\n', 1)[0][:64]}
++            for item in previous]}
++        prefix = 'Previous reported outcomes (historical): '
++        render = lambda: prefix + json.dumps(value, ensure_ascii=False, separators=(',', ':'))
++        for limit in (40, 24, 12):
++            if count_tokens(render()) <= max_tokens:
++                break
++            for item in value['previousTaskOutcomes']:
++                item['reason'] = item['reason'][:limit]
++                item['task'] = item['task'][:min(limit, 24)]
++        while count_tokens(render()) > max_tokens and value['previousTaskOutcomes']:
++            value['previousTaskOutcomes'].pop()
++        return render()
++
+     def _mc_agent_busy(self) -> bool:
+         """Use fresh body telemetry as well as the natural-language busy latch.
+         A rejected new task can clear that latch while an old skill is still
+@@ -1295,6 +1335,7 @@ class GameAgentService:
+         except asyncio.TimeoutError:
+             async with self._pending_lock:
+                 if self._pending is my_pending:
++                    self._record_task_outcome(my_pending, 'timeout', f'Not finished within {self._task_timeout:.0f}s.')
+                     self._pending = None
+                     # Anchor the keep-going nudge clock even on timeout —
+                     # without this the autonomous loop's keep_going branch
+@@ -2100,9 +2141,7 @@ class GameAgentService:
+                 return
+ 
+             if bucket in ("current", "fifo"):
+-                self._last_task_outcome = {
+-                    "task": pending.task_text, "status": status, "text": text,
+-                }
++                self._record_task_outcome(pending, status, text)
+ 
+             if bucket == "current":
+                 self._pending = None
+@@ -2409,6 +2448,9 @@ class GameAgentService:
+         sections: list[str] = [prompts.t('PLAYER_COMMUNICATION_POLICY', lang=self._lang)]
+         if self._unattended.enabled:
+             sections.append(prompts.t("AUTONOMOUS_DECISION_BODY", lang=self._lang))
++        recovery = self.recovery_context(max_tokens=90)
++        if recovery:
++            sections.append(recovery)
+         if self._game_observations.fresh:
+             # The host caps the entire callback, not just the game-state part.
+             # Avoid duplicate inventory/vitals and reserve space for the real
+@@ -2419,13 +2461,13 @@ class GameAgentService:
+                 sections.append(truncate_to_tokens(prompts.t(
+                     'LAST_TASK_OUTCOME', lang=self._lang, task=outcome['task'][:100],
+                     status=outcome['status'], result=outcome['text'][:400],
+-                ), 120) + '\nFull lastTaskOutcome is available through minecraft_observe.')
++                ), 90) + '\nFull lastTaskOutcome is available through minecraft_observe.')
+             if self._server_command_history:
+                 history = [{'command': item['command'], 'status': item['status'],
+                             'reply': ' '.join(str(text) for text in item['messages'])[:220]}
+                            for item in self._server_command_history[:2]]
+                 sections.append('Received server replies (historical, not completion): ' + truncate_to_tokens(
+-                    json.dumps(history, ensure_ascii=False, separators=(',', ':')), 120) +
++                    json.dumps(history, ensure_ascii=False, separators=(',', ':')), 80) +
+                     '\nFull lastServerCommands: minecraft_observe.')
+             if self._idle_decision_attempts:
+                 sections.append(prompts.t('IDLE_DECISION_RETRY', lang=self._lang))
+@@ -2634,6 +2676,8 @@ class GameAgentService:
+             "task_finished": self._task_finished,
+             "pending_task": self._pending.task_text if self._pending else None,
+             "last_task_outcome": self._last_task_outcome,
++            "recent_task_outcomes": list(self._recent_task_outcomes),
++            "failure_streak": self._task_failure_streak,
+             "idle_decision_attempts": self._idle_decision_attempts,
+             "autonomy": {
+                 "body_busy": self._mc_agent_busy(),
+diff --git a/plugin/plugins/game_agent_minecraft/test_grounded_recovery.py b/plugin/plugins/game_agent_minecraft/test_grounded_recovery.py
+index 30f96ed..4ecfabf 100644
+--- a/plugin/plugins/game_agent_minecraft/test_grounded_recovery.py
++++ b/plugin/plugins/game_agent_minecraft/test_grounded_recovery.py
+@@ -1,10 +1,13 @@
+ import copy
+ import json
+ import unittest
++from types import SimpleNamespace
+ 
+ from utils.tokenize import count_tokens
+ 
+ from .observations import GameObservations
++from . import GameAgentMinecraftPlugin
++from .service import GameAgentService
+ from .test_observations import frame
+ 
+ 
+@@ -91,3 +94,106 @@ class OperationalInventoryTests(unittest.TestCase):
+         self.assertGreater(observations.decision_revision, revision)
+         observations.context(max_tokens=400)
+         self.assertEqual(data, before)
++
++
++class RecoveryDecisionTests(unittest.IsolatedAsyncioTestCase):
++    async def service(self):
++        calls = []
++        service = GameAgentService(logger=None, push_message_fn=lambda **kw: calls.append(kw))
++        service.set_lang('zh')
++        service.configure({'unattended_enabled': True, 'unattended_character': 'YUI'})
++        await service._on_game_state(crowded_frame())
++        return service, calls
++
++    async def complete(self, service, task, text, status='failed'):
++        pending = await service.try_claim_pending(task, overwrite=False)
++        pending.dispatched = True
++        service._remember_dispatched(pending.task_id, task)
++        await service._on_task_finished({'task_id': pending.task_id, 'status': status, 'text': text})
++        return pending
++
++    async def test_matched_failures_reach_the_next_decision_and_full_observation(self):
++        service, calls = await self.service()
++        await self.complete(service, '放置工作台合成石镐', '缺少木料，无法合成工作台。')
++        await self.complete(service, '向上挖出矿洞', '缺少镐，无法破坏深板岩。')
++        await service._fire_keep_going_nudge()
++        text = calls[-1]['parts'][0]['text']
++        self.assertIn('缺少木料', text)
++        self.assertIn('缺少镐', text)
++        self.assertIn('failureStreak', text)
++        self.assertLessEqual(count_tokens(text), 1000)
++        observed = await service.observe_game(['self'], 0)
++        self.assertEqual(observed.get('failureStreak'), 2)
++        self.assertEqual(len(observed.get('recentTaskOutcomes', [])), 2)
++
++    async def test_priority_completion_itself_contains_fresh_resources_and_prior_blocker(self):
++        service, _ = await self.service()
++        await self.complete(service, '放工作台', '缺少木料。')
++        pending = await self.complete(service, '向上挖', '缺少镐。' + '重复观察资料。' * 2000)
++        plugin = object.__new__(GameAgentMinecraftPlugin)
++        plugin._lang, plugin._service = 'zh', service
++        text = plugin._format_completion_cue(pending.result)
++        self.assertTrue('灵纹法杖' in text, 'fresh custom-item identity must reach the completion cue')
++        self.assertIn('pickaxes', text)
++        self.assertIn('缺少木料', text)
++        self.assertIn('缺少镐', text)
++        self.assertLessEqual(count_tokens(text), 1000)
++        self.assertLessEqual(len(text), 8000)
++
++    async def test_duplicate_foreign_and_retroactive_completions_do_not_poison_history(self):
++        service, _ = await self.service()
++        old = await self.complete(service, '旧任务', '缺少木料。')
++        pending = await service.try_claim_pending('当前任务', overwrite=False)
++        pending.dispatched = True
++        service._remember_dispatched(pending.task_id, pending.task_text)
++        for ident, status in [('foreign', 'failed'), (old.task_id, 'failed'), (pending.task_id, 'duplicate')]:
++            await service._on_task_finished({'task_id': ident, 'status': status, 'text': '不属于当前终态'})
++        observed = await service.observe_game(['self'], 0)
++        self.assertEqual(len(observed.get('recentTaskOutcomes', [])), 1)
++        self.assertEqual(observed.get('failureStreak'), 1)
++        self.assertIs(service._pending, pending)
++
++    async def test_new_game_session_forgets_old_outcomes(self):
++        service, _ = await self.service()
++        await self.complete(service, '旧世界挖矿', '缺少木料。')
++        await service._on_game_state(crowded_frame(session='another-server'))
++        observed = await service.observe_game(['self'], 0)
++        self.assertEqual(observed.get('recentTaskOutcomes'), [])
++        self.assertEqual(observed.get('failureStreak'), 0)
++        self.assertIsNone(observed.get('lastTaskOutcome'))
++
++    async def test_bounded_history_and_reported_success_reset_failure_streak(self):
++        service, _ = await self.service()
++        for n in range(12):
++            await self.complete(service, f'失败任务 {n}', '缺少木料。' * 1000)
++        await self.complete(service, '已读取菜单', '读取到真实菜单。', status='ok')
++        observed = await service.observe_game(['self'], 0)
++        self.assertEqual(observed.get('failureStreak'), 0)
++        self.assertEqual(len(observed.get('recentTaskOutcomes', [])), 8)
++        self.assertLess(len(json.dumps(observed['recentTaskOutcomes'])), 12000)
++
++    async def test_local_timeout_is_recorded_once_for_its_actual_pending_task(self):
++        service, _ = await self.service()
++        async def send_task(*args, **kwargs):
++            return True
++        service._client = SimpleNamespace(send_task=send_task)
++        service._task_timeout = 0.001
++        pending = await service.try_claim_pending('未完成的短目标', overwrite=False)
++        result = await service.run_claimed_task(pending)
++        self.assertEqual(result['status'], 'timeout')
++        self.assertEqual(service._task_failure_streak, 1)
++        self.assertEqual(len(service._recent_task_outcomes), 1)
++        self.assertIsNone(service._pending)
++
++    async def test_full_decision_with_failure_history_replies_and_retry_keeps_its_budget(self):
++        service, calls = await self.service()
++        await self.complete(service, '合成工作台', '缺少木料。')
++        await self.complete(service, '挖出深层矿洞', '缺少镐，无法向上开路。')
++        service._idle_decision_attempts = 2
++        service.record_server_command({'command': '/mycli spells list 1', 'status': 'received',
++                                       'messages': ['技能说明' * 2000]})
++        await service._fire_keep_going_nudge()
++        text = calls[-1]['parts'][0]['text']
++        self.assertIn('缺少木料', text)
++        self.assertIn('pickaxes', text)
++        self.assertLessEqual(count_tokens(text), 1000)

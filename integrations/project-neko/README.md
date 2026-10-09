@@ -1,8 +1,8 @@
 # Project N.E.K.O. companion plugin patches
 
 This directory carries the matching Project N.E.K.O. Minecraft plugin changes
-alongside the Minecraft body in this fork. It contains 31 ordered Git patches,
-including scoped protection receipts, adaptive heartbeat pacing and collision facts for recovery.
+alongside the Minecraft body in this fork. It contains 35 ordered Git patches,
+including scoped protection receipts, adaptive heartbeat pacing, readable custom items, protected operational inventory and matched recovery history.
 
 The series targets [Project-N-E-K-O/N.E.K.O](https://github.com/Project-N-E-K-O/N.E.K.O)
 at commit `fb2a2e731a8c954478d08678b0c8cf40e8145a54`. It changes only
@@ -44,8 +44,8 @@ python -m unittest discover -s plugin/plugins/game_agent_minecraft -t .
 git rev-parse HEAD:plugin/plugins/game_agent_minecraft
 ```
 
-The exported plugin passed 84 tests. Applying the complete series to the pinned
-base reproduced plugin tree `977447c231ccf155bf5f3604b2d7313145c03ce1` exactly.
+The exported plugin passed 98 tests. Applying the complete series to the pinned
+base reproduced plugin tree `8e176e11a7773be3348a0fdfd7e6c87c2936ca4f` exactly.
 
 Follow the patched plugin's README for the existing N.E.K.O. plugin lifecycle,
 viewer and unattended settings. On the Minecraft body, set
@@ -59,3 +59,23 @@ An `allow_likely` result is tentative, and missing tools or local digging-safety
 refusals must not be described as confirmed server protection denials. These
 changes improve information and scheduling; they do not guarantee unattended
 survival or successful ore collection.
+
+## Host bridge proposal (separate, awaiting approval)
+
+`proposals/minecraft-host-bridge-budget.patch` is a reviewable platform fix,
+not part of the ordered plugin series above. The current host bridge parses
+every Minecraft cue through a generic 200-token result summary before the
+documented 1,000-token callback cap. A captured 840-token decision consequently
+lost its current resources and recovery evidence before reaching the model.
+
+The proposal retains Minecraft `push_message.v2` text up to the existing
+host callback cap. Other plugins and legacy payloads keep their existing
+parser/limits. Offline replay checks preserve current inventory and verify
+both the 1,000-token cap and unchanged unrelated parsing. The patch applies
+after the pinned plugin series; its bytes and base bridge blob are recorded
+separately in the manifest. It has not been applied to the running host.
+
+The N.E.K.O. `CONTEXT.md` requires escalation before plugin work modifies
+platform files. Approval is pending. Applying only the plugin series improves
+the observation cache and executor, but does not resolve this earlier host
+truncation. No claim of reliable unattended play is made on that basis.

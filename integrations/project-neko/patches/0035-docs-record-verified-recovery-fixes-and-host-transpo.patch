@@ -1,0 +1,96 @@
+From 3535fe145ddd38b5eec5aa7deae6dd6efc07e21d Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Fri, 9 Oct 2026 17:56:06 +0800
+Subject: [PATCH 35/35] docs: record verified recovery fixes and host transport
+ blocker
+
+---
+ .../docs/2026-10-09-grounded-recovery-plan.md | 53 ++++++++++++-------
+ 1 file changed, 33 insertions(+), 20 deletions(-)
+
+diff --git a/plugin/plugins/game_agent_minecraft/docs/2026-10-09-grounded-recovery-plan.md b/plugin/plugins/game_agent_minecraft/docs/2026-10-09-grounded-recovery-plan.md
+index 6e35a0b..1aae9f0 100644
+--- a/plugin/plugins/game_agent_minecraft/docs/2026-10-09-grounded-recovery-plan.md
++++ b/plugin/plugins/game_agent_minecraft/docs/2026-10-09-grounded-recovery-plan.md
+@@ -33,10 +33,10 @@
+ 
+ **Interface:** `readItemIdentity(item)` returns bounded base name, custom label and lore. Native `!inventory` keeps existing counts and adds readable, slot-addressed custom items. Snapshot items use the same helper.
+ 
+-- [ ] Add modern and legacy fixtures, including `custom_name.data={type:'compound',value:{text:{type:'string',value:''},extra:{type:'list',value:{type:'compound',value:[{text:{type:'string',value:'灵纹法杖'}}]}}}}`.
+-- [ ] Assert `collectGameState(agent).inventory.slots[0].customName === '灵纹法杖'` and actual native inventory output contains both `blaze_rod` and the server label/lore. Existing replay already fails with `'' !== '灵纹法杖'`.
+-- [ ] Implement bounded readable identity, preserving base IDs for commands and handling unavailable getters independently.
+-- [ ] Run `node --test test/item_identity.test.mjs test/game_information.test.mjs test/mission_observations.test.mjs` and commit the verified slice.
++- [x] Add modern and legacy fixtures, including `custom_name.data={type:'compound',value:{text:{type:'string',value:''},extra:{type:'list',value:{type:'compound',value:[{text:{type:'string',value:'灵纹法杖'}}]}}}}`.
++- [x] Assert `collectGameState(agent).inventory.slots[0].customName === '灵纹法杖'` and actual native inventory output contains both `blaze_rod` and the server label/lore. Existing replay already fails with `'' !== '灵纹法杖'`.
++- [x] Implement bounded readable identity, preserving base IDs for commands and handling unavailable getters independently.
++- [x] Run `node --test test/item_identity.test.mjs test/game_information.test.mjs test/mission_observations.test.mjs` and commit the verified slice.
+ 
+ ## Task 2: Preserve operational supplies in compact decisions
+ 
+@@ -44,37 +44,50 @@
+ 
+ **Interface:** Compact context adds a protected `resources` summary from all received inventory counts/slots: pickaxes and condition, actual logs/planks/sticks, workstations, iron materials and named-item/base-ID pairs. Missing inventory remains unknown; ordinary verbose inventory remains queryable.
+ 
+-- [ ] Replay the captured 17:01 inventory with a normalized wand label. Assert the label and explicit empty pickaxe list survive `context(max_tokens=400)`; the current replay loses inventory entirely.
+-- [ ] Add cases for a tool in a late slot, adequate carried crafting supplies, inconsistent durability and stale/missing inventory.
+-- [ ] Implement bounded resource extraction and budget reduction that trims optional details before operational facts.
+-- [ ] Verify both standalone summary and complete autonomous callback token counts, preserving protection/collision regressions.
+-- [ ] Run the focused unittest modules and commit the verified slice.
++- [x] Replay the captured 17:01 inventory with a normalized wand label. Assert the label and explicit empty pickaxe list survive `context(max_tokens=400)`; the current replay loses inventory entirely.
++- [x] Add cases for a tool in a late slot, adequate carried crafting supplies, inconsistent durability and stale/missing inventory.
++- [x] Implement bounded resource extraction and budget reduction that trims optional details before operational facts.
++- [x] Verify both standalone summary and complete autonomous callback token counts, preserving protection/collision regressions.
++- [x] Run the focused unittest modules and commit the verified slice.
+ 
+ ## Task 3: Carry failure history into recovery decisions
+ 
+-**Files:** `service.py`, `prompts.py`, `test_grounded_recovery.py`, existing completion/query-loop tests.
++**Files:** `service.py`, `prompts.py`, `__init__.py`, `test_grounded_recovery.py`, existing completion/query-loop tests.
+ 
+ **Interface:** A bounded session-scoped `recentTaskOutcomes` list and `failureStreak` supplement the existing `lastTaskOutcome`; only matched terminal tasks enter it. Idle decisions retain concise failure evidence and current resource prerequisites.
+ 
+-- [ ] Feed two real matched failed completions through `_on_task_finished`; assert the next autonomous decision retains both blockers and a consecutive failure count.
+-- [ ] Verify duplicate/foreign/retroactive completions cannot overwrite current history; new world/session clears the journal.
+-- [ ] Add a concise recovery policy: verify prerequisites before dispatch, resolve one missing prerequisite, use actually documented recovery/communication paths after repeated failures, and avoid long wait chains in short tasks.
+-- [ ] Re-run completion, observation, heartbeat, chat and query-loop tests, including the full callback budget.
+-- [ ] Commit the verified slice.
++- [x] Feed two real matched failed completions through `_on_task_finished`; assert the next autonomous decision retains both blockers and a consecutive failure count.
++- [x] Verify duplicate/foreign/retroactive completions cannot overwrite current history; new world/session clears the journal.
++- [x] Add a concise recovery policy: verify prerequisites before dispatch, resolve one missing prerequisite, use actually documented recovery/communication paths after repeated failures, and avoid long wait chains in short tasks.
++- [x] Re-run completion, observation, heartbeat, chat and query-loop tests, including the full callback budget.
++- [x] Commit the verified slice.
+ 
+ ## Task 4: Check execution capabilities and deploy verified changes
+ 
+ **Files:** Native command documentation/profile evidence, contribution `integrations/project-neko` patch bundle and deployment notes.
+ 
+-- [ ] Compare the actual `getCommandDocs` output and runtime blocked-action list with false "no upward digging command" failures. Existing source exposes `!goToSurface` and `!pillarUp`; do not add duplicate skills.
+-- [ ] If needed, add a short availability-filtered reminder at the existing command-doc boundary; prove it never advertises blocked or missing commands.
+-- [ ] Run both complete project suites and inspect diffs for secrets, unrelated changes and temporary diagnostics.
++- [x] Compare the actual `getCommandDocs` output and runtime blocked-action list with false "no upward digging command" failures. Existing source exposes `!goToSurface` and `!pillarUp`; do not add duplicate skills.
++- [x] If needed, add a short availability-filtered reminder at the existing command-doc boundary; prove it never advertises blocked or missing commands.
++- [x] Run both complete project suites and inspect diffs for secrets, unrelated changes and temporary diagnostics.
+ - [ ] Cherry-pick native commits into the contribution and live checkouts; export Neko plugin changes as companion patches and verify the patched plugin tree exactly matches the source tree.
+-- [ ] Use the existing controlled lifecycle scripts to reload only required services, preserving the local LLM and user configuration.
++- [x] Use the existing controlled lifecycle scripts to reload only required services, preserving the local LLM and user configuration.
+ - [ ] Observe Neko's own autonomous decisions and real inventory/position changes. Report separately code correctness, live progress and remaining limitations; push verified commits to the fork.
+ 
+ ## Diagnosis record
+ 
+ - Confirmed: current snapshot item naming fails on NBT-wrapped modern custom text; native `!inventory` returns only counts and armor IDs.
+ - Confirmed: replaying the real crowded inventory at 400 tokens produces `inventory={details:'minecraft_observe'}`; at 700 tokens it keeps only the first sixteen counts and drops named-item identity.
+-- To verify: failure history/decision grounding and actual command availability at the native prompt boundary.
++- Confirmed: the executor exposes `!goToSurface`, `!pillarUp`, `!craftRecipe`, `!serverQuery` and `!serverCommand`; none are blocked in this deployment. The local profile duplicated its Chinese execution policy and contained literal newline escapes in its protocol template.
++- Confirmed: terminal callbacks can run before passive state and previously contained up to 12,500 feedback characters without current resource facts. Matched outcome history and bounded fresh state now accompany priority decisions.
++- Confirmed during live verification: `plugin/server/messaging/proactive_bridge.py` calls the generic result-summary parser before the documented callback cap. A real 840-token idle decision became 200 tokens and lost `resources`; the actual conversation bus confirmed the loss. This platform-layer change requires escalation under `CONTEXT.md`.
++- Prepared and verified a scoped host patch that preserves Minecraft v2 text up to the existing 1,000-token callback cap. Other plugin/legacy paths retain their 200-token parsing behavior. Application is pending the user's response to the escalation question; no platform source was modified.
++
++## Verification and deployment record (2026-10-09)
++
++- Native working suite: 238 tests passed; contribution checkout: 244 tests passed.
++- Complete Minecraft plugin suite: 98 tests passed, including modern text identity, crowded budgets, matched history, stale/foreign results and timeout recovery.
++- Export/deployment source commits: native `eb7ba40`, `8420406`; Neko plugin `369532f`, `a8e28a5`, `c6a64d8`.
++- Reloaded the Minecraft body and its plugin with the established lifecycle scripts, retaining the running local model and Neko main. Runtime state/arbitration was preserved.
++- Fresh live observations correctly show the wand, compass and book labels and 8 received/pushed welcome parts. The bot was already on the surface before this deployment; do not attribute that earlier escape to these changes.
++- Read-only sampling observed a genuine autonomous task, inventory changes and later position changes, with no injected diagnostic actions/chat. That task still attempted a long tree-growing chain and ended at its deadline. This is evidence that dispatch works, not evidence of reliable unattended survival.
++- Remaining blocker: the host's earlier 200-token truncation prevents the new bounded context from consistently reaching the model. The companion host patch is reviewable but must not be described as applied until escalation is approved and live delivery is verified.

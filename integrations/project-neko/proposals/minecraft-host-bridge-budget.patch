@@ -1,0 +1,19 @@
+--- a/plugin/server/messaging/proactive_bridge.py
++++ b/plugin/server/messaging/proactive_bridge.py
+@@ -482,7 +482,15 @@
+             try:
+                 from utils.result_parser import parse_push_message_content
+ 
+-                text = parse_push_message_content(text)
++                if plugin_id == "game_agent_minecraft" and schema == "push_message.v2":
++                    # Minecraft decision context is already structured/bounded.
++                    # The generic 200-token result-summary cap removes its
++                    # resources and outcomes before the 1,000-token host cap.
++                    from config import AGENT_CALLBACK_TEXT_MAX_TOKENS
++                    from utils.tokenize import truncate_to_tokens
++                    text = truncate_to_tokens(text, AGENT_CALLBACK_TEXT_MAX_TOKENS)
++                else:
++                    text = parse_push_message_content(text)
+             except Exception as exc:
+                 logger.debug(
+                     "parse_push_message_content failed (fallback to raw): {}",
