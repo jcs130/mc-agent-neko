@@ -2,11 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
+import { playerInventorySlots } from '../src/agent/library/inventory_snapshot.js';
 
 function harness(perform = async () => '生命 20/20；魔力 20/20；技能点 6', actions = []) {
     const finishes = [];
     const context = vm.createContext({
-        console, Date, setTimeout, clearTimeout, process: { env: { DEBUG_CHAT: '0' } },
+        console, Date, setTimeout, clearTimeout, playerInventorySlots, process: { env: { DEBUG_CHAT: '0' } },
         wsServer: { beginMissionTask() {}, finishMission: (...args) => finishes.push(args) },
         queryList: [{ name: '!readBook', params: { slot: { type: 'int' } }, perform }],
         actionsList: [{ name: '!endGoal', perform: async agent => {
@@ -80,6 +81,25 @@ test('an explicit user lifecycle command retains its termination authority', asy
     assert.equal(await execute(agent, '!endGoal'), 'Mission complete.');
     assert.equal(finishes.length, 1);
     assert.equal(mission.isActive(), false);
+});
+
+test('task inventory evidence measures merchant payment and output while the window stays open', async () => {
+    const { agent, mission, finishes } = harness();
+    agent.bot.entity = { position: {} };
+    agent.bot.inventory = { slots: Array(46).fill(null) };
+    agent.bot.inventory.slots[9] = { name: 'iron_ingot', count: 11 };
+    mission._handoff({ text: '卖铁锭', taskId: 'trade-proof', origin: 'ws' });
+    const slots = Array(39).fill(null);
+    slots[0] = { name: 'iron_ingot', count: 3 };
+    slots[2] = { name: 'emerald', count: 1 };
+    slots[3] = { name: 'iron_ingot', count: 5 };
+    slots[4] = { name: 'emerald', count: 2 };
+    agent.bot.currentWindow = { inventoryStart: 3, inventoryEnd: 39, slots,
+        close() { assert.fail('evidence must not close the merchant'); } };
+    await mission.end('done');
+    assert.match(finishes[0][2], /iron_ingot.*before.*11.*now.*5/);
+    assert.match(finishes[0][2], /emerald.*before.*0.*now.*2/);
+    assert.equal(agent.bot.inventory.slots[9].count, 11, 'base cache stays untouched');
 });
 
 test('actual query data reaches the task completion even when narration is empty', async () => {

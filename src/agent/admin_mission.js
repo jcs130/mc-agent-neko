@@ -23,6 +23,7 @@
  */
 
 import { wsServer } from '../websocket/ws_server.js';
+import { playerInventorySlots } from './library/inventory_snapshot.js';
 
 const IDLE = 'IDLE';
 const RUNNING = 'RUNNING';
@@ -34,7 +35,7 @@ function missionInventory(bot) {
         const counts = Object.create(null);
         // Include equipped/offhand slots so equipping an existing item is not
         // mistaken for acquisition or loss. Unknown initial inventory stays null.
-        for (const item of bot.inventory.slots) {
+        for (const item of playerInventorySlots(bot)) {
             if (typeof item?.name !== 'string' || !Number.isInteger(item.count) || item.count <= 0) continue;
             counts[item.name] = (counts[item.name] || 0) + item.count;
         }

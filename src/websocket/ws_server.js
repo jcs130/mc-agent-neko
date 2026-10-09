@@ -5,6 +5,7 @@ import { sendServerCommand } from './server_commands.js';
 import { GameInformation } from './game_information.js';
 import settings from '../agent/settings.js';
 import { serverProxy } from '../agent/mindserver_proxy.js';
+import { playerInventorySlots, playerHeldItem } from '../agent/library/inventory_snapshot.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ★2026-07-07 外部 LLM 双向集成 — 出口: 15s 中文自然语言汇报 (bot_status_nl)。
@@ -378,7 +379,7 @@ class WSMessageServer {
                 // from telemetry and fired false "gear lost" alerts (saw both live).
                 const inv = {};
                 try {
-                    const sl = bot.inventory.slots || [];
+                    const sl = playerInventorySlots(bot);
                     for (let i = 5; i < sl.length; i++) {
                         const s = sl[i];
                         if (s && s.name) inv[s.name] = (inv[s.name] || 0) + s.count;
@@ -396,7 +397,7 @@ class WSMessageServer {
                 // dying last pick is visible BEFORE the bot ends up punching stone.
                 let pickFx = 0;
                 try {
-                    for (const it of bot.inventory.items()) {
+                    for (const it of playerInventorySlots(bot).slice(9, 45).filter(Boolean)) {
                         if (!/_pickaxe$/.test(it.name)) continue;
                         const max = it.maxDurability || 0;
                         const used = (typeof it.durabilityUsed === 'number') ? it.durabilityUsed : 0;
@@ -422,7 +423,7 @@ class WSMessageServer {
                     tod: (bot.time && bot.time.timeOfDay) ?? -1,
                     hostiles,
                     skill: this._skillRunningName || null,
-                    held: (bot.heldItem && bot.heldItem.name) || 'empty',   // exposes digging-with-wrong-tool
+                    held: playerHeldItem(bot)?.name || 'empty',   // exposes digging-with-wrong-tool
                     pickFx,                                                  // effective (non-worn-out) pickaxes
                     armor,                                                   // ★C314-A worn armor pieces (none = defenseless → swarm death risk)
                     mob: ((bot._mobility && bot._mobility.state) || '?') + (bot._mobility && bot._mobility.enclosed ? '/ENC' : ''),   // mobility state machine (FREE/POCKET/ENTOMBED/SWIM[/ENC=封闭地穴])
@@ -768,7 +769,7 @@ class WSMessageServer {
             const skills = await import('../agent/library/skills.js');
             const result = await skills.customSkill(this.agent.bot, skillName, ...args);
             let inv = {};
-            try { for (const it of this.agent.bot.inventory.items()) inv[it.name] = (inv[it.name] || 0) + it.count; } catch (e) {}
+            try { for (const it of playerInventorySlots(this.agent.bot).slice(9, 45).filter(Boolean)) inv[it.name] = (inv[it.name] || 0) + it.count; } catch (e) {}
             this.broadcast({
                 type: 'skill_result', skill: skillName, ok: true,
                 result: (result && typeof result === 'object') ? JSON.stringify(result) : (result ?? null),
@@ -799,7 +800,7 @@ class WSMessageServer {
         const inventory = {};
         if (this.agent && this.agent.bot) {
             try {
-                for (const item of this.agent.bot.inventory.items()) {
+                for (const item of playerInventorySlots(this.agent.bot).slice(9, 45)) {
                     if (item != null) {
                         if (!inventory[item.name]) {
                             inventory[item.name] = 0;

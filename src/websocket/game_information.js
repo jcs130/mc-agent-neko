@@ -4,6 +4,7 @@ import { readItemIdentity } from '../agent/library/item_identity.js';
 import { activeServerCommand } from './server_commands.js';
 import { applyMerchantTrades, merchantOffers } from '../agent/library/merchant_trades.js';
 import { backpackSource } from '../agent/library/portable_storage.js';
+import { playerInventorySlots, playerHeldItem } from '../agent/library/inventory_snapshot.js';
 
 // Observation only: this module never sends game packets, chat or actions.
 const finite = value => typeof value === 'number' && Number.isFinite(value) ? value : null;
@@ -138,10 +139,11 @@ function distance(a, b) {
 
 export function collectGameState(agent, presentation = {}) {
     const bot = agent.bot, pos = bot.entity?.position;
-    const slots = bot.inventory?.slots ?? [], counts = {};
+    const slots = playerInventorySlots(bot), counts = {};
     let emptySlots = null;
     try {
-        const count = bot.inventory?.emptySlotCount?.();
+        const count = slots !== bot.inventory?.slots && slots.length >= 45
+            ? slots.slice(9, 45).filter(item => !item).length : bot.inventory?.emptySlotCount?.();
         if (Number.isInteger(count) && count >= 0 && count <= 36) emptySlots = count;
     } catch { /* unavailable inventory capacity remains unknown */ }
     slots.forEach((item, slot) => {
@@ -176,7 +178,7 @@ export function collectGameState(agent, presentation = {}) {
             hardcore: bot.game?.hardcore, timeOfDay: bot.time?.timeOfDay,
             age: bot.time?.age, weather: { rain: finite(bot.rainState), thunder: finite(bot.thunderState) },
             biome: below?.biome?.name ?? below?.biome ?? null, spawnPoint: point(bot.spawnPoint) },
-        inventory: { counts, emptySlots, selectedHotbar: bot.quickBarSlot, held: itemState(bot.heldItem),
+        inventory: { counts, emptySlots, selectedHotbar: bot.quickBarSlot, held: itemState(playerHeldItem(bot, slots)),
             slots: slots.map(itemState).filter(Boolean) },
         // Keep local collision facts and real chat targets ahead of verbose
         // entity metadata. Otherwise a crowded scene hides how to get unstuck.

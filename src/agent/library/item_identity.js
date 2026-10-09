@@ -1,4 +1,5 @@
 import { plainText } from './books.js';
+import { playerInventorySlots } from './inventory_snapshot.js';
 
 const read = (value, key) => { try { return value?.[key]; } catch { return undefined; } };
 const text = (value, limit) => {
@@ -25,7 +26,7 @@ export function readItemIdentity(item) {
 }
 
 export function inventoryIdentityLines(bot) {
-    const slots = bot.inventory?.slots ?? [];
+    const slots = playerInventorySlots(bot);
     const items = slots.flatMap((item, slot) => {
         if (!item || slot < 5) return [];
         const identity = readItemIdentity(item);

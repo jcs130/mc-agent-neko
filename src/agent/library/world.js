@@ -1,6 +1,7 @@
 import pf from 'mineflayer-pathfinder';
 import * as mc from '../../utils/mcdata.js';
 import { findBlocksOffThread } from '../../utils/block_scan.js';
+import { playerInventorySlots } from './inventory_snapshot.js';
 
 
 export function getNearestFreeSpace(bot, size=1, distance=8) {
@@ -349,7 +350,7 @@ export function getInventoryCounts(bot) {
      * let hasWoodenPickaxe = inventory['wooden_pickaxe'] > 0;
      **/
     let inventory = {};
-    for (const slot of bot.inventory.slots) {
+    for (const slot of playerInventorySlots(bot)) {
         if (slot != null && slot.name) {
             if (inventory[slot.name] == null) {
                 inventory[slot.name] = 0;
