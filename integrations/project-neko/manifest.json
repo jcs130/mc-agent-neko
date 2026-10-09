@@ -1,9 +1,9 @@
 {
   "upstreamRepository": "https://github.com/Project-N-E-K-O/N.E.K.O",
   "baseCommit": "fb2a2e731a8c954478d08678b0c8cf40e8145a54",
-  "sourceCommit": "8f57b0d7757b3381e3e3e15787c343b7f8e2771f",
+  "sourceCommit": "6848fcefcacdc2735d7ec4f3fa00f041fd389187",
   "scope": "plugin/plugins/game_agent_minecraft",
-  "resultPluginTree": "d1cd780249274ae257b4b52e2ffd055a9d264f79",
+  "resultPluginTree": "7656d069035027047bfeaec372c3dd220679f1a9",
   "patches": [
     {
       "file": "0001-chore-configure-text-only-local-Qwen-Minecraft-trial.patch",
@@ -228,6 +228,10 @@
     {
       "file": "0056-fix-retain-received-merchant-offers-in-Neko-planning.patch",
       "sha256": "792df5372f4372ac944bd5c5da01c9cd471d503a4c35da68efbbf79d6163193c"
+    },
+    {
+      "file": "0057-fix-speak-Minecraft-item-and-skill-names-in-Chinese.patch",
+      "sha256": "107aa9b786333bcddbee767eeb43e71b65240c07e8fbb158c1707b82bb48be41"
     }
   ],
   "verification": {
@@ -407,5 +411,22 @@
     "viewerHttpStatus": 200,
     "continuedAutonomousDispatchObserved": true,
     "autonomousNavigationCompleted": true
+  },
+  "chineseSpeechVerification": {
+    "date": "2026-10-10",
+    "pluginTestsPassed": 183,
+    "newLanguageTestsPassed": 7,
+    "pluginPatchCount": 57,
+    "pluginSeriesReplayMatchesSource": true,
+    "sourceIdentifiersPreserved": true,
+    "additionalTranslationInferenceCalls": 0,
+    "respondingCallbackBudgetTokens": 1000,
+    "localModelSpokeChineseItemAndSkillNames": true,
+    "localModelKeptToolArgumentIronPickaxe": true,
+    "diagnosticGameActionsSent": 0,
+    "deployedAt": "2026-10-10T02:31:22+08:00",
+    "liveIdleAndSocialCuesContainedPolicy": true,
+    "policyObservedInMainModelInput": true,
+    "actualSubsequentSpokenItemNamesObserved": false
   }
 }

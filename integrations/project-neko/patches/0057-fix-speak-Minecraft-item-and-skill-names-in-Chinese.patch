@@ -1,0 +1,209 @@
+From 6848fcefcacdc2735d7ec4f3fa00f041fd389187 Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Sat, 10 Oct 2026 02:31:06 +0800
+Subject: [PATCH] fix: speak Minecraft item and skill names in Chinese
+
+---
+ .../plugins/game_agent_minecraft/__init__.py  |  3 +
+ .../plugins/game_agent_minecraft/prompts.py   | 10 ++
+ .../plugins/game_agent_minecraft/service.py   | 26 +++++-
+ .../test_spoken_language.py                   | 93 +++++++++++++++++++
+ 4 files changed, 127 insertions(+), 5 deletions(-)
+ create mode 100644 plugin/plugins/game_agent_minecraft/test_spoken_language.py
+
+diff --git a/plugin/plugins/game_agent_minecraft/__init__.py b/plugin/plugins/game_agent_minecraft/__init__.py
+index b923e0b..ce41f59 100644
+--- a/plugin/plugins/game_agent_minecraft/__init__.py
++++ b/plugin/plugins/game_agent_minecraft/__init__.py
+@@ -660,6 +660,9 @@ class GameAgentMinecraftPlugin(NekoPluginBase):
+         if service and service._game_execution_busy():
+             lines.append('Body execution is still busy. Do not call minecraft_task or replace the current action; the idle scheduler owns the next physical decision.')
+         prefix = prompts.t("CUE_PREFIX_DONE", lang=self._lang) + '\n'
++        speech_policy = prompts.spoken_language_policy(self._lang)
++        if speech_policy:
++            prefix += speech_policy + '\n'
+         # This priority-7 callback can run before passive facts are consumed.
+         # Reserve its fresh resources/recovery facts before fitting feedback;
+         # otherwise the host's 1,000-token cap silently chops them off.
+diff --git a/plugin/plugins/game_agent_minecraft/prompts.py b/plugin/plugins/game_agent_minecraft/prompts.py
+index b96f250..a98acb2 100644
+--- a/plugin/plugins/game_agent_minecraft/prompts.py
++++ b/plugin/plugins/game_agent_minecraft/prompts.py
+@@ -46,6 +46,16 @@ DEFAULT_LANG = "en"
+ SUPPORTED_LANGS: tuple[str, ...] = ("zh", "zh-TW", "en", "ja", "ko", "ru", "es", "pt")
+ 
+ 
++def spoken_language_policy(lang: str) -> str:
++    """Separate spoken wording from exact execution IDs and received evidence."""
++    if not str(lang).startswith('zh'):
++        return ''
++    return ('播報全用中文，英文物品、技能、狀態和報錯先翻譯，優先用遊戲或伺服器給的中文名，不念欄位、代碼或命令；'
++            'raw_iron=粗鐵，hay_block=乾草捆。工具參數與玩家名保留原文，別復述規則。') if lang == 'zh-TW' else (
++        '播报全用中文，英文物品、技能、状态和报错先翻译，优先用游戏或服务器给的中文名，不念字段、代码或命令；'
++        'raw_iron=粗铁，hay_block=干草捆。工具参数与玩家名保留原文，别复述规则。')
++
++
+ def t(key: str, *, lang: str | None = None, **fmt: Any) -> str:
+     """Resolve a prompt by key + locale, with optional ``str.format`` substitutions.
+ 
+diff --git a/plugin/plugins/game_agent_minecraft/service.py b/plugin/plugins/game_agent_minecraft/service.py
+index 2ee80ae..c91a576 100644
+--- a/plugin/plugins/game_agent_minecraft/service.py
++++ b/plugin/plugins/game_agent_minecraft/service.py
+@@ -191,7 +191,7 @@ class GameAgentService:
+         push_message_fn: Callable[..., Any],
+     ) -> None:
+         self.logger = logger
+-        self._push_message = push_message_fn
++        self._push_message_fn = push_message_fn
+ 
+         # Configuration (filled in by ``configure``).
+         self._ws_url: str = "ws://localhost:48909"
+@@ -425,6 +425,20 @@ class GameAgentService:
+     _OVERWRITE_MIN_SURVIVAL_S = 2.0
+ 
+ 
++    def _push_message(self, **kwargs):
++        # Responding turns feed speech generation. Keep passive evidence and
++        # exact IDs untouched, and never add a translation inference call.
++        policy = prompts.spoken_language_policy(self._lang)
++        if kwargs.get('ai_behavior') == 'respond' and policy:
++            parts = list(kwargs.get('parts') or [])
++            for index, part in enumerate(parts):
++                if isinstance(part, dict) and part.get('type') == 'text' and part.get('text'):
++                    if policy not in part['text']:
++                        parts[index] = {**part, 'text': policy + '\n' + part['text']}
++                        kwargs = {**kwargs, 'parts': parts}
++                    break
++        return self._push_message_fn(**kwargs)
++
+     def set_lang(self, lang: str) -> None:
+         """Set the locale used for every push_message cue + result
+         summary this service emits. Called by the plugin facade after
+@@ -1080,9 +1094,10 @@ class GameAgentService:
+                         context += '\nSocial-only turn: reply via minecraft_chat if helpful; do not call minecraft_task from this callback or replace a running goal. The next idle decision owns physical planning.'
+                     # Bound the whole callback, including policy/events/owned
+                     # execution state, rather than just its state JSON.
+-                    if count_tokens(context) > 1000:
++                    speech_prefix = prompts.spoken_language_policy(self._lang) + '\n'
++                    if count_tokens(speech_prefix + context) > 1000:
+                         prefix, suffix = context.split(state_context, 1)
+-                        budget = max(300, 1000 - count_tokens(prefix + suffix) - 32)
++                        budget = max(256, 1000 - count_tokens(speech_prefix + prefix + suffix) - 32)
+                         context = prefix + self._game_observations.focused_context(max_tokens=budget, mode=mode, max_events=0) + suffix
+                 result = await asyncio.to_thread(self._push_message, source='game_agent_minecraft', visibility=[],
+                                         ai_behavior='respond' if attention else 'read',
+@@ -2701,8 +2716,9 @@ class GameAgentService:
+             if not self._unattended.enabled:
+                 sections.append(prompts.t('KEEP_GOING_BODY', lang=self._lang))
+             sections.append('If detailsRequired=true, query the needed section before deciding; omitted facts are unknown.')
+-            overhead = prompts.t('CUE_PREFIX_IDLE', lang=self._lang) + '\n' + '\n'.join(sections)
+-            sections.append(self._game_observations.focused_context(max_tokens=min(700, max(400, 900 - count_tokens(overhead))), mode='decision'))
++            overhead = (prompts.spoken_language_policy(self._lang) + '\n'
++                        + prompts.t('CUE_PREFIX_IDLE', lang=self._lang) + '\n' + '\n'.join(sections))
++            sections.append(self._game_observations.focused_context(max_tokens=min(700, max(256, 900 - count_tokens(overhead))), mode='decision'))
+             body_text = prompts.t('CUE_PREFIX_IDLE', lang=self._lang) + '\n' + '\n'.join(sections)
+             try:
+                 result = self._push_message(source='game_agent_minecraft', visibility=[], ai_behavior='respond',
+diff --git a/plugin/plugins/game_agent_minecraft/test_spoken_language.py b/plugin/plugins/game_agent_minecraft/test_spoken_language.py
+new file mode 100644
+index 0000000..272ec53
+--- /dev/null
++++ b/plugin/plugins/game_agent_minecraft/test_spoken_language.py
+@@ -0,0 +1,93 @@
++import copy
++import unittest
++
++from utils.tokenize import count_tokens
++from . import GameAgentMinecraftPlugin, prompts
++from .service import GameAgentService
++from .test_observations import frame
++from .test_grounded_recovery import crowded_frame
++
++
++class SpokenLanguageTests(unittest.IsolatedAsyncioTestCase):
++    def service(self, lang='zh'):
++        calls = []
++        service = GameAgentService(logger=None, push_message_fn=lambda **kw: calls.append(kw))
++        service.set_lang(lang)
++        return service, calls
++
++    async def test_active_cue_requests_chinese_before_raw_evidence_without_mutating_ids(self):
++        service, calls = self.service()
++        data = {'ai_behavior': 'respond', 'priority': 7, 'parts': [
++            {'type': 'text', 'text': 'raw_iron=14; FREE; balance=0; !equip("iron_pickaxe"); Player_1'}]}
++        before = copy.deepcopy(data)
++        service._push_message(**data)
++        text = calls[-1]['parts'][0]['text']
++        self.assertTrue(text.startswith(prompts.spoken_language_policy('zh')))
++        self.assertIn('先翻译', text)
++        self.assertIn('技能', text)
++        self.assertIn('服务器给的中文名', text)
++        self.assertIn('工具参数与玩家名保留原文', text)
++        self.assertTrue(text.endswith(data['parts'][0]['text']))
++        self.assertEqual(data, before)
++        self.assertEqual(calls[-1]['priority'], 7)
++
++    async def test_passive_facts_and_non_chinese_locales_are_unmodified(self):
++        for lang, behavior in [('zh', 'read'), ('en', 'respond'), ('ja', 'respond')]:
++            service, calls = self.service(lang)
++            data = {'ai_behavior': behavior, 'parts': [{'type': 'text', 'text': 'coal=64; status=FREE'}]}
++            service._push_message(**data)
++            self.assertEqual(calls[-1], data)
++
++    async def test_active_message_policy_is_added_once_and_language_switch_is_current(self):
++        service, calls = self.service()
++        policy = prompts.spoken_language_policy('zh')
++        service._push_message(ai_behavior='respond', parts=[{'type': 'text', 'text': policy + '\nraw_iron'}])
++        self.assertEqual(calls[-1]['parts'][0]['text'].count(policy), 1)
++        service.set_lang('zh-TW')
++        service._push_message(ai_behavior='respond', parts=[{'type': 'text', 'text': 'hay_block'}])
++        self.assertTrue(calls[-1]['parts'][0]['text'].startswith(prompts.spoken_language_policy('zh-TW')))
++
++    async def test_idle_decision_includes_policy_and_reserves_callback_budget(self):
++        service, calls = self.service()
++        service.configure({'unattended_enabled': True, 'unattended_character': 'YUI'})
++        service._game_observations.ingest_state(crowded_frame())
++        await service._fire_keep_going_nudge()
++        text = calls[-1]['parts'][0]['text']
++        self.assertIn(prompts.spoken_language_policy('zh'), text)
++        self.assertLessEqual(count_tokens(text), 1000)
++
++    async def test_completion_policy_precedes_english_results_and_stays_within_host_cap(self):
++        plugin = object.__new__(GameAgentMinecraftPlugin)
++        plugin._lang = 'zh'
++        cue = plugin._format_completion_cue({'status': 'ok', 'query': '核对物品',
++            'text': 'Inventory: raw_iron 14; hay_block; balance 0. ' * 120,
++            'inventory': {'raw_iron': 14, 'coal': 64}})
++        self.assertIn(prompts.spoken_language_policy('zh'), cue)
++        self.assertLess(cue.index('先翻译'), cue.index('Inventory:'))
++        self.assertLessEqual(count_tokens(cue), 1000)
++        self.assertEqual(plugin._format_completion_cue({'status': 'interrupted'}), '')
++
++    async def test_player_reply_trigger_uses_chinese_policy_without_renaming_sender(self):
++        from .test_observations import event
++        service, calls = self.service()
++        await service._on_game_state(frame(recentEvents=[event('english-name', 'whisper', 'Hello', player='Player_1')]))
++        text = next(call for call in calls if call['ai_behavior'] == 'respond')['parts'][0]['text']
++        self.assertIn(prompts.spoken_language_policy('zh'), text)
++        self.assertIn('Player_1', text)
++        self.assertIn('Hello', text)
++
++    async def test_crowded_player_reply_reserves_policy_budget_and_keeps_full_evidence(self):
++        from .test_observations import event
++        service, calls = self.service()
++        data = crowded_frame()
++        message = 'Need an iron_pickaxe to use flame_burst near the village. ' * 60
++        data['recentEvents'] = [event('long-whisper-1', 'whisper', message, player='Friend_1'),
++                                event('long-whisper-2', 'whisper', message, player='Friend_2')]
++        await service._on_game_state(data)
++        text = next(call for call in calls if call['ai_behavior'] == 'respond')['parts'][0]['text']
++        self.assertIn(prompts.spoken_language_policy('zh'), text)
++        self.assertIn('Friend_1', text)
++        self.assertIn('Friend_2', text)
++        self.assertLessEqual(count_tokens(text), 1000)
++        cached = service._game_observations.view()['recentEvents']
++        self.assertEqual([item['text'] for item in cached], [message, message])
+-- 
+2.55.0.windows.5
+

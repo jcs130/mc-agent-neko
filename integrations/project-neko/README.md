@@ -277,3 +277,13 @@ in `!window`, and expose `!tradeWindow` for the current merchant without reopeni
 its NPC. Empty ingredient slots no longer imply an empty offer list. See
 [the merchant repair report](../../docs/neko-merchant-offers-2026-10-10.md)
 for packet handling, server inventory confirmation and verification limits.
+
+## Chinese item and skill names in speech
+
+Patch 0057 asks the existing persona model to speak item/skill names, states and
+errors in Chinese while preserving exact tool arguments, commands, player names
+and received game evidence. Responding callbacks reserve space for this rule
+within their existing limit; no translation inference or heartbeat is added.
+The plugin suite passed 183 tests, and all 57 plugin patches reproduce the
+declared source tree. See [the speech verification report](../../docs/neko-chinese-speech-2026-10-10.md)
+for local model probes and the passive deployment evidence.
