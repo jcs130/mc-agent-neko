@@ -428,5 +428,32 @@
     "liveIdleAndSocialCuesContainedPolicy": true,
     "policyObservedInMainModelInput": true,
     "actualSubsequentSpokenItemNamesObserved": false
+  },
+  "same3090VisionVerification": {
+    "date": "2026-10-10",
+    "visionEncoderGpu": 0,
+    "languageEngineGpu": 0,
+    "gpuModel": "RTX 3090",
+    "visionMaxImageTokens": 512,
+    "modelMaxContext": 262144,
+    "localEndpointUnchanged": true,
+    "cpuNew1280EncodeMs": 5118,
+    "gpuNew1280EncodeMs": 350,
+    "gpuCachedEncodeMs": 1,
+    "cpuNew640EncodeMs": 3649,
+    "gpuNew640EncodeMs": 51,
+    "deployedNewScreenshotApiMs": 3890,
+    "deployedCachedScreenshotApiMs": 1887,
+    "screenshotProbeOutputTokens": 160,
+    "cachedPromptTokens": 531,
+    "nvidiaSmiFreeMiBAfterProbes": 1030,
+    "cudaFreeMiBAfterGraphs": 538,
+    "modelHealthLoaded": true,
+    "modelHealthImages": true,
+    "nativeBodyProcessUnchanged": true,
+    "viewerHttpStatus": 200,
+    "diagnosticLiveGameActions": 0,
+    "subsequentAutonomousInferenceObserved": true,
+    "longContextStressTested": false
   }
 }

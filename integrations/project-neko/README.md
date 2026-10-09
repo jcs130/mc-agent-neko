@@ -241,12 +241,15 @@ its active flag. Retired-body completions cannot clear a new mode invocation.
 See [the action feedback and learning audit](../../docs/neko-action-feedback-and-learning-2026-10-09.md)
 for the root causes and the earlier delivery state. Generated scripts and visual
 queries are now enabled through the native task executor; all three model roles
-share the existing local Qwen endpoint. Image encoding runs on CPU, while the
-same RTX 3090 model understands the encoded image. There is no automatic visual
+share the existing local Qwen endpoint. Image encoding now runs on the same
+RTX 3090 as the language engine. There is no automatic visual
 heartbeat or separate VLM download. See [the current capability report](../../docs/neko-local-code-and-vision-2026-10-09.md)
 for setup, limits and actual probes. Experience memory and existing skill
 discovery remain enabled; automatic skill evaluation/promotion and model-weight
 training are not implemented. No additional N.E.K.O. platform patch is required.
+The later [same-card vision deployment report](../../docs/neko-same-3090-vision-2026-10-10.md)
+records the GPU configuration, memory use and measured latency; the earlier
+capability report retains its original CPU measurements.
 
 ## Approved host bridge fix
 
