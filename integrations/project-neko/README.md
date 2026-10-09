@@ -88,8 +88,8 @@ The exported plugin passed 189 tests. All 59 ordered plugin patches reproduce
 the committed source. The manifest records the exact reproduced
 plugin tree and host-file blobs. The host callback/media regression suite passed
 195 tests at its last unchanged delivery, including six Minecraft budget tests.
-The current native source suite passed 562 tests; this contribution branch's
-full `node --test` discovery passed 585 tests. The existing mineDown contract
+The current native source suite passed 567 tests; this contribution branch's
+full `node --test` discovery passed 590 tests. The existing mineDown contract
 test also passed.
 
 Follow the patched plugin's README for the existing N.E.K.O. plugin lifecycle,
