@@ -13,8 +13,14 @@
 - [x] Add tests for explicit public/private plain text, rejection of tool-call/diagnostic formats, offline recipients, and duplicate suppression. Preserve the genuine communication paths and allow slash gameplay commands through the separate server tool.
 - [x] Guide Neko to keep actions/plans/tool results in local UI, use public chat for actual replies/help/cooperation, and proactively whisper a real online player for individual conversation. Keep incoming private replies private.
 - [x] Run affected/full plugin tests and MC chat/routing/runtime tests, inspect diffs and commit.
-- [ ] Deploy to owned services, restore unattended play, verify fresh flags/ownership/model/viewer health and observe public output. Validate private routing with isolated tests rather than unsolicited test messages to real players.
+- [x] Deploy to owned services, restore unattended play, verify fresh flags/ownership/model/viewer health and observe public output. Validate private routing with isolated tests rather than unsolicited test messages to real players.
 
 **Runtime boundary:** Intentional conversation may use `minecraft_chat` only. Repeated identical conversation gets a bounded cooldown. Machine-format validation is not a semantic classifier: prompt guidance governs conversational relevance, while automatic body output is blocked deterministically.
 
 Before deployment, 70 MC tests and 60 Neko plugin tests passed. Evidence: `D:/neko-mc-trial/explicit-chat-node-tests-20261009.tap` and `D:/neko-mc-trial/explicit-chat-python-tests-20261009.log`. Real WebSocket tests verify a private message reaches only the selected fake recipient with automatic chat disabled. No test messages are sent to other server players.
+
+## Deployment verification
+
+Deployed MC `3822ab8` and Neko `18dcb08`; set the trial `chat_ingame=false`, retained `DEBUG_CHAT=0`, restarted the owned services and explicitly restored unattended play. Runtime telemetry confirmed external Neko conversation ownership throughout a 45-second observation, zero public chat packets and four gameplay command packets. No body `openChat` response occurred during this window; suppression for actual body responses is verified by the regression tests, not inferred from the empty live sample.
+
+The running Neko `minecraft_chat` tool rejected public/private tool-call text (`internal_text`), self recipients (`self_recipient`) and an actually offline recipient (`player_offline`) without sending chat. Local Qwen, Neko session/plugin, LAN viewer, fresh game state and the unattended supervisor were healthy. The temporary telemetry wrappers restored themselves and the probe was removed after verification. Evidence: `D:/neko-mc-trial/explicit-chat-deployment-verified-20261009.json`. This is a deployment check, not a long-term unattended behavior guarantee.
