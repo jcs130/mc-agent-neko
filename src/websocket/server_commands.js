@@ -1,6 +1,7 @@
 // Server gameplay commands are distinct from public chat and local JS skills.
 // Replies are observations: receiving a catalog/error is never action success.
-const inFlight = new WeakSet();
+const inFlight = new WeakMap();
+export const activeServerCommand = bot => inFlight.get(bot);
 const READ_ONLY = /^\/mycli (?:help(?: .*)?|guide(?: .*)?|list(?: .*)?|explain(?: .*)?|spells (?:list|explain)(?: .*)?|skills (?:(?:list|info|status|explain)(?: .*)?|mine|points)|profession status|mastery|(?:guild|arena) (?:status|board|shared)|status)$/;
 
 export async function sendServerCommand(bot, { command, readOnly = false } = {}, { timeoutMs = 2500, quietMs = 180 } = {}) {
@@ -12,7 +13,7 @@ export async function sendServerCommand(bot, { command, readOnly = false } = {},
     command = command.trim().replace(/^\/agentfriend:mycli/, '/mycli').replace(/ +/g, ' ');
     if (readOnly && !READ_ONLY.test(command)) return { status: 'failed', reason: 'serverQuery accepts discovery/status commands only; use serverCommand for learning or casting.' };
     if (inFlight.has(bot)) return { status: 'failed', reason: 'busy', command };
-    inFlight.add(bot);
+    inFlight.set(bot, { command, startedAt: Date.now() });
     return await new Promise(resolve => {
         const messages = [], records = [];
         let total = 0, truncated = false, timer, quiet, settled = false;

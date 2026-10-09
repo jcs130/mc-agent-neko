@@ -85,6 +85,24 @@ test('structured server spell replies are retained while player lookalikes remai
     assert.ok(!events.some(e=>e.kind==='server_record' && e.data.value.id==='forged'));
 });
 
+test('solicited server replies stay observable with request scope while player chat stays independent', async t => {
+    const {bot,information}=fixture(t);
+    bot.chat=()=>{
+        const line='用法 /mycli cast prospect iron；魔力 6 · 冷却 30 秒';
+        bot.emit('message',{toString:()=>line},'system');
+        bot.emit('messagestr',line,'system');
+        bot.emit('chat','Friend_1','请帮忙',null,{});
+    };
+    const reply=await sendServerCommand(bot,{command:'/mycli skills info prospect'},{timeoutMs:40,quietMs:2});
+    assert.equal(reply.status,'received');
+    const events=information.snapshot().recentEvents;
+    assert.equal(events.find(e=>e.kind==='system').data.solicitedCommand,'/mycli skills info prospect');
+    assert.equal(events.find(e=>e.kind==='chat').data.solicitedCommand,undefined);
+    bot.emit('message',{toString:()=> '无法完成其他事件'},'system');
+    await Promise.resolve();
+    assert.equal(information.snapshot().recentEvents.at(-1).data.solicitedCommand,undefined);
+});
+
 test('raw and parsed chat produce one event, self echoes are excluded, admin routing is labeled', async t => {
     const { bot, information } = fixture(t);
     const json = { toString: () => '<Friend_1> hello' };

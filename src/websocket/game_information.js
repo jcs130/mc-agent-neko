@@ -1,5 +1,6 @@
 import { randomUUID, createHash } from 'node:crypto';
 import { plainText } from '../agent/library/books.js';
+import { activeServerCommand } from './server_commands.js';
 
 // Observation only: this module never sends game packets, chat or actions.
 const finite = value => typeof value === 'number' && Number.isFinite(value) ? value : null;
@@ -182,7 +183,9 @@ export class GameInformation {
         };
         this.on(this.bot, 'chat', (...args) => chat('chat', ...args));
         this.on(this.bot, 'whisper', (...args) => chat('whisper', ...args));
-        this.on(this.bot, 'message', (json, position, sender, verified) => queueMicrotask(() => { try {
+        this.on(this.bot, 'message', (json, position, sender, verified) => {
+            const solicitedCommand = position === 'system' && !sender ? activeServerCommand(this.bot)?.command : undefined;
+            queueMicrotask(() => { try {
             if (this.closed || (json && typeof json === 'object' && structured.has(json))) return;
             if (sender && sender === this.bot.player?.uuid) return;
             const text = gameText(json);
@@ -190,13 +193,14 @@ export class GameInformation {
             const record = position === 'system' && !sender && /^(MC_[A-Z_]+)\s+(\{.*\})$/.exec(text);
             if (record) {
                 try {
-                    this.event('server_record', { text, source: 'server', data: { kind: record[1], value: JSON.parse(record[2]) } });
+                    this.event('server_record', { text, source: 'server', data: { kind: record[1], value: JSON.parse(record[2]), ...(solicitedCommand ? { solicitedCommand } : {}) } });
                     return;
                 } catch { /* malformed JSON remains observable text */ }
             }
             this.event(position === 'game_info' ? 'actionbar' : position === 'chat' ? 'chat' : 'system',
-                { text, source: position === 'chat' ? 'received_chat' : 'server', data: { sender, verified, translation: json?.translate } });
-        } catch { /* malformed text is not a game failure */ } }));
+                { text, source: position === 'chat' ? 'received_chat' : 'server', data: { sender, verified, translation: json?.translate, ...(solicitedCommand ? { solicitedCommand } : {}) } });
+        } catch { /* malformed text is not a game failure */ } });
+        });
         this.on(this.bot, 'actionBar', value => this.actionBar(gameText(value)));
         this.on(this.bot, 'title', (value, type = 'title') => {
             this.presentation.titles[type] = { text: gameText(value), observedAt: now() };
