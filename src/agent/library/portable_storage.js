@@ -1,14 +1,13 @@
 import ItemFactory from 'prismarine-item';
 import { plainText } from './books.js';
 import { readItemIdentity } from './item_identity.js';
+import { sameInventoryStack } from './inventory_stack.js';
 
 const opened = new WeakMap();
 const label = value => plainText(value).replace(/§[0-9a-fk-or]/gi, '');
 const backpackText = value => /背包|backpack|portable\s+(?:storage|container)/i.test(value);
 const fail = message => ({ success: false, message });
-const sameItem = (a, b) => a && b && a.type === b.type && a.metadata === b.metadata
-    && JSON.stringify(a.components || []) === JSON.stringify(b.components || [])
-    && JSON.stringify(a.nbt || null) === JSON.stringify(b.nbt || null);
+const sameItem = (a, b) => a && b && sameInventoryStack(a, b);
 const sum = (slots, start, end, item) => slots.slice(start, end)
     .reduce((n, value) => n + (sameItem(value, item) ? value.count : 0), 0);
 const validStorage = window => window && /^(?:minecraft:)?generic_9x[1-6]$/.test(window.type || '')
@@ -29,51 +28,94 @@ function hasQuestJournal(window) {
 
 export const backpackSource = window => window && opened.has(window) ? { ...opened.get(window) } : null;
 
-export async function openBackpack(bot, slot, { timeoutMs = 2500 } = {}) {
+async function openReceivedStorage(bot, source, activate, { timeoutMs = 2500, reward = false, settleMs = 200 } = {}) {
+    if (bot.currentWindow?.selectedItem || bot.inventory?.selectedItem)
+        return fail('Cursor holds an item. Inspect it before opening another window.');
+    if (bot.interrupt_code) return fail('Interrupted before backpack interaction.');
+    if (bot.currentWindow) bot.closeWindow(bot.currentWindow);
+    let finish, timer, settleTimer, serverFailure = '';
+    const messages = [];
+    const onMessage = (message, position, sender) => {
+        if (sender || (position && position !== 'system')) return;
+        const text = label(message).trim().slice(0, 2048);
+        if (!text) return;
+        const match = /^MC_[A-Z_]+\s+(\{.*\})$/.exec(text);
+        if (match) {
+            try {
+                const receipt = JSON.parse(match[1]);
+                if (receipt.success === false) serverFailure = [receipt.skill, receipt.errorMessage || receipt.reason,
+                    receipt.nextCommands?.[0]].filter(Boolean).join('; ').slice(0, 280);
+            } catch { /* keep the bounded human-readable server reply */ }
+        } else { messages.push(text.slice(0, 180)); if (messages.length > 2) messages.shift(); }
+    };
+    const pending = new Promise(resolve => { finish = resolve; });
+    // Minepacks can immediately reopen the same numeric ID with its final title.
+    // Like Cortico's container ownership guard, bind to the received window
+    // instance after opening settles, never the first ID or a previous menu.
+    const onWindow = window => {
+        clearTimeout(settleTimer);
+        settleTimer = setTimeout(() => finish(window), settleMs);
+    };
+    const onEnd = () => finish(null);
+    bot.on('windowOpen', onWindow); bot.on('end', onEnd);
+    bot.on('message', onMessage);
+    timer = setTimeout(onEnd, timeoutMs);
+    try {
+        // Right click in air, never place a head on a block. Listen first so a
+        // late/synchronous server window cannot disappear between commands.
+        await activate();
+        const window = await pending;
+        const title = label(window?.title);
+        if (bot.currentWindow !== window || !validStorage(window) || !(reward ? /奖励|reward/i.test(title) : backpackText(title))) {
+            const receipt = serverFailure || messages.join(' | ');
+            return fail(`Storage window not confirmed.${receipt ? ' Observed server reply: ' + receipt + '.' : ''} Inspect !window; do not transfer or blindly repeat.`);
+        }
+        if (hasQuestJournal(window))
+            return fail('A separate BetonQuest journal menu opened; the requested ordinary backpack is NOT confirmed. The /backpack alias may conflict: use the server-declared Minepacks command. Inspect !window; no transfer submitted.');
+        if (/选择|菜单|selection|\bmenu\b/i.test(title))
+            return fail('A selection menu opened, not item storage. Inspect !window for its buttons; no transfer submitted.');
+        opened.set(window, { ...source, name: source.name || title });
+        return { success: true, message: `Opened storage ${JSON.stringify(source.name || title)}; window=${window.id}, title=${JSON.stringify(title)}. Read !window for the complete slot table BEFORE moving items; do not guess from inventory slot numbers.` };
+    } catch (error) {
+        return fail(`Backpack interaction failed: ${error.message}. Inspect !window before retrying.`);
+    } finally {
+        clearTimeout(timer); clearTimeout(settleTimer); bot.off('windowOpen', onWindow); bot.off('end', onEnd);
+        bot.off('message', onMessage);
+    }
+}
+
+// Cortico's storage guide documents Minepacks and separate personal rewards.
+// Namespacing avoids BetonQuest owning the bare /backpack alias on this server.
+export async function openBackpack(bot, slot, { command = null, ...options } = {}) {
     const item = Number.isInteger(slot) && slot >= 9 && slot <= 45 ? bot.inventory?.slots?.[slot] : null;
     if (!item) return fail('Inventory slot unavailable. Read !inventory before opening a backpack.');
     const identity = readItemIdentity(item);
     if (!backpackText(identity.customName + ' ' + identity.lore.join(' ')))
         return fail('This slot has no received backpack label/lore. A plain player head is not a backpack.');
-    if (bot.currentWindow?.selectedItem || bot.inventory?.selectedItem)
-        return fail('Cursor holds an item. Inspect it before opening another window.');
-    if (bot.interrupt_code) return fail('Interrupted before backpack interaction.');
-    if (bot.currentWindow) bot.closeWindow(bot.currentWindow);
-    await bot.equip(item, 'hand');
-    if (!sameItem(bot.heldItem, item) || bot.interrupt_code) return fail('Held item changed; backpack was not activated.');
-    let finish, timer;
-    const pending = new Promise(resolve => { finish = resolve; });
-    const onWindow = window => finish(window);
-    const onEnd = () => finish(null);
-    bot.on('windowOpen', onWindow); bot.on('end', onEnd);
-    timer = setTimeout(onEnd, timeoutMs);
-    try {
-        // Right click in air, never place a head on a block. Listen first so a
-        // late/synchronous server window cannot disappear between commands.
+    if (command && command !== '/minepacks:backpack open') return fail('Unsupported configured backpack command; no interaction submitted.');
+    return openReceivedStorage(bot, { slot, id: identity.name, name: identity.customName,
+        ...(command ? { command, provider: 'minepacks' } : {}) }, async () => {
+        if (command) { bot.chat(command); return; }
+        await bot.equip(item, 'hand');
+        if (!sameItem(bot.heldItem, item) || bot.interrupt_code) throw new Error('Held item changed; backpack was not activated');
         bot.activateItem();
-        const window = await pending;
-        if (bot.currentWindow !== window || !validStorage(window) || !backpackText(label(window.title)))
-            return fail('Backpack storage window not confirmed. Inspect !window; do not transfer or blindly repeat.');
-        const quest = hasQuestJournal(window);
-        opened.set(window, { slot, id: identity.name, name: identity.customName,
-            ...(quest ? { kind: 'quest', generalStorage: false } : {}) });
-        if (quest) return { success: true, message: `Opened quest backpack ${JSON.stringify(identity.customName)}; window=${window.id}. Server tag betonquest:journal: ordinary items cannot use this as general storage. Read !window for quest journal/menu buttons; use !clickWindow with observed slots.` };
-        return { success: true, message: `Opened received backpack ${JSON.stringify(identity.customName)} from inventory slot ${slot}; window=${window.id}, title=${JSON.stringify(label(window.title))}. Read !window for the complete slot table BEFORE moving items; do not guess from inventory slot numbers.` };
-    } catch (error) {
-        return fail(`Backpack interaction failed: ${error.message}. Inspect !window before retrying.`);
-    } finally {
-        clearTimeout(timer); bot.off('windowOpen', onWindow); bot.off('end', onEnd);
-    }
+    }, options);
+}
+
+export async function openServerStorage(bot, command, options = {}) {
+    if (!['/minepacks:backpack open', '/mycli arena rewards'].includes(command))
+        return fail('Use the documented /minepacks:backpack open or /mycli arena rewards route; no command submitted.');
+    const reward = command === '/mycli arena rewards';
+    return openReceivedStorage(bot, { id: 'server_storage', command, kind: reward ? 'rewards' : 'backpack',
+        provider: reward ? 'mycli' : 'minepacks' }, () => bot.chat(command), { ...options, reward });
 }
 
 export function describeBackpackWindow(bot) {
     const window = bot.currentWindow, source = backpackSource(window);
     if (!source || !validStorage(window)) return 'No verified backpack window is open.';
     const lines = [`BACKPACK window=${window.id} name=${JSON.stringify(source.name)} base=${source.id}`,
-        `${source.kind === 'quest' ? 'Quest menu' : 'Storage'} slots [0,${window.inventoryStart}); player inventory slots [${window.inventoryStart},${window.inventoryEnd}).`,
-        source.kind === 'quest'
-            ? 'BetonQuest quest backpack: ordinary items cannot be stored here. Use !clickWindow(window_id, observed_menu_slot) for the quest journal/buttons; do not use !moveBackpackItem as a chest transfer.'
-            : 'Use !moveBackpackItem(window_id, observed_slot, count). Source in player inventory deposits; source in storage withdraws. Verify received changes.'];
+        `Storage slots [0,${window.inventoryStart}); player inventory slots [${window.inventoryStart},${window.inventoryEnd}).`,
+        'Use !moveBackpackItem(window_id, observed_slot, count). Source in player inventory deposits; source in storage withdraws. Verify received changes.'];
     if (!window.slots.slice(0, window.inventoryStart).some(Boolean)) lines.push('Backpack storage is empty.');
     for (let slot = 0; slot < window.inventoryEnd; slot++) {
         const item = window.slots[slot];
@@ -90,8 +132,6 @@ export async function moveBackpackItem(bot, windowId, slot, count, { timeoutMs =
     const window = bot.currentWindow;
     if (!validStorage(window) || !opened.has(window) || window.id !== windowId)
         return fail('Backpack changed or unverified. Open the observed backpack and query !window again.');
-    if (backpackSource(window).kind === 'quest')
-        return fail('This is a BetonQuest quest backpack, not general storage. Ordinary material transfers are refused. Read !window for quest journal/buttons and use !clickWindow; no transfer submitted.');
     if (window.selectedItem || bot.inventory?.selectedItem) return fail('Cursor holds an item; transfer refused.');
     if (bot.interrupt_code) return fail('Interrupted before transfer.');
     const item = Number.isInteger(slot) && slot >= 0 && slot < window.inventoryEnd ? window.slots[slot] : null;
@@ -108,14 +148,23 @@ export async function moveBackpackItem(bot, windowId, slot, count, { timeoutMs =
     const Item = ItemFactory(bot.registry);
     const slots = window.slots.map(value => value && { ...value });
     const sourceBefore = sum(slots, slot, slot + 1, item), destBefore = sum(slots, destStart, destEnd, item);
-    let received = false, invalid = false;
+    let received = false, invalid = false, cursor = null, cursorReceived = false;
     const update = packet => {
+        if ((packet.windowId === -1 || packet.windowId === 255) && packet.slot === -1) {
+            try { cursor = Item.fromNotch(packet.item); cursorReceived = true; } catch { invalid = true; }
+            return;
+        }
         if (packet.windowId !== window.id || !Number.isInteger(packet.slot) || packet.slot < 0 || packet.slot >= slots.length) return;
         try { slots[packet.slot] = Item.fromNotch(packet.item); received = true; } catch { invalid = true; }
     };
     const replace = packet => {
         if (packet.windowId !== window.id || !Array.isArray(packet.items) || packet.items.length < window.inventoryEnd) return;
-        try { packet.items.slice(0, slots.length).forEach((raw, index) => { slots[index] = Item.fromNotch(raw); }); received = true; }
+        try {
+            packet.items.slice(0, slots.length).forEach((raw, index) => { slots[index] = Item.fromNotch(raw); }); received = true;
+            // Mineflayer 1.20.6 does not apply carriedItem from full snapshots.
+            // Cortico explicitly tracks this server cursor as well as the slots.
+            if (packet.carriedItem !== undefined) { cursor = Item.fromNotch(packet.carriedItem); cursorReceived = true; }
+        }
         catch { invalid = true; }
     };
     bot._client.on('set_slot', update); bot._client.on('window_items', replace);
@@ -125,14 +174,16 @@ export async function moveBackpackItem(bot, windowId, slot, count, { timeoutMs =
         const deadline = Date.now() + timeoutMs;
         do {
             if (bot.currentWindow !== window) break;
-            if (received && !invalid && !window.selectedItem
+            if (received && !invalid && (cursorReceived ? !cursor : !window.selectedItem)
                 && sourceBefore - sum(slots, slot, slot + 1, item) === count
-                && sum(slots, destStart, destEnd, item) - destBefore === count)
+                && sum(slots, destStart, destEnd, item) - destBefore === count) {
+                if (cursorReceived) window.selectedItem = cursor;
                 return { success: true, message: `Confirmed server inventory: ${depositing ? 'deposited' : 'withdrew'} ${item.name} x${count} in backpack window ${window.id}.` };
+            }
             await new Promise(resolve => setTimeout(resolve, 30));
         } while (Date.now() < deadline && !bot.interrupt_code);
         const current = bot.currentWindow;
-        return fail(`Transfer of ${item.name} x${count} from slot ${slot} not confirmed by server inventory. Window before=${window.id}, now=${current?.id ?? 'closed'}${current ? ' title=' + JSON.stringify(label(current.title)) : ''}. Inspect !window and !inventory; no automatic retry.`);
+        return fail(`Transfer of ${item.name} x${count} from slot ${slot} not confirmed by server inventory. Window before=${window.id}, now=${current?.id ?? 'closed'}; sameWindow=${current === window}. Inspect !window and !inventory; no automatic retry.`);
     } catch (error) {
         return fail(`Transfer outcome unknown: ${error.message}. Inspect inventory/cursor before retrying.`);
     } finally {

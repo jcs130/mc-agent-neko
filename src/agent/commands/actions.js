@@ -2,7 +2,7 @@ import * as skills from '../library/skills.js';
 import { sendServerCommand } from '../../websocket/server_commands.js';
 import { clickMenuSlot, describeMenu } from '../library/menus.js';
 import { tradeAtWindow } from '../library/merchant_trades.js';
-import { openBackpack, moveBackpackItem } from '../library/portable_storage.js';
+import { openBackpack, openServerStorage, moveBackpackItem } from '../library/portable_storage.js';
 import settings from '../settings.js';
 import convoManager from '../conversation.js';
 
@@ -917,17 +917,27 @@ export const actionsList = [
     },
     {
         name: '!openBackpack',
-        description: 'Open a received named backpack by exact inventory slot, even if its base ID is player_head. Use !inventory to find the label and slot, then !window to read the full interface. A server-tagged quest backpack is not general storage. Never places a head.',
+        description: 'Open the received named backpack by exact inventory slot, even if its base ID is player_head. Uses the configured provider route when available, then !window reads its full interface. A different quest menu cannot prove the backpack is quest-only. Never places a head.',
         params: { slot: { type: 'int', description: 'Observed inventory slot of the named backpack.', domain: [9, 46] } },
         perform: runAsAction(async (agent, slot) => {
-            const result = await openBackpack(agent.bot, slot);
+            const result = await openBackpack(agent.bot, slot, { command: settings.backpack_command });
+            skills.log(agent.bot, result.message);
+            return result.success;
+        }),
+    },
+    {
+        name: '!openStorage',
+        description: 'Open your documented server storage: /minepacks:backpack open for the ordinary big backpack, /mycli arena rewards for personal rewards. These are distinct containers. Verify the actual window, then read !window before moving items. Refuses selection menus.',
+        params: { command: { type: 'string', description: 'Exactly /minepacks:backpack open or /mycli arena rewards.' } },
+        perform: runAsAction(async (agent, command) => {
+            const result = await openServerStorage(agent.bot, command);
             skills.log(agent.bot, result.message);
             return result.success;
         }),
     },
     {
         name: '!moveBackpackItem',
-        description: 'Transfer one observed source slot in the CURRENT verified backpack. A source in player inventory deposits; a storage source withdraws. Query !window for current ID and both slot ranges. Requires real server confirmation, refuses nested backpacks and full destinations.',
+        description: 'Transfer one observed source slot in the CURRENT verified backpack or personal reward storage. A player inventory source deposits; a storage source withdraws. Query !window for current ID and both slot ranges. Requires real server confirmation, refuses nested backpacks and full destinations.',
         params: {
             window_id: { type: 'int', description: 'Verified backpack window ID from !window.', domain: [1, Number.MAX_SAFE_INTEGER] },
             slot: { type: 'int', description: 'Observed nonempty source slot from !window; not the separate inventory slot numbering.', domain: [0, 91] },

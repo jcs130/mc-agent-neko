@@ -3,12 +3,21 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import minecraftData from 'minecraft-data';
 import ItemFactory from 'prismarine-item';
-import { openBackpack, moveBackpackItem, backpackSource, describeBackpackWindow } from '../src/agent/library/portable_storage.js';
+import { openBackpack, openServerStorage, moveBackpackItem, backpackSource, describeBackpackWindow } from '../src/agent/library/portable_storage.js';
 import { collectGameState } from '../src/websocket/game_information.js';
 import { Vec3 } from 'vec3';
+import { sameInventoryStack } from '../src/agent/library/inventory_stack.js';
 
 const registry = minecraftData('1.20.6'), Item = ItemFactory(registry);
 const item = (name, count = 1) => new Item(registry.itemsByName[name].id, count);
+
+test('Cortico stack identity ignores component ordering but preserves removed components and custom data', () => {
+    const a={type:1,metadata:0,components:[{type:'custom_name',data:'tool'},{type:'damage',data:2}],removedComponents:['lore']};
+    const b={...a,count:9,slot:6,components:[...a.components].reverse()};
+    assert.equal(sameInventoryStack(a,b),true);
+    assert.equal(sameInventoryStack(a,{...b,removedComponents:[]}),false);
+    assert.equal(sameInventoryStack(a,{...b,components:[{type:'damage',data:3}]}),false);
+});
 
 test('loaded nearby containers expose positions, not invented ownership or contents', () => {
     const bot = { registry, entity: { position: new Vec3(0, 64, 0) }, inventory: { slots: [] },
@@ -62,7 +71,7 @@ test('missing and unrelated windows do not claim a backpack or leave listeners',
     assert.equal(backpackSource(f.window), null);
 });
 
-test('a server-tagged BetonQuest journal identifies a quest backpack, not general storage', async () => {
+test('a separate BetonQuest menu cannot be associated with the ordinary named backpack', async () => {
     const { bot, window } = fixture();
     const journal = item('written_book');
     journal.components = [{ type: 'custom_data', data: { type: 'compound', value: {
@@ -70,15 +79,61 @@ test('a server-tagged BetonQuest journal identifies a quest backpack, not genera
     } } }];
     window.slots[0] = journal;
     const result = await openBackpack(bot, 36);
-    assert.equal(result.success, true);
-    assert.equal(backpackSource(window).kind, 'quest');
-    assert.equal(backpackSource(window).generalStorage, false);
-    assert.match(result.message, /quest.*ordinary|ordinary.*quest/i);
-    assert.match(describeBackpackWindow(bot), /quest.*ordinary|ordinary.*quest/i);
+    assert.equal(result.success, false);
+    assert.equal(backpackSource(window), null);
+    assert.match(result.message, /separate BetonQuest.*NOT confirmed/);
     bot.transfer = () => assert.fail('must not submit chest transfers to a quest menu');
     const moved = await moveBackpackItem(bot, window.id, 27, 1);
     assert.equal(moved.success, false);
-    assert.match(moved.message, /quest|任务/i);
+    assert.match(moved.message, /unverified/i);
+});
+
+test('configured Minepacks route opens the real ordinary backpack without the conflicting shortcut', async () => {
+    const { bot, window } = fixture();
+    bot.activateItem = () => assert.fail('shortcut must not open the bare alias');
+    bot.equip = () => assert.fail('command route needs no inventory mutation');
+    bot.chat = command => { assert.equal(command, '/minepacks:backpack open'); bot.currentWindow = window; bot.emit('windowOpen', window); };
+    assert.equal((await openBackpack(bot, 36, {command:'/minepacks:backpack open'})).success, true);
+    assert.equal(backpackSource(window).provider, 'minepacks');
+    assert.equal(backpackSource(window).name, '大背包');
+});
+
+test('opening binds to the final window instance when Minepacks replaces the same ID', async () => {
+    const {bot,window}=fixture();
+    const final={...window,title:'ag_NEKO的大背包',slots:[...window.slots]};
+    bot.chat=()=>{
+        bot.currentWindow=window;bot.emit('windowOpen',window);
+        setTimeout(()=>{bot.currentWindow=final;bot.emit('windowOpen',final);},5);
+    };
+    const result=await openServerStorage(bot,'/minepacks:backpack open',{settleMs:20,timeoutMs:200});
+    assert.equal(result.success,true);
+    assert.equal(backpackSource(window),null);
+    assert.equal(backpackSource(final).provider,'minepacks');
+});
+
+test('personal reward storage opens through its own route; selection menus and arbitrary commands refuse', async () => {
+    const { bot, window } = fixture();
+    window.title = '个人试炼奖励箱';
+    let commands = 0;
+    bot.chat = command => { commands++; assert.equal(command, '/mycli arena rewards'); bot.currentWindow = window; bot.emit('windowOpen', window); };
+    assert.equal((await openServerStorage(bot, '/mycli arena rewards')).success, true);
+    assert.equal(backpackSource(window).kind, 'rewards');
+    bot.closeWindow = () => {bot.currentWindow=null;};
+    assert.equal((await openServerStorage(bot, '/op player')).success, false);
+    window.title = '个人试炼奖励箱选择菜单';
+    assert.equal((await openServerStorage(bot, '/mycli arena rewards')).success, false);
+    assert.equal(commands, 2);
+});
+
+test('reward opening preserves the actual server prerequisite without inventing storage restrictions', async () => {
+    const {bot}=fixture();let submitted=0;
+    bot.chat=()=>{submitted++;bot.emit('message','MC_PROFESSION_RESULT '+JSON.stringify({success:false,skill:'travel',reason:'not_learned',
+        errorMessage:'尚未学会此技能。',nextCommands:['/mycli skills info travel']}),'system');};
+    const result=await openServerStorage(bot,'/mycli arena rewards',{timeoutMs:5});
+    assert.equal(result.success,false);
+    assert.match(result.message,/travel; 尚未学会.*\/mycli skills info travel/);
+    assert.equal(submitted,1);
+    assert.equal(bot.listenerCount('message'),0);
 });
 
 test('deposit and withdrawal require real matching server inventory updates', async () => {
@@ -108,6 +163,27 @@ test('optimistic slots and packets from another window cannot verify a transfer'
     assert.match(result.message, /not confirmed|unknown/);
     assert.equal(calls, 1);
     assert.equal(bot._client.listenerCount('set_slot'), 0);
+});
+
+test('server carriedItem overrides a stale local cursor for transfer confirmation', async () => {
+    const {bot,window}=fixture(); await openBackpack(bot,36);
+    bot.transfer=async()=>{
+        window.slots[27]=item('coal',8);window.slots[0]=item('coal',8);
+        window.selectedItem=item('coal',8); // ignored by this Mineflayer's full-sync handler
+        bot._client.emit('window_items',{windowId:window.id,items:window.slots.map(Item.toNotch),carriedItem:Item.toNotch(null)});
+    };
+    assert.equal((await moveBackpackItem(bot,10,27,8)).success,true);
+    assert.equal(window.selectedItem,null);
+});
+
+test('server cursor still holding materials refuses success even when local cursor is empty', async () => {
+    const {bot,window}=fixture(); await openBackpack(bot,36);
+    bot.transfer=async()=>{
+        window.slots[27]=item('coal',8);window.slots[0]=item('coal',8);
+        window.selectedItem=null;
+        bot._client.emit('window_items',{windowId:window.id,items:window.slots.map(Item.toNotch),carriedItem:Item.toNotch(item('coal',1))});
+    };
+    assert.equal((await moveBackpackItem(bot,10,27,8,{timeoutMs:5})).success,false);
 });
 
 test('stale, occupied, nested, invalid and full destinations refuse before transfer', async () => {

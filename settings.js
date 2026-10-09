@@ -46,6 +46,7 @@ const settings = {
 
     "chat_ingame": false, // bot responses are shown in minecraft chat
     "external_autonomy_owner": null, // "neko" reserves decisions even before its plugin connects; native skills/reflexes remain available
+    "backpack_command": null, // optional documented /minepacks:backpack open route, avoiding bare command aliases
     "language": "en", // translate to/from this language. Supports these language names: https://cloud.google.com/translate/docs/languages
     "render_bot_view": false, // show bot's view in browser at localhost:3000, 3001...
     "viewer_type": "prismarine", // "modern" enables the optional Minecraft 1.20.6 renderer
