@@ -134,11 +134,16 @@ export default async function mineDown(bot, ctx, opts = {}) {
         if (lmB && Number.isFinite(lmB.x)) {
             const dB = Math.hypot(lmB.x - bot.entity.position.x, lmB.z - bot.entity.position.z);
             const skipBed = bot._mdSkipBedAnchorUntil && Date.now() < bot._mdSkipBedAnchorUntil;
+            const externalTaskActive = Number.isFinite(bot._extIntentUntil) && Date.now() < bot._extIntentUntil;
             // reviewer#2: the pull is a near-SURFACE entrance step. dB is horizontal-only, so once the bot
             // has committed to a shaft below the bed level it would otherwise re-fire forever and yank a
             // mid-descent bot sideways/up back over the anchor. Don't pull home once we're >4b below the bed.
             const belowBed = Number.isFinite(lmB.y) && bot.entity.position.y < lmB.y - 4;
-            if (skipBed) {
+            if (externalTaskActive) {
+                // An explicit short task owns the chosen mining location. Keep
+                // standalone bed-first planning from silently moving it home.
+                log_('bed-anchor pull skipped — external task owns the mining location; descending here');
+            } else if (skipBed) {
                 // ★lever#1 exception: the anchor cell was all-headings-aborted and we relocated off it.
                 // Honor that relocation (mine the fresh shaft) instead of yo-yoing back to the dead cell.
                 // Narrow, logged, time-boxed override of 用户令 "隧道直通床区" — only when the anchor is undiggable.
