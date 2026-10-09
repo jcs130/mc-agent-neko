@@ -108,7 +108,14 @@ class WSMessageServer {
     }
 
     start() {
+        // Each Mineflayer spawn calls start, including in-process reconnects.
+        // Keep the existing listener and its connected plugin clients.
+        if (this.wss) return;
         this.wss = new WebSocketServer({ port: this.port, host: '127.0.0.1' });
+        const server = this.wss;
+        server.on('close', () => {
+            if (this.wss === server) this.wss = null;
+        });
 
         console.log(`WebSocket server started on ws://127.0.0.1:${this.port}`);
 
