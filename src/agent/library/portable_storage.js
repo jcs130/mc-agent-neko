@@ -16,6 +16,17 @@ const validStorage = window => window && /^(?:minecraft:)?generic_9x[1-6]$/.test
     && Number.isInteger(window.inventoryEnd) && window.inventoryEnd > window.inventoryStart
     && Array.isArray(window.slots) && window.inventoryEnd <= window.slots.length;
 
+function hasQuestJournal(window) {
+    const item = window?.slots?.[0];
+    if (item?.name !== 'written_book') return false;
+    const compound = raw => raw?.type === 'compound' ? raw.value : raw;
+    const data = item.components?.find(c => String(c.type).replace(/^minecraft:/, '') === 'custom_data')?.data ?? item.nbt;
+    const marker = compound(compound(data)?.PublicBukkitValues)?.['betonquest:journal'];
+    // The exact server tag identifies BetonQuest's journal, not the translated
+    // title or the cosmetic head. Its backpack accepts quest items, not blocks.
+    return (marker?.value ?? marker) === 1;
+}
+
 export const backpackSource = window => window && opened.has(window) ? { ...opened.get(window) } : null;
 
 export async function openBackpack(bot, slot, { timeoutMs = 2500 } = {}) {
@@ -43,8 +54,11 @@ export async function openBackpack(bot, slot, { timeoutMs = 2500 } = {}) {
         const window = await pending;
         if (bot.currentWindow !== window || !validStorage(window) || !backpackText(label(window.title)))
             return fail('Backpack storage window not confirmed. Inspect !window; do not transfer or blindly repeat.');
-        opened.set(window, { slot, id: identity.name, name: identity.customName });
-        return { success: true, message: `Opened received backpack ${JSON.stringify(identity.customName)} from inventory slot ${slot}; window=${window.id}.` };
+        const quest = hasQuestJournal(window);
+        opened.set(window, { slot, id: identity.name, name: identity.customName,
+            ...(quest ? { kind: 'quest', generalStorage: false } : {}) });
+        if (quest) return { success: true, message: `Opened quest backpack ${JSON.stringify(identity.customName)}; window=${window.id}. Server tag betonquest:journal: ordinary items cannot use this as general storage. Read !window for quest journal/menu buttons; use !clickWindow with observed slots.` };
+        return { success: true, message: `Opened received backpack ${JSON.stringify(identity.customName)} from inventory slot ${slot}; window=${window.id}, title=${JSON.stringify(label(window.title))}. Read !window for the complete slot table BEFORE moving items; do not guess from inventory slot numbers.` };
     } catch (error) {
         return fail(`Backpack interaction failed: ${error.message}. Inspect !window before retrying.`);
     } finally {
@@ -56,8 +70,10 @@ export function describeBackpackWindow(bot) {
     const window = bot.currentWindow, source = backpackSource(window);
     if (!source || !validStorage(window)) return 'No verified backpack window is open.';
     const lines = [`BACKPACK window=${window.id} name=${JSON.stringify(source.name)} base=${source.id}`,
-        `Storage slots [0,${window.inventoryStart}); player inventory slots [${window.inventoryStart},${window.inventoryEnd}).`,
-        'Use !moveBackpackItem(window_id, observed_slot, count). Source in player inventory deposits; source in storage withdraws. Verify received changes.'];
+        `${source.kind === 'quest' ? 'Quest menu' : 'Storage'} slots [0,${window.inventoryStart}); player inventory slots [${window.inventoryStart},${window.inventoryEnd}).`,
+        source.kind === 'quest'
+            ? 'BetonQuest quest backpack: ordinary items cannot be stored here. Use !clickWindow(window_id, observed_menu_slot) for the quest journal/buttons; do not use !moveBackpackItem as a chest transfer.'
+            : 'Use !moveBackpackItem(window_id, observed_slot, count). Source in player inventory deposits; source in storage withdraws. Verify received changes.'];
     if (!window.slots.slice(0, window.inventoryStart).some(Boolean)) lines.push('Backpack storage is empty.');
     for (let slot = 0; slot < window.inventoryEnd; slot++) {
         const item = window.slots[slot];
@@ -74,6 +90,8 @@ export async function moveBackpackItem(bot, windowId, slot, count, { timeoutMs =
     const window = bot.currentWindow;
     if (!validStorage(window) || !opened.has(window) || window.id !== windowId)
         return fail('Backpack changed or unverified. Open the observed backpack and query !window again.');
+    if (backpackSource(window).kind === 'quest')
+        return fail('This is a BetonQuest quest backpack, not general storage. Ordinary material transfers are refused. Read !window for quest journal/buttons and use !clickWindow; no transfer submitted.');
     if (window.selectedItem || bot.inventory?.selectedItem) return fail('Cursor holds an item; transfer refused.');
     if (bot.interrupt_code) return fail('Interrupted before transfer.');
     const item = Number.isInteger(slot) && slot >= 0 && slot < window.inventoryEnd ? window.slots[slot] : null;
@@ -92,7 +110,7 @@ export async function moveBackpackItem(bot, windowId, slot, count, { timeoutMs =
     const sourceBefore = sum(slots, slot, slot + 1, item), destBefore = sum(slots, destStart, destEnd, item);
     let received = false, invalid = false;
     const update = packet => {
-        if (packet.windowId !== window.id || packet.slot < 0 || packet.slot >= slots.length) return;
+        if (packet.windowId !== window.id || !Number.isInteger(packet.slot) || packet.slot < 0 || packet.slot >= slots.length) return;
         try { slots[packet.slot] = Item.fromNotch(packet.item); received = true; } catch { invalid = true; }
     };
     const replace = packet => {
@@ -113,7 +131,8 @@ export async function moveBackpackItem(bot, windowId, slot, count, { timeoutMs =
                 return { success: true, message: `Confirmed server inventory: ${depositing ? 'deposited' : 'withdrew'} ${item.name} x${count} in backpack window ${window.id}.` };
             await new Promise(resolve => setTimeout(resolve, 30));
         } while (Date.now() < deadline && !bot.interrupt_code);
-        return fail('Transfer outcome not confirmed by server inventory. Inspect !window and !inventory; no automatic retry.');
+        const current = bot.currentWindow;
+        return fail(`Transfer of ${item.name} x${count} from slot ${slot} not confirmed by server inventory. Window before=${window.id}, now=${current?.id ?? 'closed'}${current ? ' title=' + JSON.stringify(label(current.title)) : ''}. Inspect !window and !inventory; no automatic retry.`);
     } catch (error) {
         return fail(`Transfer outcome unknown: ${error.message}. Inspect inventory/cursor before retrying.`);
     } finally {

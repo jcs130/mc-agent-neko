@@ -33,7 +33,10 @@ function fixture() {
 
 test('opens the received named head by its exact slot and reads an empty backpack', async () => {
     const { bot, window } = fixture();
-    assert.equal((await openBackpack(bot, 36)).success, true);
+    const result = await openBackpack(bot, 36);
+    assert.equal(result.success, true);
+    assert.match(result.message, /Read !window.*BEFORE/);
+    assert.ok(result.message.length < 400, 'action receipt must survive the 500-character output budget');
     assert.deepEqual(backpackSource(window), { slot: 36, id: 'player_head', name: '大背包' });
     assert.match(describeBackpackWindow(bot), /empty|Empty/);
     assert.match(describeBackpackWindow(bot), /slot 27.*coal/);
@@ -57,6 +60,25 @@ test('missing and unrelated windows do not claim a backpack or leave listeners',
     f.bot.activateItem = () => { f.bot.currentWindow = f.window; f.bot.emit('windowOpen', f.window); };
     assert.equal((await openBackpack(f.bot, 36)).success, false);
     assert.equal(backpackSource(f.window), null);
+});
+
+test('a server-tagged BetonQuest journal identifies a quest backpack, not general storage', async () => {
+    const { bot, window } = fixture();
+    const journal = item('written_book');
+    journal.components = [{ type: 'custom_data', data: { type: 'compound', value: {
+        PublicBukkitValues: { type: 'compound', value: { 'betonquest:journal': { type: 'byte', value: 1 } } }
+    } } }];
+    window.slots[0] = journal;
+    const result = await openBackpack(bot, 36);
+    assert.equal(result.success, true);
+    assert.equal(backpackSource(window).kind, 'quest');
+    assert.equal(backpackSource(window).generalStorage, false);
+    assert.match(result.message, /quest.*ordinary|ordinary.*quest/i);
+    assert.match(describeBackpackWindow(bot), /quest.*ordinary|ordinary.*quest/i);
+    bot.transfer = () => assert.fail('must not submit chest transfers to a quest menu');
+    const moved = await moveBackpackItem(bot, window.id, 27, 1);
+    assert.equal(moved.success, false);
+    assert.match(moved.message, /quest|任务/i);
 });
 
 test('deposit and withdrawal require real matching server inventory updates', async () => {

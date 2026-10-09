@@ -2,7 +2,7 @@ import * as skills from '../library/skills.js';
 import { sendServerCommand } from '../../websocket/server_commands.js';
 import { clickMenuSlot, describeMenu } from '../library/menus.js';
 import { tradeAtWindow } from '../library/merchant_trades.js';
-import { openBackpack, moveBackpackItem, describeBackpackWindow } from '../library/portable_storage.js';
+import { openBackpack, moveBackpackItem } from '../library/portable_storage.js';
 import settings from '../settings.js';
 import convoManager from '../conversation.js';
 
@@ -917,12 +917,11 @@ export const actionsList = [
     },
     {
         name: '!openBackpack',
-        description: 'Open a received named backpack by exact inventory slot, even if its base ID is player_head. Reads the actual storage window; never places a head. Use !inventory to find the custom label and slot.',
+        description: 'Open a received named backpack by exact inventory slot, even if its base ID is player_head. Use !inventory to find the label and slot, then !window to read the full interface. A server-tagged quest backpack is not general storage. Never places a head.',
         params: { slot: { type: 'int', description: 'Observed inventory slot of the named backpack.', domain: [9, 46] } },
         perform: runAsAction(async (agent, slot) => {
             const result = await openBackpack(agent.bot, slot);
             skills.log(agent.bot, result.message);
-            if (result.success) skills.log(agent.bot, describeBackpackWindow(agent.bot));
             return result.success;
         }),
     },
