@@ -376,8 +376,8 @@ export const actionsList = [
     },
     {
         name: '!equip',
-        description: 'Equip the given item.',
-        params: {'item_name': { type: 'ItemName', description: 'The name of the item to equip.' }},
+        description: 'Equip an inventory item using its base Minecraft ID. For custom server items, read !inventory labels/lore to identify the matching base ID first.',
+        params: {'item_name': { type: 'ItemName', description: 'The base item ID shown by !inventory, not its custom display label.' }},
         perform: runAsAction(async (agent, item_name) => {
             await skills.equip(agent.bot, item_name);
         })

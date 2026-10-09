@@ -1,5 +1,6 @@
 import { randomUUID, createHash } from 'node:crypto';
 import { plainText } from '../agent/library/books.js';
+import { readItemIdentity } from '../agent/library/item_identity.js';
 import { activeServerCommand } from './server_commands.js';
 
 // Observation only: this module never sends game packets, chat or actions.
@@ -62,8 +63,9 @@ function itemState(item, slot) {
         try { result[key] = item[key]; } catch { result[key] = null; unavailable.push(key); }
     }
     try {
-        result.customName = gameText(item.customName);
-        result.lore = (item.customLore ?? item.components?.find(value => /^(minecraft:)?lore$/.test(value.type))?.data ?? []).map(value => plainText(value));
+        const identity = readItemIdentity(item);
+        result.customName = identity.customName;
+        result.lore = identity.lore;
         const book = item.components?.find(value => /^(minecraft:)?(written|writable)_book_content$/.test(value.type))?.data;
         if (Array.isArray(book?.pages)) result.book = {
             title: plainText(book.rawTitle ?? book.title), author: plainText(book.author), pageCount: book.pages.length,

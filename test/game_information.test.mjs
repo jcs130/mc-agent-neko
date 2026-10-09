@@ -58,6 +58,41 @@ test('snapshot retains body, world, inventory, menu, scoreboard and loaded surro
     assert.equal(state.server.tablist.footer, '输入 /help 查看功能');
 });
 
+test('modern NBT-wrapped custom names survive snapshot clipping as readable identity', t => {
+    const { bot, information } = fixture(t);
+    const string = value => ({ type: 'string', value });
+    const label = { type: 'compound', value: { text: string(''), extra: {
+        type: 'list', value: { type: 'compound', value: [{ text: string('灵纹法杖') }] },
+    } } };
+    const wand = { name: 'blaze_rod', count: 1, displayName: 'Blaze Rod',
+        components: [{ type: 'custom_name', data: label }, { type: 'lore', data: [
+            { type: 'compound', value: { text: string('手持使用：立即施放') } },
+        ] }],
+        get customName() { return this.components[0].data; },
+        get customLore() { return this.components[1].data; },
+    };
+    bot.inventory.slots[34] = wand;
+    bot.heldItem = wand;
+    const state = information.snapshot().state;
+    const item = state.inventory.slots.find(item => item.slot === 34);
+    assert.equal(item.customName, '灵纹法杖');
+    assert.deepEqual(item.lore, ['手持使用：立即施放']);
+    assert.equal(state.inventory.held.customName, '灵纹法杖');
+    assert.equal(state.inventory.counts.blaze_rod, 1);
+});
+
+test('component names remain readable when the library getter is unavailable', t => {
+    const { bot, agent } = fixture(t);
+    bot.inventory.slots[34] = { name: 'blaze_rod', count: 1,
+        components: [{ type: 'minecraft:custom_name', data: '{"text":"备用法杖"}' },
+                     { type: 'minecraft:lore', data: ['{"text":"切换技能"}'] }],
+        get customName() { throw new Error('unsupported getter'); },
+    };
+    const item = collectGameState(agent).inventory.slots.find(item => item.slot === 34);
+    assert.equal(item.customName, '备用法杖');
+    assert.deepEqual(item.lore, ['切换技能']);
+});
+
 test('large entity metadata cannot hide collision blocks, online players or nearby truncation', t => {
     const { bot, information } = fixture(t);
     bot.entities[2].metadata = Array(128).fill('large entity payload '.repeat(800));
