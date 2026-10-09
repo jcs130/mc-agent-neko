@@ -210,7 +210,11 @@ export class ActionManager {
 
     getBotOutputSummary() {
         const { bot } = this.agent;
-        if (bot.interrupt_code && !this.timedout) return '';
+        if (bot?.interrupt_code && !this.timedout) return '';
+        // A reconnect can replace agent.bot while the previous action awaits.
+        // The new connection may not have a log buffer yet; retain the real
+        // action error rather than throwing again while formatting its output.
+        if (!bot || typeof bot.output !== 'string') return 'Action output unavailable during connection change. Reobserve the game state before retrying.\n';
         let output = bot.output;
         const MAX_OUT = 500;
         if (output.length > MAX_OUT) {
