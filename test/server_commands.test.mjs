@@ -65,6 +65,15 @@ test('read-only discovery rejects learning and casting but accepts paginated exp
     assert.equal((await send(bot,{command:'/mycli spells explain selfheal',readOnly:true},{timeoutMs:20,quietMs:2})).status,'received');
 });
 
+test('read-only discovery accepts the live server skill and profession status grammar',async()=>{
+    const send=await bridge();
+    const bot=fakeBot(b=>b.emit('messagestr','MC_SKILL_POINTS {"remaining":5}','system'));
+    for (const command of ['/mycli skills info selfheal', '/mycli skills mine', '/mycli skills points', '/mycli profession status']) {
+        assert.equal((await send(bot,{command,readOnly:true},{timeoutMs:20,quietMs:2})).status,'received',command);
+    }
+    assert.equal((await send(bot,{command:'/mycli profession choose warrior',readOnly:true})).status,'failed');
+});
+
 test('concurrent requests refuse busy and disconnect releases the request slot',async()=>{
     const send=await bridge(), bot=fakeBot();
     const first=send(bot,{command:'/mycli help'},{timeoutMs:50,quietMs:2});

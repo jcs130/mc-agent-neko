@@ -1,7 +1,7 @@
 // Server gameplay commands are distinct from public chat and local JS skills.
 // Replies are observations: receiving a catalog/error is never action success.
 const inFlight = new WeakSet();
-const READ_ONLY = /^\/mycli (?:help(?: .*)?|guide(?: .*)?|list(?: .*)?|explain(?: .*)?|spells (?:list|explain)(?: .*)?|skills (?:list|status|explain)(?: .*)?|mastery|(?:guild|arena) (?:status|board|shared)|status)$/;
+const READ_ONLY = /^\/mycli (?:help(?: .*)?|guide(?: .*)?|list(?: .*)?|explain(?: .*)?|spells (?:list|explain)(?: .*)?|skills (?:(?:list|info|status|explain)(?: .*)?|mine|points)|profession status|mastery|(?:guild|arena) (?:status|board|shared)|status)$/;
 
 export async function sendServerCommand(bot, { command, readOnly = false } = {}, { timeoutMs = 2500, quietMs = 180 } = {}) {
     if (!bot?.entity || typeof bot.chat !== 'function') return { status: 'failed', reason: 'offline' };
