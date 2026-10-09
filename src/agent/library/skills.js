@@ -492,6 +492,14 @@ export async function craftRecipeLocal(bot, itemName, num=1) {
     let placedTableFromCarry = false;
     let placedTablePos = null;
     if (!recipes || recipes.length === 0) {
+        // No inventory recipe can mean missing ingredients, not a missing
+        // workstation. Only seek/place a table if the held materials can
+        // actually satisfy a recipe that requires its 3x3 grid.
+        const tableRecipes = makeableRecipes(bot, itemId, true).filter(recipe => recipe.requiresTable);
+        if (tableRecipes.length === 0) {
+            log(bot, `Missing ingredients to craft ${itemName} locally; a crafting table will not supply missing materials. Check inventory and the recipe before retrying.`);
+            return false;
+        }
         const tblBefore = world.getInventoryCounts(bot)['crafting_table'] || 0;
         if (tblBefore > 0) {
             craftingTable = await placeCraftingTableWithinReach(bot);

@@ -11,7 +11,12 @@ export function makeableRecipes(bot, itemId, craftingTable = null) {
     const registry = bot.registry;
     const output = registry.items[itemId]?.name;
     const interchangeable = GENERIC_PLANK_OUTPUTS.has(output) || /_bed$/.test(output || '');
-    if (!interchangeable && typeof bot.recipesFor === 'function') {
+    // The bundled 1.20.6 data also expands each logs tag to the unstripped
+    // log alone. Vanilla accepts the same species' wood/stem and stripped
+    // variants as inputs for planks; never substitute a different species.
+    const plankSpecies = output?.match(/^(.+)_planks$/)?.[1];
+    const sameWood = name => plankSpecies && new RegExp(`^(?:stripped_)?${plankSpecies}_(?:log|wood|stem|hyphae|block)$`).test(name || '');
+    if (!interchangeable && !plankSpecies && typeof bot.recipesFor === 'function') {
         return bot.recipesFor(itemId, null, 1, craftingTable) || [];
     }
     const stock = new Map();
@@ -34,6 +39,9 @@ export function makeableRecipes(bot, itemId, craftingTable = null) {
                 const name = registry.items[id]?.name;
                 if (!(remaining.get(id) > 0) && interchangeable && name === 'oak_planks') {
                     id = [...remaining.keys()].find(k => remaining.get(k) > 0 && /_planks$/.test(registry.items[k]?.name || ''));
+                }
+                if (!(remaining.get(id) > 0) && sameWood(name)) {
+                    id = [...remaining.keys()].find(k => remaining.get(k) > 0 && sameWood(registry.items[k]?.name));
                 }
                 if (id == null || !(remaining.get(id) > 0)) { valid = false; break; }
                 remaining.set(id, remaining.get(id) - 1);

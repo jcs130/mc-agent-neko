@@ -44,3 +44,16 @@ test('wood-specific recipes never substitute another species and source recipes 
     assert.equal(Recipe.find(registry.itemsByName.crafting_table.id, null)[0].inShape[0][0].id,
         registry.itemsByName.oak_planks.id);
 });
+
+test('same-species stripped logs and wood produce planks without a table', () => {
+    for (const name of ['stripped_spruce_log', 'spruce_wood', 'stripped_spruce_wood']) {
+        const r = recipes({ [name]: 1 }, 'spruce_planks')[0];
+        assert.ok(r, name);
+        assert.equal(r.requiresTable, false);
+        assert.equal(r.delta.find(d => d.id === registry.itemsByName[name].id).count, -1);
+        assert.equal(r.result.count, 4);
+    }
+    assert.equal(recipes({ stripped_oak_log: 1 }, 'spruce_planks').length, 0);
+    assert.equal(Recipe.find(registry.itemsByName.spruce_planks.id, null)[0].delta.find(d => d.count < 0).id,
+        registry.itemsByName.spruce_log.id);
+});
