@@ -6,6 +6,7 @@ import { checkLevelBlueprint, checkBlueprint } from '../tasks/construction_tasks
 import { load } from 'cheerio';
 import { readInventoryBook } from '../library/books.js';
 import { inventoryIdentityLines } from '../library/item_identity.js';
+import { inventorySpaceFeedback } from '../library/inventory_snapshot.js';
 import { describeMenu } from '../library/menus.js';
 import { sendServerCommand } from '../../websocket/server_commands.js';
 
@@ -100,7 +101,7 @@ export const queryList = [
     },
     {
         name: "!inventory",
-        description: "Read inventory counts, custom item labels/lore and armor. A server item can use an ordinary base ID: match its label/lore, then use the listed base ID in commands.",
+        description: "Read inventory counts, free storage slots, cursor, custom item labels/lore and armor. Near capacity, also show exact stacks. A server item can use an ordinary base ID: match its label/lore, then use the listed base ID in commands.",
         perform: function (agent) {
             let bot = agent.bot;
             let inventory = world.getInventoryCounts(bot);
@@ -115,6 +116,7 @@ export const queryList = [
             else if (agent.bot.game.gameMode === 'creative') {
                 res += '\n(You have infinite items in creative mode. You do not need to gather resources!!)';
             }
+            res += '\n' + inventorySpaceFeedback(bot);
             const identities = inventoryIdentityLines(bot);
             if (identities) res += '\n' + identities;
 

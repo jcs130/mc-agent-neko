@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { inventoryIdentityLines, readItemIdentity } from '../src/agent/library/item_identity.js';
+import { inventorySpaceFeedback } from '../src/agent/library/inventory_snapshot.js';
 
 test('legacy NBT identity remains readable without library getters', () => {
     const item = { name: 'blaze_rod', nbt: { type: 'compound', value: { display: { type: 'compound', value: {
@@ -26,7 +27,7 @@ test('custom text is bounded, quoted and cannot hide its base item ID', () => {
 
 test('actual native inventory query exposes custom-item identity along with counts', () => {
     const context = vm.createContext({
-        world: { getInventoryCounts: () => ({ blaze_rod: 1 }) }, inventoryIdentityLines,
+        world: { getInventoryCounts: () => ({ blaze_rod: 1 }) }, inventoryIdentityLines, inventorySpaceFeedback,
     });
     const source = readFileSync(new URL('../src/agent/commands/queries.js', import.meta.url), 'utf8')
         .replace(/^import .*;\r?\n/gm, '').replace(/\bexport /g, '');
