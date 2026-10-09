@@ -53,8 +53,10 @@ git rev-parse HEAD:plugin/plugins/game_agent_minecraft
 
 The exported plugin passed 155 tests. The manifest records the exact reproduced
 plugin tree and host-file blobs. The host callback/media regression suite passed
-195 tests, including six new Minecraft budget tests. The matching native body
-passed 426 tests; this contribution branch passed 432 tests. The existing
+195 tests, including six new Minecraft budget tests. The latest native source
+suite passed 450 tests; this contribution branch's full `node --test` discovery
+passed 476 tests. The plugin/host counts are retained from their last unchanged
+delivery. The existing
 mineDown contract test also passed.
 
 Follow the patched plugin's README for the existing N.E.K.O. plugin lifecycle,
@@ -162,8 +164,9 @@ selection can still be wrong; no diagnostic gameplay commands were injected.
 
 See the exported plugin's
 `docs/2026-10-09-decision-context-budget.md` for the scheduling table and limits.
-The final plugin suite passed 155 tests, the matching native source passed 426,
-and this contribution branch passed 432.
+At that context-budget delivery, the plugin suite passed 155 tests, the native
+source passed 426, and the contribution branch passed 432. Current code/vision
+verification is recorded above and in the linked capability report below.
 
 After the final reload, a separate passive window confirmed another autonomous
 task with 5.2 blocks of movement and no handoff failure. A subsequent fresh
@@ -181,9 +184,14 @@ are not forcibly stopped by this batch budget. A reflex invocation is bound to
 its original body and cannot interrupt itself merely because a watchdog reset
 its active flag. Retired-body completions cannot clear a new mode invocation.
 See [the action feedback and learning audit](../../docs/neko-action-feedback-and-learning-2026-10-09.md)
-for the root causes, regression scope and the currently disabled generated-code
-path. Experience memory and existing skill discovery are enabled; automatic
-skill evaluation/promotion and model-weight training are not implemented.
+for the root causes and the earlier delivery state. Generated scripts and visual
+queries are now enabled through the native task executor; all three model roles
+share the existing local Qwen endpoint. Image encoding runs on CPU, while the
+same RTX 3090 model understands the encoded image. There is no automatic visual
+heartbeat or separate VLM download. See [the current capability report](../../docs/neko-local-code-and-vision-2026-10-09.md)
+for setup, limits and actual probes. Experience memory and existing skill
+discovery remain enabled; automatic skill evaluation/promotion and model-weight
+training are not implemented. No additional N.E.K.O. platform patch is required.
 
 ## Approved host bridge fix
 

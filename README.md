@@ -69,6 +69,11 @@ the viewer panel, game/server feedback, player communication and unattended
 decision fixes. See [game observations](docs/game-information.md) and
 [external autonomy ownership](docs/neko-external-autonomy.md) for the body side.
 
+Conversation, bounded generated scripts and on-demand screenshot understanding
+can share one local Qwen3.8 Flash endpoint. The verified deployment uses an RTX
+3090 for the model and CPU image encoding, with no second GPU model. See
+[configuration, execution limits and measured checks](docs/neko-local-code-and-vision-2026-10-09.md).
+
 ## Model Customization
 
 You can configure project details in `settings.js`. [See file.](settings.js)

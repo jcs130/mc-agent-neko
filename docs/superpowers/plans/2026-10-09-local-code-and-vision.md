@@ -4,7 +4,9 @@
 
 **Architecture:** Keep conversation, coding and visual understanding on the existing RTX 3090 Qwen3.8 Flash Strata service. Restore its existing `strata-vision` encoder and matching projector, with CPU image encoding as requested by the user (no secondary GPU). Execute generated JavaScript in a disposable worker with bounded, serialized calls to documented game skills; capture the existing modern browser renderer on demand, outside the Mineflayer process.
 
-**Tech stack:** Node ESM, worker_threads, SES, existing ESLint, playwright-core, llama.cpp CUDA, Node test runner.
+**Tech stack:** Node ESM, worker_threads, SES, existing ESLint, playwright-core, Strata with CPU image encoding, Node test runner.
+
+**Delivery record:** Implementation and local deployment are verified in [the capability report](../../neko-local-code-and-vision-2026-10-09.md). The checklist below preserves the original task outline.
 
 **Spec:** User request to open the project's existing chat/code/VLM abilities; preceding requirement to avoid frequent interruptions and excessive context.
 

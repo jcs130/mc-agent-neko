@@ -212,8 +212,8 @@
     "pluginTestsPassed": 155,
     "hostCallbackTestsPassed": 195,
     "hostFileBlobsMatchSource": true,
-    "nativeSourceTestsPassed": 426,
-    "contributionTestsPassed": 432,
+    "nativeSourceTestsPassed": 450,
+    "contributionTestsPassed": 476,
     "existingMineDownContractTestsPassed": 1
   },
   "hostPatches": [
@@ -259,6 +259,7 @@
     "finalReloadLanViewerHttpStatus": 200
   },
   "actionFeedbackVerification": {
+    "scope": "earlier action-feedback delivery, before local code and vision enablement",
     "newOfflineTestsPassed": 21,
     "nativeSourceTestsPassed": 426,
     "contributionTestsPassed": 432,
@@ -276,6 +277,39 @@
     "passiveInventoryChanged": true,
     "passiveHandoffFailures": 0,
     "supervisorRecoveriesInReloadedSession": 0,
+    "longRunReliabilityProven": false
+  },
+  "localModelCapabilitiesVerification": {
+    "date": "2026-10-09",
+    "nativeSourceCommit": "7cb6892",
+    "nativeSourceTestsPassed": 450,
+    "contributionFullNodeTestDiscoveryPassed": 476,
+    "model": "qwen3.8-flash-next-iq3_xxs",
+    "modelUrl": "http://127.0.0.1:18030/v1",
+    "sameEndpointForChatCodeAndVision": true,
+    "modelGpu": "RTX 3090",
+    "visionEncoder": "CPU",
+    "visionEncoderThreads": 8,
+    "maxImageTokens": 512,
+    "maxVisionOutputTokens": 384,
+    "modelImagesHealthFlag": true,
+    "modelMaxContext": 262144,
+    "reasoningEffort": "none",
+    "generatedCodeEnabled": true,
+    "onDemandVisionEnabled": true,
+    "periodicScreenshotsEnabled": false,
+    "generatedCodeWorkerMaxSeconds": 120,
+    "generatedCodeMaxCalls": 64,
+    "generatedCodeMaxAttempts": 3,
+    "offlineGeneratedCodeExecutedFakeCraftSkill": true,
+    "cpuCompactExistingFrameModelLatencyMs": 8257,
+    "latencyExcludesBrowserCapture": true,
+    "firstBrowserCaptureLatencyMs": 19198,
+    "diagnosticGameTasksOrChatSent": 0,
+    "passiveInventoryChangeObserved": true,
+    "passiveAutonomousCraftTaskCompleted": true,
+    "passiveHandoffFailures": 0,
+    "automaticSkillPromotionImplemented": false,
     "longRunReliabilityProven": false
   }
 }
