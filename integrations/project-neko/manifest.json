@@ -400,6 +400,12 @@
     "pluginSeriesReplayMatchesSource": true,
     "actualLiveOffersObserved": false,
     "actualLivePurchaseObserved": false,
-    "longRunSurvivalProven": false
+    "longRunSurvivalProven": false,
+    "nativeRuntimeFocusedTestsPassed": 39,
+    "deployedFilesMatchSource": true,
+    "deployedAt": "2026-10-10T02:13:44+08:00",
+    "viewerHttpStatus": 200,
+    "continuedAutonomousDispatchObserved": true,
+    "autonomousNavigationCompleted": true
   }
 }

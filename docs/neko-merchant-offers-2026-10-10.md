@@ -42,3 +42,12 @@ symptom from the same decoded quote that the repaired renderer displays.
 
 These tests establish packet handling and transaction safeguards. A real new
 purchase and long unattended survival still require runtime evidence.
+
+Deployment at 02:13 on 2026-10-10 occurred with no pending task or busy body.
+All seven deployed native files match the tested source, and 39 focused tests
+passed in the runtime checkout. The plugin reloaded successfully; the guardian
+restarted the native body and the LAN viewer returned HTTP 200. With no injected
+game task, Neko queried guild status/trader information, dispatched a navigation
+task and received its completion. Fresh vitals remained health 20 / food 20.
+The new merchant quotation/purchase path has not yet been observed against a
+fresh live merchant window; synthetic quote replays are not live trade evidence.
