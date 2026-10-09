@@ -72,7 +72,10 @@ export class VisionInterpreter {
 
     async analyzeImage(imageBuffer, { signal } = {}) {
         const history = this.agent.history.getHistory();
+        // Keep grounded facts with the captured frame, rather than reading a
+        // different center block after a potentially slow CPU vision request.
+        const blockInfo = this.getCenterBlockInfo();
         const result = await this.agent.prompter.promptVision(history, imageBuffer, { signal });
-        return `${result}\n${this.getCenterBlockInfo()}`;
+        return `${result}\n${blockInfo}`;
     }
 }
