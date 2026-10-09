@@ -41,10 +41,14 @@ function resolveHumanPlayerName(agent, requested) {
 }
 
 
-function runAsAction (actionFn, resume = false, timeout = -1) {
+function runAsAction (actionFn, resume = false, timeout = -1, preflight = null) {
     let actionLabel = null;  // Will be set on first use
     
     const wrappedAction = async function (agent, ...args) {
+        if (preflight) {
+            const refusal = preflight(agent, ...args);
+            if (refusal) return refusal;
+        }
         // Set actionLabel only once, when the action is first created
         if (!actionLabel) {
             const actionObj = actionsList.find(a => a.perform === wrappedAction);
@@ -61,6 +65,20 @@ function runAsAction (actionFn, resume = false, timeout = -1) {
     }
 
     return wrappedAction;
+}
+
+// Conservative policy for a follow-up decision/report, not a model timeout:
+// local turns usually take 10–20s, so a mission wait must leave over 30s.
+const STANDBY_REPLY_RESERVE_MS = 30000;
+function standbyMissionBudgetFeedback(agent, seconds) {
+    const controller = agent._missionEnabled ? agent.adminMission : null;
+    if (!controller?.isActive()) return null;
+    const mission = controller.mission;
+    const wallDeadline = controller._wallMs > 0 ? mission.startedAt + controller._wallMs : Infinity;
+    const remainingMs = Math.max(0, Math.min(mission.deadlineAt, wallDeadline) - Date.now());
+    if (seconds * 1000 + STANDBY_REPLY_RESERVE_MS < remainingMs) return null;
+    const maxWaitSeconds = Math.max(0, Math.ceil((remainingMs - STANDBY_REPLY_RESERVE_MS) / 1000) - 1);
+    return `Standby not started: requested ${seconds}s; ${(remainingMs / 1000).toFixed(1)}s remaining in this mission, with a 30s reply/check reserve. Available wait: at most ${maxWaitSeconds}s. Choose a shorter wait, or report the completed short step if it is done and reobserve later. No wait was started.`;
 }
 
 // ★!runSkill arg decoding — turns the flat arg string the chat parser can carry (it cannot
@@ -677,11 +695,11 @@ export const actionsList = [
     //   上限 1200s = 停在 watchdog 25min STUCK-ZONE 硬重启之下; timeout 25min 只作挂死兜底。
     {
         name: '!standby',
-        description: 'Hold your current position and wait in place for the given number of seconds, doing nothing else. Use when the admin tells you to wait / hold position / stand by (原地待命). Life-critical self-defense stays active; wandering behaviors pause. Max 1200s per call (re-issue for longer); a new admin command cancels the hold.',
+        description: 'Hold your current position and wait in place for the given number of seconds, doing nothing else. Use when the admin tells you to wait / hold position / stand by (原地待命). Life-critical self-defense stays active; wandering behaviors pause. Max 1200s per call (re-issue for longer); a new admin command cancels the hold. An active mission wait must leave 30s for a final reply/check.',
         params: {'seconds': { type: 'int', description: 'how many seconds to stand by (max 1200)', domain: [1, 1200, '[]'] }},
         perform: runAsAction(async (agent, seconds) => {
             await skills.standby(agent.bot, seconds);
-        }, false, 25)
+        }, false, 25, standbyMissionBudgetFeedback)
     },
     {
         name: '!setMode',
