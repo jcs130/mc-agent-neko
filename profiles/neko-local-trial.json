@@ -14,9 +14,10 @@
     "api": "openai",
     "url": "http://127.0.0.1:18030/v1",
     "params": {
-      "max_tokens": 2048,
+      "max_tokens": 3072,
       "temperature": 0.6,
-      "reasoning_effort": "none"
+      "reasoning_effort": "low",
+      "reasoning_budget_tokens": 512
     },
     "model": "qwen3.8-flash-next-iq3_xxs"
   },

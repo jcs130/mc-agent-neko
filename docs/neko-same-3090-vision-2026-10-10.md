@@ -1,5 +1,9 @@
 # Vision encoder on the same RTX 3090
 
+The later [game role configuration](neko-game-role-reasoning-2026-10-10.md)
+enables bounded low reasoning for code generation only. Chat, vision and the
+server-wide default retain the no-thinking setting recorded here.
+
 The local Strata service previously ran the existing Qwen visual projection on
 CPU (eight threads), with the language model using GPU 0, an RTX 3090. The user
 requested moving the visual projection to that same card. No additional model,
