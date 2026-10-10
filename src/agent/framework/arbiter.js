@@ -309,7 +309,7 @@ export async function askLLM(agent, holder, claimant, ctx = {}) {
             conflict: snap.detail, vitals: snap.vitals, recentVerdicts: snap.recent,
         });
         const raw = await withTimeout(
-            agent.prompter.chat_model.sendRequest([{ role: 'user', content: user }], sys),
+            agent.prompter.chat_model.sendRequest([{ role: 'user', content: user }], sys, '***', { traceType: 'body_arbitration', traceAgent: agent }),
             LLM_TIMEOUT_MS, 'arbiter llm');
         const m = String(raw).match(/\{[\s\S]*\}/);
         if (m) {

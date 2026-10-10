@@ -1,6 +1,7 @@
 import OpenAIApi from 'openai';
 import { getKey, hasKey } from '../utils/keys.js';
 import { strictFormat } from '../utils/text.js';
+import { createRequestTrace } from '../utils/llm_timing.js';
 
 export class GPT {
     static prefix = 'openai';
@@ -30,8 +31,11 @@ export class GPT {
         } catch { return false; }
     }
 
+    createTrace(agent, type) { return createRequestTrace(agent, type); }
+
     async sendRequest(turns, systemMessage, stop_seq='***', options = {}) {
-        const { strataCheckpoint, ...sdkOptions } = options;
+        const { strataCheckpoint, requestTrace, traceType, traceAgent, ...sdkOptions } = options;
+        const trace = requestTrace || this.createTrace(traceAgent, traceType);
         let messages = strictFormat(turns);
         messages = messages.map(message => {
             message.content += stop_seq;
@@ -67,7 +71,9 @@ export class GPT {
                 if (model.includes('o1') || model.includes('o3') || model.includes('5')) {
                     delete pack.stop;
                 }
+                trace?.dispatch();
                 let completion = await this.openai.chat.completions.create(pack, sdkOptions);
+                trace?.returned(completion.usage, completion.choices?.[0]?.finish_reason);
                 if (completion.choices[0].finish_reason == 'length')
                     throw new Error('Context length exceeded'); 
                 console.log('Received.');
@@ -80,12 +86,15 @@ export class GPT {
                     message.content += stop_seq;
                     return message;
                 });
-                const response = await this.openai.responses.create({
+                const pack = {
                     model: model,
                     instructions: systemMessage,
                     input: messages,
                     ...(this.params || {})
-                }, sdkOptions);
+                };
+                trace?.dispatch();
+                const response = await this.openai.responses.create(pack, sdkOptions);
+                trace?.returned(response.usage, response.status === 'completed' ? 'stop' : null);
                 console.log('Received.');
                 res = response.output_text;
                 let stop_seq_index = res.indexOf(stop_seq);
@@ -95,15 +104,20 @@ export class GPT {
         catch (err) {
             if ((err.message == 'Context length exceeded' || err.code == 'context_length_exceeded') && turns.length > 1) {
                 console.log('Context length exceeded, trying again with shorter context.');
-                return await this.sendRequest(turns.slice(1), systemMessage, stop_seq, options);
+                const retried = await this.sendRequest(turns.slice(1), systemMessage, stop_seq, { ...options, requestTrace: trace });
+                if (!requestTrace) trace?.finish('response_returned');
+                return retried;
             } else if (err.message.includes('image_url')) {
+                trace?.failed(err);
                 console.log(err);
                 res = 'Vision is only supported by certain models.';
             } else {
+                trace?.failed(err);
                 console.log(err);
                 res = 'My brain disconnected, try again.';
             }
         }
+        if (!requestTrace) trace?.finish('response_returned');
         return res;
     }
 

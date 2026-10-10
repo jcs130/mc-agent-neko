@@ -3,12 +3,13 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { strictFormat } from '../src/utils/text.js';
+import { createRequestTrace, RequestTrace } from '../src/utils/llm_timing.js';
 
 function model(url, enabled = true) {
     const requests = [];
     const context = vm.createContext({ URL, process: { env: { NEKO_LOCAL_STRATA_PREFILL: enabled ? '1' : '0' } },
         console: { log() {} }, hasKey: () => false, getKey: () => 'unused',
-        strictFormat,
+        strictFormat, createRequestTrace,
         OpenAIApi: class { constructor() { this.chat = { completions: { create: async (body, options) => {
             requests.push({ body, options }); return { choices: [{ finish_reason: 'stop', message: { content: 'ok' } }] };
         } } }; } } });
@@ -56,4 +57,16 @@ test('local execution keeps an independent stable system checkpoint across chang
     assert.match(second[1].content, /task=B x=15 health=8/);
     assert.match(second[1].content, /actual action result: protection denied/);
     assert.equal('strata_prefix' in requests[0].body, false, 'The game brain remains the sole pin owner');
+});
+
+test('timing metadata never leaks into SDK options or the inference body', async () => {
+    const { client, requests } = model('http://127.0.0.1:18030/v1');
+    const records = [];
+    const requestTrace = new RequestTrace({}, 'execution', { sink: r => records.push(r) });
+    await client.sendRequest([], 'PRIVATE_PROMPT', '***', { requestTrace, timeout: 5000 });
+    assert.equal('requestTrace' in requests[0].options, false);
+    assert.equal('requestTrace' in requests[0].body, false);
+    assert.equal(requests[0].options.timeout, 5000);
+    assert.deepEqual(records.map(r => r.event), ['dispatch', 'returned']);
+    assert(!JSON.stringify(records).includes('PRIVATE_PROMPT'));
 });

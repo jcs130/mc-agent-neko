@@ -12,6 +12,7 @@ const TELEMETRY_FILES = [
 ];
 const RUNTIME_LOG_FILES = [
   ...TELEMETRY_FILES,
+  'llm_timing.jsonl',
   'events.log',
   'vitals.jsonl',
   'death_log.jsonl',
@@ -19,6 +20,8 @@ const RUNTIME_LOG_FILES = [
 ];
 
 const enabled = /^(?:1|true|yes)$/i.test(process.env.MC_TELEMETRY || '');
+const timingEnabled = process.env.MC_LLM_TIMING === '1';
+const allowedFiles = [...(enabled ? TELEMETRY_FILES : []), ...(timingEnabled ? ['llm_timing.jsonl'] : [])];
 // 64 MiB leaves comfortable room below the user's 100 MB distribution/runtime
 // ceiling for the rolling frame buffer and small state/config files.
 const totalBudget = Math.min(64, Math.max(8, Number(process.env.MC_RUNTIME_LOG_MAX_MB) || 64)) * 1024 * 1024;
@@ -27,10 +30,10 @@ const perFileBudget = Math.min(8, Math.max(1, Number(process.env.MC_TELEMETRY_FI
 const telemetryWorker = new Worker(new URL('./telemetry_worker.cjs', import.meta.url), {
   workerData: {
     directory: path.resolve(process.cwd(), 'bots', '_supervisor'),
-    enabled,
+    enabled: allowedFiles.length > 0,
     totalBudget,
     perFileBudget,
-    allowed: TELEMETRY_FILES,
+    allowed: allowedFiles,
     managed: RUNTIME_LOG_FILES
   }
 });
@@ -44,7 +47,7 @@ telemetryWorker.on('error', (error) => {
 export const telemetryEnabled = enabled;
 
 export function appendTelemetry (file, value, { json = typeof value !== 'string' } = {}) {
-  if (!enabled || !TELEMETRY_FILES.includes(file)) return false;
+  if (!allowedFiles.includes(file)) return false;
   try {
     telemetryWorker.postMessage({ type: 'append', file, value, json });
     return true;

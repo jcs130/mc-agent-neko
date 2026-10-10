@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { executionPromptTemplate, executionPromptHistory, sanitizeMemorySummary, memoryEvidence } from '../src/agent/context_budget.js';
+import { RequestTrace } from '../src/utils/llm_timing.js';
 
 function fixture({ external = true } = {}) {
     const calls = { examples: 0, requests: [] };
@@ -91,4 +92,20 @@ test('changing memory, selected code docs and goals follow every fixed execution
     }
     assert.match(first, /Collect four logs/);
     assert.match(second, /Another goal/);
+});
+
+test('conversation hands its own trace to the executor only after a current accepted response', async () => {
+    const f = fixture(), records = [];
+    const trace = new RequestTrace(f.agent, 'execution', { sink: r => records.push(r) });
+    f.prompter.chat_model.createTrace = () => trace;
+    f.prompter.chat_model.sendRequest = async (_messages, _prompt, _stop, options) => {
+        options.requestTrace.dispatch(); options.requestTrace.returned({}, 'stop'); return '!inventory';
+    };
+    let accepted;
+    assert.equal(await f.prompter.promptConvo([], { onTrace: value => { accepted = value; } }), '!inventory');
+    assert.equal(accepted, trace);
+    assert.equal(trace.closed, false, 'the executor, not the model adapter, validates commands');
+    trace.mark('command_validated'); trace.finish('command_ready');
+    assert(records.at(-1).prompt_assembly_ms !== null);
+    assert(records.at(-1).total_to_command_ms !== null);
 });

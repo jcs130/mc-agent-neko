@@ -325,7 +325,7 @@ export class AdminMission {
         let timer = null;
         try {
             const res = await Promise.race([
-                this.agent.prompter.chat_model.sendRequest([], prompt),
+                this.agent.prompter.chat_model.sendRequest([], prompt, '***', { traceType: 'task_dedup', traceAgent: this.agent }),
                 new Promise(resolve => { timer = setTimeout(() => resolve('__JUDGE_TIMEOUT__'), this._judgeTimeoutMs); }),
             ]);
             if (res === '__JUDGE_TIMEOUT__') {

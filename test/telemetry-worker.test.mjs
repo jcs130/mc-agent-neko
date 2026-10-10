@@ -43,6 +43,15 @@ test('telemetry worker writes when explicitly enabled', async () => {
   });
 });
 
+test('LLM metadata opt-in writes its rolling log without enabling other telemetry', async () => {
+  await inTempDir(async (dir) => {
+    await runTelemetryChild(dir, `telemetry.appendTelemetry('llm_timing.jsonl', { schema: 1 }); telemetry.appendTelemetry('mine_motion.jsonl', { ok: true }); await new Promise(r => setTimeout(r, 350));`, { MC_LLM_TIMING: '1' });
+    const logs = path.join(dir, 'bots', '_supervisor');
+    assert.equal(JSON.parse((await fs.readFile(path.join(logs, 'llm_timing.jsonl'), 'utf8')).trim()).schema, 1);
+    await assert.rejects(fs.stat(path.join(logs, 'mine_motion.jsonl')), { code: 'ENOENT' });
+  });
+});
+
 test('startup cleanup trims pre-existing runtime logs off the main thread', async () => {
   await inTempDir(async (dir) => {
     const logs = path.join(dir, 'bots', '_supervisor');

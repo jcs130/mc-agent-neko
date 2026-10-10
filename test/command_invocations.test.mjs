@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { RequestTrace } from '../src/utils/llm_timing.js';
 
 const prose = '连续无进展就用 !cannotComplete 返回具体证据。\n'
     + '或者先尝试 `!craftRecipe("stick", ...)`？没有 `!serverQuery` 的结果。\n'
@@ -11,6 +12,38 @@ const prose = '连续无进展就用 !cannotComplete 返回具体证据。\n'
 // Captured verbatim from mc.out.log after ff97159: the model repeated this
 // malformed named-object call without receiving any syntax feedback.
 const capturedOreAttempt = '!mineOres({ "ore": "coal" })';
+
+for (const [reply, outcome, executions] of [
+    ['!getWood(3)', 'command_ready', 1],
+    ['!getWood("abc")', 'command_rejected', 0],
+    [capturedOreAttempt, 'invalid_command', 0],
+]) test(`timing ends at actual command validation: ${outcome}`, async () => {
+    const { agent, calls } = fixture(), records = [];
+    const trace = new RequestTrace(agent, 'execution', { sink: r => records.push(r) });
+    agent._adminMultiCmdActive = () => false;
+    agent.prompter.promptConvo = async (_history, { onTrace }) => {
+        trace.dispatch(); trace.returned({}, 'stop'); onTrace(trace); return reply;
+    };
+    await agent.handleMessage('admin', 'diagnostic fixture');
+    assert.equal(records.at(-1).outcome, outcome);
+    assert.equal(calls.performed.length, executions);
+    assert.equal(records.at(-1).command_validated_at !== null, executions > 0);
+});
+
+test('mission superseded during inference never becomes a ready command', async () => {
+    const { agent, calls } = fixture(), records = [];
+    agent._missionEnabled = true;
+    agent.adminMission = { _epoch: 1, turnManaged: true, isActive: () => true };
+    const trace = new RequestTrace(agent, 'execution', { sink: r => records.push(r) });
+    agent.prompter.promptConvo = async (_history, { onTrace }) => {
+        trace.dispatch(); trace.returned({}, 'stop'); agent.adminMission._epoch++;
+        onTrace(trace); return '!getWood(3)';
+    };
+    await agent.handleMessage('admin', 'diagnostic fixture');
+    assert.equal(calls.performed.length, 0);
+    assert.equal(records.at(-1).outcome, 'stale');
+    assert.equal(records.at(-1).command_validated_at, null);
+});
 
 function fixture() {
     const calls = { performed: [], before: [], hooks: [], history: [], replies: [] };

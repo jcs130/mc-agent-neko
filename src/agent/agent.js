@@ -499,12 +499,8 @@ export class Agent {
                 if (reconnectAttempt > 0) console.log(`✅ Bot reconnected successfully (attempt ${reconnectAttempt}, spawn confirmed)`);
                 // Browser rendering is opt-in and does not load headless-gl.
                 if (settings.render_bot_view) {
-                    try {
-                        const { addBrowserViewer } = await import('./vision/browser_viewer.js');
-                        await addBrowserViewer(bot, this.count_id);
-                    } catch (error) {
-                        console.warn('Browser viewer unavailable; continuing without rendering:', error.message);
-                    }
+                    const { addBrowserViewer } = await import('./vision/browser_viewer.js');
+                    await addBrowserViewer(this.bot, this.count_id);
                 }
                 console.log('Initializing vision intepreter...');
                 this.vision_interpreter = new VisionInterpreter(this, settings.allow_vision);
@@ -1119,14 +1115,16 @@ export class Agent {
             for (let i=0; i<max_responses; i++) {
                 if (checkInterrupt()) break;
                 let history = this.history.getHistory();
-                let res = await this.prompter.promptConvo(history);
+                let requestTrace;
+                let res = await this.prompter.promptConvo(history, { onTrace: trace => { requestTrace = trace; } });
                 // Ownership or the mission generation can change during inference.
                 // Discard a stale response before publishing it or touching the body.
-                if (checkInterrupt()) break;
+                if (checkInterrupt()) { requestTrace?.finish('stale'); break; }
 
                 console.log(`${this.name} full response to ${source}: ""${res}""`);
 
                 if (res.trim().length === 0) {
+                    requestTrace?.finish('empty');
                     console.warn('no response')
                     break; // empty response ends loop
                 }
@@ -1169,18 +1167,22 @@ export class Agent {
                             const cstr = cmd_batch[ci];
                             const cname = containsCommand(cstr);
                             if (!cname || !commandExists(cname)) {
+                                requestTrace?.finish('invalid_command');
                                 this.history.add('system', `Command ${cname || cstr} does not exist.`);
                                 console.warn('Agent hallucinated command:', cname || cstr);
                                 this.history.add('system', 'Batch stopped: invalid command. Remaining commands were not executed. Reobserve and choose a fresh short step.');
                                 batch_stopped = true;
                                 break;
                             }
-                            if (checkInterrupt()) { batch_broke = true; break; }
+                            if (checkInterrupt()) { requestTrace?.finish('stale'); batch_broke = true; break; }
                             let validated = false;
                             let execute_res = await executeCommand(this, cstr, () => {
+                                requestTrace?.mark('command_validated');
+                                requestTrace?.finish('command_ready');
                                 validated = true;
                                 this.self_prompter.handleUserPromptedCmd(self_prompt, isAction(cname));
                             });
+                            requestTrace?.finish('command_rejected');
                             console.log('Agent executed (batch):', cname, 'and got:', execute_res);
                             used_command = true;
                             if (execute_res)
@@ -1207,12 +1209,13 @@ export class Agent {
                         this.history.add(this.name, res);
 
                         if (!commandExists(command_name)) {
+                            requestTrace?.finish('invalid_command');
                             this.history.add('system', `Command ${command_name} does not exist.`);
                             console.warn('Agent hallucinated command:', command_name)
                             continue;
                         }
 
-                        if (checkInterrupt()) break;
+                        if (checkInterrupt()) { requestTrace?.finish('stale'); break; }
 
                         let pre_message = res.substring(0, commandInvocationIndex(res)).trim();
 
@@ -1240,8 +1243,12 @@ export class Agent {
                             lastConversationReply = pre_message;
                         }
 
-                        let execute_res = await executeCommand(this, res, () =>
-                            this.self_prompter.handleUserPromptedCmd(self_prompt, isAction(command_name)));
+                        let execute_res = await executeCommand(this, res, () => {
+                            requestTrace?.mark('command_validated');
+                            requestTrace?.finish('command_ready');
+                            this.self_prompter.handleUserPromptedCmd(self_prompt, isAction(command_name));
+                        });
+                        requestTrace?.finish('command_rejected');
 
                         console.log('Agent executed:', command_name, 'and got:', execute_res);
                         used_command = true;
@@ -1256,10 +1263,12 @@ export class Agent {
                     this.history.add(this.name, res);
                     const formatFeedback = commandFormatFeedback(res);
                     if (formatFeedback) {
+                        requestTrace?.finish('invalid_command');
                         // Keep the goal alive and let the model correct its own
                         // invocation; malformed attempts never reach the body.
                         this.history.add('system', formatFeedback);
                     } else {
+                        requestTrace?.finish('conversation');
                         this.routeResponse(source, res);
                         lastConversationReply = res;
                         break;
