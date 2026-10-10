@@ -1,5 +1,10 @@
 # Project N.E.K.O. companion patches
 
+Bounded planning now keeps received NPC IDs, custom names and coordinates,
+and explicitly marks sampled nearby lists as partial. See
+[the NPC planning report](../../docs/neko-npc-decision-context-2026-10-10.md)
+for the reproduced loss, regression coverage and runtime limits.
+
 Bounded completion, idle and observation context now preserves task conclusions
 before duplicated command/inventory appendices. Long goal names no longer
 consume the result's entire budget. Full feedback remains queryable. See

@@ -1,9 +1,9 @@
 {
   "upstreamRepository": "https://github.com/Project-N-E-K-O/N.E.K.O",
   "baseCommit": "fb2a2e731a8c954478d08678b0c8cf40e8145a54",
-  "sourceCommit": "7d75c0898e24005399b9cd77bfcc2aed2ce8f4ad",
+  "sourceCommit": "4ab000b96518d9fe65a43f28f94344cc4a1a9abc",
   "scope": "plugin/plugins/game_agent_minecraft",
-  "resultPluginTree": "188d5a0b61dc1d5910e1cdd3b5dd412f603b716c",
+  "resultPluginTree": "1f2f3fb1a5f5d7fda943fe2f4e3f253a485bb220",
   "patches": [
     {
       "file": "0001-chore-configure-text-only-local-Qwen-Minecraft-trial.patch",
@@ -244,12 +244,16 @@
     {
       "file": "0060-fix-preserve-task-conclusions-in-bounded-Minecraft-c.patch",
       "sha256": "b40778a4ce1b3d47b60f3726a6e7b0fc09333244b64652f121d0ea4ba0f4513d"
+    },
+    {
+      "file": "0061-fix-preserve-received-NPC-identity-in-bounded-decisi.patch",
+      "sha256": "3e0952cd071b3b579fcbbfda8066f14d8156989938bf521182fb6d5c17ebfc8e"
     }
   ],
   "verification": {
     "appliedInOrderToBase": true,
     "resultPluginTreeMatchesSource": true,
-    "pluginTestsPassed": 195,
+    "pluginTestsPassed": 202,
     "hostCallbackTestsPassed": 195,
     "hostFileBlobsMatchSource": true,
     "nativeSourceTestsPassed": 450,
@@ -533,5 +537,18 @@
     "fullLastTaskOutcomeUnchanged": true,
     "periodicInferenceAdded": false,
     "longRunBehaviorProven": false
+  },
+  "npcPlanningVerification": {
+    "date": "2026-10-10",
+    "pluginSourceCommit": "4ab000b96518d9fe65a43f28f94344cc4a1a9abc",
+    "regressionCasesAdded": 7,
+    "preFixRegressionErrors": 4,
+    "focusedTestsPassedBeforeTwoAdditionalCases": 48,
+    "pluginTestsPassed": 202,
+    "receivedIdNameAndPositionPreserved": true,
+    "sampledListPartialityExplicit": true,
+    "noProfessionOrOfferInferred": true,
+    "periodicInferenceAdded": false,
+    "liveTradingSuccessProven": false
   }
 }

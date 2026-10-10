@@ -1,0 +1,163 @@
+From 4ab000b96518d9fe65a43f28f94344cc4a1a9abc Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Sat, 10 Oct 2026 14:08:02 +0800
+Subject: [PATCH] fix: preserve received NPC identity in bounded decisions
+
+---
+ .../game_agent_minecraft/decision_context.py  |  23 +++-
+ .../test_npc_decision_context.py              | 105 ++++++++++++++++++
+ 2 files changed, 125 insertions(+), 3 deletions(-)
+ create mode 100644 plugin/plugins/game_agent_minecraft/test_npc_decision_context.py
+
+diff --git a/plugin/plugins/game_agent_minecraft/decision_context.py b/plugin/plugins/game_agent_minecraft/decision_context.py
+index 01ccc54..03f4521 100644
+--- a/plugin/plugins/game_agent_minecraft/decision_context.py
++++ b/plugin/plugins/game_agent_minecraft/decision_context.py
+@@ -28,6 +28,21 @@ def _select(value, keys):
+     return {key: value[key] for key in keys if key in value} if isinstance(value, dict) else {}
+ 
+ 
++def _entity_summary(entity):
++    fact = {key: _short(entity[key], 48) if isinstance(entity[key], str) else entity[key]
++            for key in ('name', 'type', 'username', 'customName', 'distance') if key in entity}
++    # A profession or remembered coordinate is not this received NPC's identity.
++    if type(entity.get('id')) is int and entity['id'] >= 0:
++        fact['id'] = entity['id']
++    position = entity.get('position')
++    if isinstance(position, dict):
++        point = {key: round(position[key], 1) for key in ('x', 'y', 'z')
++                 if type(position.get(key)) in (int, float) and math.isfinite(position[key])}
++        if point:
++            fact['position'] = point
++    return fact
++
++
+ def _merchant_summary(window, inventory=None, *, complete=False):
+     if not isinstance(window, dict) or window.get('type') not in ('minecraft:merchant', 'minecraft:villager', 'merchant', 'villager'):
+         return None
+@@ -203,9 +218,11 @@ def build_focused_view(info, *, mode='decision', max_events=6, max_tokens=1600,
+             entities = sorted((entity for entity in nearby.get('entities') or [] if isinstance(entity, dict)),
+                 key=lambda item: item.get('distance') if type(item.get('distance')) in (int, float) else float('inf'))
+             compact['nearby'] = {'players': players,
+-                'entities': [{key: _short(entity[key], 48) if isinstance(entity[key], str) else entity[key]
+-                              for key in ('name', 'username', 'customName', 'distance') if key in entity}
+-                             for entity in entities[:4]]}
++                'entities': [_entity_summary(entity) for entity in entities[:4]]}
++            if len(entities) > 4 or any(path in ('$.nearby', '$.nearby.entities') or
++                    path.startswith('$.nearby.entities.') for path in info.truncated):
++                compact['nearby'].update(entitiesReceived=len(entities), entitiesPartial=True,
++                    details='minecraft_observe(detail="full",sections=["nearby"]); omitted NPCs are unknown.')
+             containers = nearby.get('containers') or []
+             if isinstance(containers, list) and containers:
+                 compact['nearby']['containers'] = [_select(item, ('name', 'position', 'distance'))
+diff --git a/plugin/plugins/game_agent_minecraft/test_npc_decision_context.py b/plugin/plugins/game_agent_minecraft/test_npc_decision_context.py
+new file mode 100644
+index 0000000..e824968
+--- /dev/null
++++ b/plugin/plugins/game_agent_minecraft/test_npc_decision_context.py
+@@ -0,0 +1,105 @@
++import copy
++import json
++import unittest
++
++from utils.tokenize import count_tokens
++from .observations import GameObservations
++from .test_observations import frame
++
++
++class NpcDecisionContextTests(unittest.TestCase):
++    def data(self, seq=1, session='npc-planning'):
++        data = frame(seq=seq, session=session)
++        data['state']['nearby'] = {'entities': [
++            {'id': 217, 'name': 'villager', 'type': 'passive',
++             'customName': '村庄补给商', 'distance': 1.4,
++             'position': {'x': -546.512, 'y': 67, 'z': -441.512}},
++            {'id': 218, 'name': 'villager', 'type': 'passive',
++             'customName': '田野收购商·禾仓', 'distance': 4.1,
++             'position': {'x': -546.5, 'y': 67, 'z': -444.5}},
++        ]}
++        return data
++
++    def test_decision_retains_received_id_name_and_position_without_inventing_offers(self):
++        observations = GameObservations()
++        observations.ingest_state(self.data())
++        before = copy.deepcopy(observations.state)
++        view = observations.focused_view(max_tokens=1600)
++        entities = view['state']['nearby']['entities']
++        self.assertEqual(entities[0]['id'], 217)
++        self.assertEqual(entities[0]['customName'], '村庄补给商')
++        self.assertEqual(entities[0]['type'], 'passive')
++        self.assertEqual(entities[0]['position'], {'x': -546.5, 'y': 67, 'z': -441.5})
++        self.assertEqual(entities[1]['id'], 218)
++        self.assertNotIn('profession', entities[0])
++        self.assertNotIn('offers', entities[1])
++        self.assertEqual(observations.state, before)
++
++    def test_sampled_entities_mark_omitted_npcs_unknown_and_keep_full_detail_route(self):
++        data = self.data()
++        data['state']['nearby']['entities'].extend(
++            {'id': 300 + n, 'name': 'villager', 'distance': 10 + n} for n in range(8))
++        observations = GameObservations()
++        observations.ingest_state(data)
++        nearby = observations.focused_view(max_tokens=1600)['state']['nearby']
++        self.assertEqual(len(nearby['entities']), 4)
++        self.assertEqual(nearby['entitiesReceived'], 10)
++        self.assertTrue(nearby['entitiesPartial'])
++        self.assertIn('nearby', nearby['details'])
++
++    def test_absent_identity_and_coordinates_remain_unknown(self):
++        data = self.data()
++        data['state']['nearby']['entities'] = [{'name': 'villager', 'distance': 2}]
++        observations = GameObservations()
++        observations.ingest_state(data)
++        entity = observations.focused_view()['state']['nearby']['entities'][0]
++        self.assertNotIn('id', entity)
++        self.assertNotIn('position', entity)
++        self.assertNotIn('customName', entity)
++
++    def test_offline_and_new_session_never_reuse_previous_npc_identity(self):
++        observations = GameObservations()
++        observations.ingest_state(self.data())
++        offline = self.data(seq=2)
++        offline['online'] = False
++        observations.ingest_state(offline)
++        self.assertIsNone(observations.focused_view()['state'])
++        changed = self.data(session='new-login')
++        changed['state']['nearby']['entities'] = [{'id': 999, 'name': 'villager', 'distance': 1}]
++        observations.ingest_state(changed)
++        nearby = observations.focused_view()['state']['nearby']
++        self.assertEqual(nearby['entities'][0]['id'], 999)
++        self.assertNotIn('村庄补给商', json.dumps(nearby, ensure_ascii=False))
++
++    def test_source_truncation_is_partial_even_with_fewer_than_four_entities(self):
++        data = self.data()
++        data['truncated'] = ['$.nearby.entities']
++        observations = GameObservations()
++        observations.ingest_state(data)
++        nearby = observations.focused_view()['state']['nearby']
++        self.assertTrue(nearby['entitiesPartial'])
++        self.assertEqual(nearby['entitiesReceived'], 2)
++
++    def test_invalid_id_and_position_are_not_presented_as_an_action_target(self):
++        data = self.data()
++        entity = data['state']['nearby']['entities'][0]
++        entity.update(id=True, position={'x': float('nan'), 'y': '67', 'z': None})
++        observations = GameObservations()
++        observations.ingest_state(data)
++        entity = observations.focused_view()['state']['nearby']['entities'][0]
++        self.assertNotIn('id', entity)
++        self.assertNotIn('position', entity)
++
++    def test_entity_detail_does_not_exceed_existing_context_limits(self):
++        data = self.data()
++        data['state']['nearby']['entities'] *= 10
++        observations = GameObservations()
++        observations.ingest_state(data)
++        self.assertLessEqual(count_tokens(json.dumps(observations.focused_view(max_tokens=256),
++                                                    ensure_ascii=False)), 256)
++        for budget in (400, 700, 1200):
++            text = observations.focused_context(max_tokens=budget)
++            self.assertLessEqual(count_tokens(text), budget)
++            view = json.loads(text.split('\n', 1)[1])
++            if 'entities' not in view.get('state', {}).get('nearby', {}):
++                self.assertTrue(view['detailsRequired'])
