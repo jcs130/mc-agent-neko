@@ -117,3 +117,30 @@ test('reply metadata distinguishes allowlisted queries from mutations and unknow
         assert.equal(result.confirmed, false);
     }
 });
+
+test('reply metadata recognizes documented market, engineering and world catalogue queries', async () => {
+    const send = await bridge(), bot = fakeBot(b => b.emit('messagestr', 'catalogue', 'system'));
+    for (const command of ['/mycli guild market list', '/mycli guild market tm_trail_supply',
+        '/mycli guild market tm_field_cycle', '/mycli guild engineering list', '/mycli world board']) {
+        const result = await send(bot, { command }, { quietMs: 2, timeoutMs: 20 });
+        assert.equal(result.readOnly, true, command);
+        assert.equal(result.confirmed, false);
+    }
+});
+
+test('catalogue result classification does not expand serverQuery permissions', async () => {
+    const send = await bridge(), bot = fakeBot();
+    for (const command of ['/mycli guild market tm_field_cycle', '/mycli world board']) {
+        assert.equal((await send(bot, { command, readOnly: true })).status, 'failed');
+    }
+    assert.equal(bot.sent.length, 0);
+});
+
+test('catalogue-like mutation and unknown arguments cannot gain query metadata', async () => {
+    const send = await bridge(), bot = fakeBot(b => b.emit('messagestr', 'MC_MARKET_DETAIL {"id":"tm_field_cycle"}', 'system'));
+    for (const command of ['/mycli guild market accept', '/mycli guild market tm_field_cycle claim',
+        '/mycli guild claim tm_trail_supply', '/mycli guild engineering accept hut',
+        '/mycli world board reset', '/mycli guild market arbitrary']) {
+        assert.equal((await send(bot, { command }, { quietMs: 2, timeoutMs: 20 })).readOnly, false, command);
+    }
+});
