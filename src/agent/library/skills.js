@@ -306,15 +306,24 @@ async function autoLight(bot) {
 }
 
 async function equipHighestAttack(bot) {
+    const prepared = await tickConfirm.prepareEquipmentInventory(bot);
+    if (!prepared.ok) {
+        log(bot, `Cannot prepare combat equipment: ${prepared.reason}`);
+        return false;
+    }
     let weapons = bot.inventory.items().filter(item => item.name.includes('sword') || (item.name.includes('axe') && !item.name.includes('pickaxe')));
     if (weapons.length === 0)
         weapons = bot.inventory.items().filter(item => item.name.includes('pickaxe') || item.name.includes('shovel'));
     if (weapons.length === 0)
-        return;
+        return true;
     weapons.sort((a, b) => b.attackDamage - a.attackDamage);
     let weapon = weapons[0];
-    if (weapon)
-        await bot.equip(weapon, 'hand');
+    if (weapon) {
+        const result = await tickConfirm.equipConfirmed(bot, weapon, 'hand');
+        if (!result.ok) log(bot, `Cannot equip combat weapon: ${result.reason}`);
+        return result.ok;
+    }
+    return true;
 }
 
 export async function craftRecipe(bot, itemName, num=1) {
@@ -1067,7 +1076,7 @@ export async function attackEntity(bot, entity, kill=true) {
      **/
 
     let pos = entity.position;
-    await equipHighestAttack(bot)
+    if (await equipHighestAttack(bot) === false) return false;
 
     if (!kill) {
         // ★够不到/目标已失效不出手 (与 kill 分支同款臂展守卫 — 用户实拍"对空气挥舞"的根治).
@@ -1152,7 +1161,10 @@ export async function defendSelf(bot, range=9) {
     };
     let enemy = world.getNearestEntityWhere(bot, _engageable, range);
     while (enemy) {
-        await equipHighestAttack(bot);
+        if (await equipHighestAttack(bot) === false) {
+            bot.pvp.stop();
+            return false;
+        }
         if (bot.entity.position.distanceTo(enemy.position) >= 4 && enemy.name !== 'creeper' && enemy.name !== 'phantom') {
             try {
                 await goToGoal(bot, new pf.goals.GoalFollow(enemy, 3.5));

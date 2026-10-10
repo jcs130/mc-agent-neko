@@ -107,6 +107,28 @@ export async function withRetry(operation, opts = {}) {
     };
 }
 
+// Mineflayer equip uses player-inventory slot numbers, while moveSlotItem
+// clicks whichever window is open. Close only a fully initialized, empty-
+// cursor menu; closeWindow copies its fresh player slots back to inventory.
+export async function prepareEquipmentInventory(bot) {
+    const cursorOccupied = () => !!(bot.currentWindow?.selectedItem || bot.inventory?.selectedItem);
+    const refused = reason => ({ ok: false, error_class: 'prerequisite', reason, attempts: 0 });
+    if (bot.interrupt_code || bot.health <= 0) return refused('equipment interrupted');
+    if (cursorOccupied()) return refused('equipment requires an empty cursor');
+    if (bot.currentWindow) {
+        const window = bot.currentWindow;
+        if (typeof window.close !== 'function') return refused('equipment waits for the menu inventory to initialize');
+        try { bot.closeWindow(window); }
+        catch (error) { return refused(`cannot close menu for equipment: ${error.message}`); }
+        await sleepMs(POST_EQUIP_SETTLE_MS);
+    }
+    if (bot.currentWindow || cursorOccupied()) return refused('menu or cursor changed before equipment');
+    if (bot.interrupt_code || bot.health <= 0) return refused('equipment interrupted');
+    if (!Array.isArray(bot.inventory?.slots) || bot.inventory.slots.length < 45)
+        return refused('player inventory is not ready for equipment');
+    return { ok: true };
+}
+
 // Equip helper that waits for the server to register the new held slot.
 //
 // `bot.equip(item, 'hand')` synchronously flips `bot.quickBarSlot` locally
@@ -148,6 +170,9 @@ export async function equipConfirmed(bot, itemOrName, destination = 'hand', opts
         }
     }
 
+    const prepared = await prepareEquipmentInventory(bot);
+    if (!prepared.ok) return prepared;
+
     const findItem = () => {
         if (exactItem) {
             if (bot.inventory.slots.includes(exactItem)) return exactItem;
@@ -159,6 +184,7 @@ export async function equipConfirmed(bot, itemOrName, destination = 'hand', opts
     const armorSlotsByDest = { head: 5, torso: 6, legs: 7, feet: 8, 'off-hand': 45 };
 
     const confirm = () => {
+        if (bot.currentWindow || bot.inventory.selectedItem || bot.interrupt_code) return Promise.resolve(false);
         if (destination === 'hand') {
             return Promise.resolve(!!bot.heldItem && (exactItem
                 ? fingerprint(bot.heldItem) === exactFingerprint
@@ -177,6 +203,9 @@ export async function equipConfirmed(bot, itemOrName, destination = 'hand', opts
     };
 
     return await withRetry(async () => {
+        // Do not close a newly opened menu during a retry, or ever interpret
+        // player indices against it. The caller can retry at its next action.
+        if (bot.currentWindow || bot.inventory.selectedItem) throw new Error('menu or cursor changed during equipment');
         const item = findItem();
         if (!item) throw new Error(`no ${itemName} in inventory`);
         await bot.equip(item, destination);
