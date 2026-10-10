@@ -1,0 +1,9 @@
+# Recognize carried moss as emergency filler
+
+Evidence, 2026-10-11 04:20 Beijing: the live inventory contains 33 moss blocks, no conventional dirt/cobble filler, and recent shelter attempts have failed. The single shared reflex material predicate excludes `moss_block`. Actual bunker selection therefore returns no filler, and creeper interposition cannot select the carried moss. This is a client capability gap; it does not prove that every earlier shelter failure has this cause or that the currently sealed night hold is stuck.
+
+Add only the exact `moss_block` name to the existing shared predicate. Keep the existing plank reservation, stable-block preference, interrupted-operation checks and entity collision guards. Do not broaden eligibility to carpets, slabs, player heads or arbitrary items. Do not change decisions, model parameters or perform manual game actions.
+
+Red/green verification exercises production bunker selection and the full production creeper-interpose method, including actual placement in a simulated known open cell and rejection when interrupted or occupied. Use the installed Minecraft 1.20.6 data to verify moss is a full block. Record the pre-fix occurrence baseline and actual deployment separately; changing selection does not demonstrate successful shelter construction, escape or production in the real world.
+
+Deployment should reuse the exact owned native-child workflow only during a full-health daytime idle boundary. At the same legitimate reload, merge the three already persisted viewer fields into MindServer's cached settings so current renderer/skin survive future restarts. Keep all other settings and main/model/TTS processes. If no safe boundary appears, leave prepared rather than restart at night or interrupt useful work.

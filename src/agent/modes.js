@@ -35,7 +35,7 @@ const NORMAL_FOOD_RE = /cooked_|_bread|^bread$|apple|golden_apple|carrot|potato|
 // past death loop (red_sand added to one FILL_RE but not the others → bot dug 163 red_sand
 // yet fillerOf()=undefined → couldn't seal → died 3×). This constant is the UNION of both
 // former copies; add new block families HERE only, never in a local copy.
-const FILL_RE = /cobblestone|cobbled|deepslate|^dirt$|andesite|diorite|granite|^stone$|tuff|gravel|^sand$|red_sand|sandstone|netherrack|_planks$|_log$|_wood$|^planks$|hyphae|^mud$|^clay$|terracotta|dirt_path|coarse_dirt|rooted_dirt|mossy|calcite|blackstone|basalt/;
+const FILL_RE = /cobblestone|cobbled|deepslate|^dirt$|andesite|diorite|granite|^stone$|tuff|gravel|^sand$|red_sand|sandstone|netherrack|_planks$|_log$|_wood$|^planks$|hyphae|^mud$|^clay$|terracotta|dirt_path|coarse_dirt|rooted_dirt|mossy|^moss_block$|calcite|blackstone|basalt/;
 
 // ★perf 2026-07-09: TTL-cached JSON reader for the small supervisor state files that were re-read
 // from disk on the hot observe/decide ticks — advisory.json was read+parsed TWICE per single
