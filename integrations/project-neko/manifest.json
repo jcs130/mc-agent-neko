@@ -1,7 +1,7 @@
 {
   "upstreamRepository": "https://github.com/Project-N-E-K-O/N.E.K.O",
   "baseCommit": "fb2a2e731a8c954478d08678b0c8cf40e8145a54",
-  "sourceCommit": "67b5b85130b61e692f02f161694bfad8c0075c7e",
+  "sourceCommit": "62d44c0dcc397608b1ad0b4fbbb65c2c9cd54c68",
   "scope": "plugin/plugins/game_agent_minecraft",
   "resultPluginTree": "64e86f90898b728c71bc50c9d84ea078b1b979e3",
   "patches": [
@@ -393,6 +393,23 @@
         "tests/frontend/test_avatar_turn_coalescing.mjs",
         "tests/unit/test_joint_reply_emotion.py",
         "tests/unit/test_proactive_phase2_generation.py",
+        "utils/joint_reply_emotion.py"
+      ]
+    },
+    {
+      "file": "host-patches/0010-feat-tts-prefer-local-VoxCPM2-with-joint-voice-tone.patch",
+      "sha256": "e866de0ea9730d642244c6f71cf7b22e13d249dfc10927f5327e6964f73db376",
+      "sourceCommit": "62d44c0dcc397608b1ad0b4fbbb65c2c9cd54c68",
+      "scopePaths": [
+        "docs/regression-reports/2026-10-11-local-voxcpm-primary.md",
+        "main_logic/core/manager.py",
+        "main_logic/core/tts_runtime.py",
+        "main_logic/core/turn.py",
+        "main_logic/tts_client/__init__.py",
+        "main_logic/tts_client/local_primary.py",
+        "main_logic/tts_client/workers/openai.py",
+        "tests/unit/test_joint_reply_emotion.py",
+        "tests/unit/test_local_voxcpm_primary.py",
         "utils/joint_reply_emotion.py"
       ]
     }
@@ -884,5 +901,32 @@
     "nativeGameAndLocalModelPreserved": true,
     "servedFrontendMatchesSource": true,
     "naturalReplyMetadataTurnsObserved": 2
+  },
+  "localVoxCPMPrimaryVerification": {
+    "date": "2026-10-11",
+    "sourceCommit": "62d44c0dcc397608b1ad0b4fbbb65c2c9cd54c68",
+    "targetedPythonCasesPassed": 336,
+    "focusedSpeechCasesPassed": 88,
+    "finalJointAndRouteCasesPassed": 47,
+    "preexistingWatchLogCaptureFailureReproduced": true,
+    "nativeIsolatedStreamingSampleCount": 3,
+    "sampleRate": 48000,
+    "styleFromSameGeneration": true,
+    "styleDescriptionSpokenInASR": false,
+    "staleAudioBytesAfterInterrupt": 0,
+    "nextTurnAfterInterruptRecovered": true,
+    "fullReplayMatchesSource": true,
+    "hostFilesMatched": 41,
+    "deploymentPhase": "verified",
+    "subjectiveVoiceSimilarityMeasured": false,
+    "guaranteedLatencyClaim": false,
+    "desktopReadySingleConnection": true,
+    "serviceOwnershipCasesPassed": 5,
+    "persistentUnitRestarts": 0,
+    "nativeOnlineFallbackActuallySynthesized": true,
+    "naturalAudioDeliveredTurns": 3,
+    "nativeAndModelProcessesPreserved": true,
+    "audioArrivalCasesPassed": 5,
+    "localVoiceAsPrimaryDeployed": true
   }
 }

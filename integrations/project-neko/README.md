@@ -13,6 +13,12 @@ ordinary, tool-feedback and proactive delivery coverage, a host Regression
 Report, neutral fallback and turn-scoped frontend animation. Live deployment
 evidence and the separate shared-viewer/YUI skin update are recorded in that guide.
 
+The [local VoxCPM2 primary voice companion](../../docs/local-voxcpm2-primary.md)
+extends the same generation with an optional short voice description. Host patch
+0010 prefers the exact authorized local clone, preserves native online failover
+and clean sentence receipts, and decodes streamed PCM at 48 kHz. WSL lifecycle
+helpers isolate speech on the RTX 3080 Ti; IndexTTS remains cold standby.
+
 The idle decision recovery companion changes keep query replies from resetting
 progress/backoff, distinguish accepted quest receipts from browsed catalogues,
 and reserve an existing final request for optional execution in confirmed idle
@@ -87,7 +93,7 @@ alongside the Minecraft body in this fork. The ordered plugin series includes
 scoped protection receipts, adaptive heartbeat pacing, readable custom items,
 protected operational inventory, storage capacity, matched recovery history,
 compact task authority and conditional post-observation action guidance.
-The manifest lists the exact plugin series and six companion host patches.
+The manifest lists the exact plugin series and ten companion host patches.
 
 The series targets [Project-N-E-K-O/N.E.K.O](https://github.com/Project-N-E-K-O/N.E.K.O)
 at commit `fb2a2e731a8c954478d08678b0c8cf40e8145a54`. It changes only
@@ -134,7 +140,7 @@ git rev-parse HEAD:plugin/plugins/game_agent_minecraft
 ```
 
 The manifest is authoritative for the current bundle: 67 ordered plugin patches
-and nine host patches reproduce the declared source's plugin tree and all 36
+and ten host patches reproduce the declared source's plugin tree and all 41
 affected host-file blobs. Test counts are dated delivery evidence, not a claim
 that every later checkout has already been tested. See the
 [prefill verification report](../../docs/neko-llm-prefill-2026-10-10.md) for plugin

@@ -1,0 +1,6 @@
+{
+  "distribution": "Ubuntu-24.04",
+  "linux_root": "/opt/neko-voxcpm2",
+  "backend": "voxcpm2",
+  "port": 18041
+}

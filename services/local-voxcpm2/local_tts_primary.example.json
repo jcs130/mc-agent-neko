@@ -1,0 +1,7 @@
+{
+  "enabled": false,
+  "source_voice_id": "REPLACE_WITH_THE_MATCHING_AUTHORIZED_NEKO_VOICE_ID",
+  "base_url": "http://127.0.0.1:18041/v1",
+  "model": "voxcpm2",
+  "voice": "yui-local"
+}

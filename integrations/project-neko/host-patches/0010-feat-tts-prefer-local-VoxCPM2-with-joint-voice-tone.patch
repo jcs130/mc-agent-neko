@@ -1,0 +1,650 @@
+From 62d44c0dcc397608b1ad0b4fbbb65c2c9cd54c68 Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Sun, 11 Oct 2026 03:07:21 +0800
+Subject: [PATCH] feat(tts): prefer local VoxCPM2 with joint voice tone
+
+---
+ .../2026-10-11-local-voxcpm-primary.md        |  26 +++
+ main_logic/core/manager.py                    |   1 +
+ main_logic/core/tts_runtime.py                |  33 ++-
+ main_logic/core/turn.py                       |   3 +
+ main_logic/tts_client/__init__.py             |  15 +-
+ main_logic/tts_client/local_primary.py        |  94 ++++++++
+ main_logic/tts_client/workers/openai.py       |   6 +-
+ tests/unit/test_joint_reply_emotion.py        |  22 +-
+ tests/unit/test_local_voxcpm_primary.py       | 210 ++++++++++++++++++
+ utils/joint_reply_emotion.py                  |  33 ++-
+ 10 files changed, 435 insertions(+), 8 deletions(-)
+ create mode 100644 docs/regression-reports/2026-10-11-local-voxcpm-primary.md
+ create mode 100644 main_logic/tts_client/local_primary.py
+ create mode 100644 tests/unit/test_local_voxcpm_primary.py
+
+diff --git a/docs/regression-reports/2026-10-11-local-voxcpm-primary.md b/docs/regression-reports/2026-10-11-local-voxcpm-primary.md
+new file mode 100644
+index 0000000..1c1b848
+--- /dev/null
++++ b/docs/regression-reports/2026-10-11-local-voxcpm-primary.md
+@@ -0,0 +1,26 @@
++# 回归报告 / Regression Report: local VoxCPM2 voice and joint tone
++
++## Change and necessity
++
++The user selected the tested local VoxCPM2 clone as primary speech. A disabled-by-default, exact-voice configuration now prefers a loopback HTTP worker for the selected online free voice. The original voice identity and online credentials stay in the existing resolver, providing native online failover when the local provider is excluded. Other voices, explicit providers and TTS disablement retain their routes.
++
++Before this change, the tested VoxCPM2 service could only be called by the isolated benchmark; live Neko used online speech. The new route sends reference-only streaming requests with native 48000 Hz PCM. It reuses the existing sentence ordering, cancellation, progress receipts and safe fallback suffix. It never forwards online credentials or voice IDs to the local endpoint and does not change general Custom API settings.
++
++## Tone without another generation
++
++The existing joint reply header accepts an optional bounded description, for example `[neko_emotion:happy|轻快、带笑意，语速适中]`. Old headers remain valid. The same main-brain generation supplies reply, expression and tone. The parser removes metadata before tool-leak guards, history and spoken text.
++
++Tone is captured by speech ID before buffering. Only the VoxCPM2 worker receives private style controls; only its HTTP payload adds the documented `(description)` prefix. Native sentence receipts, replay text, subtitles and online failover remain clean. A missing or invalid description uses a modest emotion/default tone without another model call. State is bounded and interrupted workers clear their style map.
++
++## Potential regressions and evidence
++
++Critical boundaries are exact-voice opt-in, local credential isolation, repeated provider selection after failure, sentence acknowledgements after styling, readiness buffers, overlapping speech IDs and interruption ownership. Tests cover these through the real HTTP sentence worker and the real native failover selector, with fake transport only where deterministic failures are required.
++
++Validation on 2026-10-11:
++
++- The routing, HTTP worker, joint protocol, cancellation, runtime handoff and Phase 2 selection passed 336 cases; the focused normalization/audio-cache/speech selection passed 88 cases. Counts overlap and are not added together.
++- Ruff passed for changed Python files. A live isolated worker emitted real 48 kHz PCM with happy and soft descriptions, acknowledged clean original sentences, emitted zero stale audio for six seconds after interruption, and synthesized the next turn successfully.
++- CPU ASR read back all three public test sentences without speaking the description. It showed small word/name variations; this is intelligibility evidence, not a subjective voice-similarity or emotion-quality score.
++- Broader watch-together coverage has one existing log-capture assertion failure: `test_failed_takeover_with_stale_token_still_unmutes`. The original committed host modules reproduce it (89 pass / 1 fail); stdout contains `takeover force-released`, and the ownership-release assertions pass. This unrelated logging/test issue was not changed. The focused selection above excludes that file.
++
++Actual persistent-service deployment, observed natural speech and full companion-bundle replay are recorded separately in the contribution fork. Cold startup and graphics-load latency must not be represented as warm steady-state or guaranteed playback latency.
+diff --git a/main_logic/core/manager.py b/main_logic/core/manager.py
+index 191975a..9ab324d 100644
+--- a/main_logic/core/manager.py
++++ b/main_logic/core/manager.py
+@@ -362,6 +362,7 @@ class LLMSessionManager(
+         # 已送入当前 worker 的原始文本账本。配置型 provider 运行时失败时，
+         # 用它把本轮文本与 done 信号交给替代 worker，避免整段回复静音。
+         self._tts_replay_speech_id: Optional[str] = None
++        self._tts_voice_styles: dict[str, str] = {}
+         self._tts_replay_chunks: list[tuple[Optional[str], str]] = []
+         # HTTP 分句 worker 回报已完成/失败的句界后，只保留尚未播出的规范化文本。
+         self._tts_replay_sent_chunks: list[tuple[Optional[str], str]] = []
+diff --git a/main_logic/core/tts_runtime.py b/main_logic/core/tts_runtime.py
+index 172c30b..d0a8772 100644
+--- a/main_logic/core/tts_runtime.py
++++ b/main_logic/core/tts_runtime.py
+@@ -313,6 +313,32 @@ class TtsRuntimeMixin:
+             [(speech_id, remaining)] if remaining else []
+         )
+ 
++    def _capture_tts_voice_style(self, speech_id) -> None:
++        """Capture before buffering: worker readiness can outlive reply context."""
++        from utils.joint_reply_emotion import reply_emotion_context, reply_voice_style
++
++        styles = getattr(self, '_tts_voice_styles', None)
++        if styles is None:
++            self._tts_voice_styles = styles = {}
++        metadata = reply_emotion_context.get()
++        if metadata is not None:
++            styles[speech_id] = reply_voice_style(metadata)
++            while len(styles) > 32:
++                styles.pop(next(iter(styles)))
++
++    def _put_tts_text_chunk(self, speech_id, text) -> None:
++        from main_logic.tts_client.local_primary import (
++            LOCAL_PRIMARY_PROVIDER, VOICE_STYLE_SENTINEL,
++        )
++        from utils.joint_reply_emotion import reply_voice_style
++
++        if getattr(self, '_tts_active_provider_key', None) == LOCAL_PRIMARY_PROVIDER:
++            style = getattr(self, '_tts_voice_styles', {}).get(speech_id)
++            self.tts_request_queue.put((VOICE_STYLE_SENTINEL, {
++                'speech_id': speech_id, 'style': style or reply_voice_style(None),
++            }))
++        self.tts_request_queue.put((speech_id, text))
++
+     def _enqueue_tts_text_chunk(self, speech_id, text: str) -> None:
+         """Enqueue a text chunk into the TTS queue; http_sentence-class providers go through the normalizer.
+ 
+@@ -328,6 +354,7 @@ class TtsRuntimeMixin:
+         """
+         # Retain pre-normalized text because the replacement may use another protocol class.
+         # 保留规范化前的原始文本；替代 worker 可能属于另一协议类别，需要从原文重放。
++        self._capture_tts_voice_style(speech_id)
+         self._remember_tts_replay_chunk(speech_id, text)
+ 
+         # speech_id 切换时重置所有 stripper 状态（pending 内容属于上一轮，丢弃）
+@@ -357,13 +384,13 @@ class TtsRuntimeMixin:
+             # 就丢了。等下一块或收尾把 # 定下来再说。
+             self._cancel_tts_soft_flush()
+             if text:
+-                self.tts_request_queue.put((speech_id, text))
++                self._put_tts_text_chunk(speech_id, text)
+                 self._remember_tts_sent_chunk(speech_id, text)
+                 self._remember_pending_ai_voice_echo(speech_id, text)
+             return
+         if not text:
+             return
+-        self.tts_request_queue.put((speech_id, text))
++        self._put_tts_text_chunk(speech_id, text)
+         logger.debug(
+             "[voice-chain] stage=tts_enqueue speech_id=%s text_len=%d",
+             speech_id,
+@@ -598,7 +625,7 @@ class TtsRuntimeMixin:
+         if pending_name_hash:
+             flushed = (flushed or "") + pending_name_hash
+         if flushed and self._tts_norm_speech_id is not None:
+-            self.tts_request_queue.put((self._tts_norm_speech_id, flushed))
++            self._put_tts_text_chunk(self._tts_norm_speech_id, flushed)
+             self._remember_tts_sent_chunk(self._tts_norm_speech_id, flushed)
+             self._remember_pending_ai_voice_echo(self._tts_norm_speech_id, flushed)
+ 
+diff --git a/main_logic/core/turn.py b/main_logic/core/turn.py
+index de71270..e4b5cf9 100644
+--- a/main_logic/core/turn.py
++++ b/main_logic/core/turn.py
+@@ -269,6 +269,7 @@ class TurnMixin:
+                         logger.warning(f"⚠️ 发送TTS请求失败: {e}")
+                 else:
+                     # TTS未就绪，先缓存（规范化延迟到 _flush_tts_pending_chunks）
++                    self._capture_tts_voice_style(self.current_speech_id)
+                     self.tts_pending_chunks.append((self.current_speech_id, text))
+                     if len(self.tts_pending_chunks) == 1:
+                         logger.info("TTS未就绪，开始缓存文本chunk...")
+@@ -2383,6 +2384,7 @@ class TurnMixin:
+                         logger.warning(f"⚠️ 发送TTS请求失败: {e}")
+                 else:
+                     # TTS未就绪，先缓存（规范化延迟到 _flush_tts_pending_chunks）
++                    self._capture_tts_voice_style(turn_sid)
+                     self.tts_pending_chunks.append((turn_sid, text))
+                     if len(self.tts_pending_chunks) == 1:
+                         logger.info("TTS未就绪，开始缓存文本chunk...")
+@@ -3056,6 +3058,7 @@ class TurnMixin:
+                     if self.tts_ready:
+                         self._enqueue_tts_text_chunk(turn_id, clean)
+                     else:
++                        self._capture_tts_voice_style(turn_id)
+                         self.tts_pending_chunks.append((turn_id, clean))
+                     status = self._request_tts_done_locked()
+                     audio_queued = status in {"queued", "deferred", "already"}
+diff --git a/main_logic/tts_client/__init__.py b/main_logic/tts_client/__init__.py
+index 08830ca..6e8c3fa 100644
+--- a/main_logic/tts_client/__init__.py
++++ b/main_logic/tts_client/__init__.py
+@@ -283,8 +283,9 @@ def get_tts_worker(
+     *,
+     excluded_provider_keys=frozenset(),
+ ):
+-    """Resolve the existing route, optionally retaining a local voice backup."""
++    """Resolve the existing route, with opt-in local preference and backup."""
+     from .local_backup import resolve_local_backup
++    from .local_primary import resolve_local_primary
+     primary = _get_primary_tts_worker(
+         core_api_type, has_custom_voice, voice_id,
+         excluded_provider_keys=excluded_provider_keys,
+@@ -293,10 +294,18 @@ def get_tts_worker(
+         backup = get_config_manager().load_json_config('local_tts_backup.json', {})
+     except Exception:
+         backup = {}
+-    return resolve_local_backup(
++    primary = resolve_local_backup(
+         backup, voice_id, frozenset(excluded_provider_keys or ()),
+         primary, dummy_tts_worker,
+     )
++    try:
++        local_primary = get_config_manager().load_json_config('local_tts_primary.json', {})
++    except Exception:
++        local_primary = {}
++    return resolve_local_primary(
++        local_primary, voice_id, frozenset(excluded_provider_keys or ()),
++        primary, dummy_tts_worker,
++    )
+ 
+ 
+ def _get_primary_tts_worker(
+@@ -710,3 +719,5 @@ _tts_providers.register(_tts_providers.TTSProvider(
+ # Explicitly opted-in local backup identities, excluded from provider selection.
+ from .local_backup import register_local_backup_providers as _register_local_backup
+ _register_local_backup(_tts_providers, TTS_PROVIDER_REGISTRY)
++from .local_primary import register_local_primary_provider as _register_local_primary
++_register_local_primary(_tts_providers, TTS_PROVIDER_REGISTRY)
+diff --git a/main_logic/tts_client/local_primary.py b/main_logic/tts_client/local_primary.py
+new file mode 100644
+index 0000000..4c3b2b3
+--- /dev/null
++++ b/main_logic/tts_client/local_primary.py
+@@ -0,0 +1,94 @@
++"""Exact-voice local speech preference with the existing online failover."""
++from dataclasses import replace
++from functools import partial
++from urllib.parse import urlsplit
++
++from utils.joint_reply_emotion import clean_voice_style, reply_voice_style
++
++LOCAL_PRIMARY_PROVIDER = 'voxcpm_local_primary'
++VOICE_STYLE_SENTINEL = '__voice_style__'
++
++
++class _StyledRequestQueue:
++    """Consume private controls; preserve native text and interrupt protocol."""
++
++    def __init__(self, queue):
++        self.queue = queue
++        self.styles = {}
++
++    def get(self, *args, **kwargs):
++        while True:
++            sid, text = self.queue.get(*args, **kwargs)
++            if sid == VOICE_STYLE_SENTINEL:
++                if isinstance(text, dict):
++                    speech_id = text.get('speech_id')
++                    style = clean_voice_style(text.get('style'))
++                    if isinstance(speech_id, str) and speech_id and style:
++                        self.styles[speech_id] = style
++                        while len(self.styles) > 32:
++                            self.styles.pop(next(iter(self.styles)))
++                continue
++            if sid in {'__interrupt__', '__shutdown__'}:
++                self.styles.clear()
++            return sid, text
++
++    def transform(self, text, speech_id):
++        style = self.styles.get(speech_id) or reply_voice_style(None)
++        return f'({style}){text}'
++
++
++def _valid_config(config, voice_id):
++    if not isinstance(config, dict) or config.get('enabled') is not True:
++        return False
++    if not voice_id or config.get('source_voice_id') != voice_id:
++        return False
++    try:
++        url = urlsplit(str(config.get('base_url') or ''))
++        return bool(
++            url.scheme == 'http' and url.hostname in {'127.0.0.1', '::1'}
++            and url.port and not url.username and not url.password
++            and not url.query and not url.fragment and url.path == '/v1'
++            and isinstance(config.get('voice'), str) and config['voice'].strip()
++            and config.get('model') == 'voxcpm2'
++        )
++    except (TypeError, ValueError):
++        return False
++
++
++def voxcpm_primary_worker(request_queue, response_queue, api_key, voice_id, *,
++                          base_url, local_voice):
++    from .workers.openai import openai_tts_worker
++    styled_queue = _StyledRequestQueue(request_queue)
++    # Preserve native sentence ordering, progress receipts and cancellation.
++    # Reference-only speaker names avoid the pinned Omni continuation cache bug.
++    return openai_tts_worker(
++        styled_queue, response_queue, '', local_voice,
++        base_url=base_url, model='voxcpm2', voice=local_voice,
++        label='Local VoxCPM2', safe_error_provider=LOCAL_PRIMARY_PROVIDER,
++        extra_body_overrides={'stream': True, 'stream_format': 'audio'},
++        request_timeout=60.0, max_retries=0, pcm_sample_rate=48000,
++        text_transform=styled_queue.transform,
++    )
++
++
++def resolve_local_primary(config, voice_id, excluded, primary, silent_worker):
++    """Only replace the matching online free voice; exclusions end preference."""
++    if (primary[0] is silent_worker or LOCAL_PRIMARY_PROVIDER in excluded
++            or primary[2] not in {'free', 'free_local_backup'}
++            or not _valid_config(config, voice_id)):
++        return primary
++    return (partial(voxcpm_primary_worker, base_url=config['base_url'],
++                    local_voice=config['voice']), '', LOCAL_PRIMARY_PROVIDER)
++
++
++def register_local_primary_provider(registry, architectural_metadata):
++    registry.register(registry.TTSProvider(
++        key=LOCAL_PRIMARY_PROVIDER, kind='local', priority=1000,
++        capabilities=frozenset({'preset'}), is_selected=lambda ctx: False,
++        resolve=lambda ctx: None, fallback_on_failure=True,
++        tts_config_visible=False,
++    ))
++    architectural_metadata[LOCAL_PRIMARY_PROVIDER] = replace(
++        architectural_metadata['openai'], name=LOCAL_PRIMARY_PROVIDER,
++        notes='Opt-in local VoxCPM2 reference voice with native online failover',
++    )
+diff --git a/main_logic/tts_client/workers/openai.py b/main_logic/tts_client/workers/openai.py
+index 027e054..03a414a 100644
+--- a/main_logic/tts_client/workers/openai.py
++++ b/main_logic/tts_client/workers/openai.py
+@@ -95,6 +95,7 @@ def openai_tts_worker(
+     request_timeout=None,
+     max_retries=None,
+     pcm_sample_rate=OPENAI_TTS_PCM_SAMPLE_RATE,
++    text_transform=None,
+ ):
+     """OpenAI-compatible TTS: sentence input with a streamed PCM response."""
+ 
+@@ -149,7 +150,10 @@ def openai_tts_worker(
+         base_payload = build_openai_tts_payload("", effective_model, effective_voice)
+ 
+         async def synthesize(text: str, speech_id: str) -> None:
+-            request_kwargs = {**base_payload, "input": text}
++            # Only the HTTP payload is styled. Progress receipts and fallback
++            # ledgers must continue to acknowledge the original clean sentence.
++            request_text = text_transform(text, speech_id) if text_transform else text
++            request_kwargs = {**base_payload, "input": request_text}
+             if extra_body:
+                 request_kwargs["extra_body"] = extra_body
+             if not audio_api_key:
+diff --git a/tests/unit/test_joint_reply_emotion.py b/tests/unit/test_joint_reply_emotion.py
+index a3cb80b..2625faf 100644
+--- a/tests/unit/test_joint_reply_emotion.py
++++ b/tests/unit/test_joint_reply_emotion.py
+@@ -27,6 +27,25 @@ def test_every_chunk_boundary(label):
+         assert metadata['emotion'] == label
+ 
+ 
++def test_tone_description_is_private_at_every_chunk_boundary():
++    raw = '[neko_emotion:happy|轻快、带笑意，语速适中]\n谢谢你！'
++    for split in range(len(raw) + 1):
++        text, metadata = render([raw[:split], raw[split:]])
++        assert text == '谢谢你！'
++        assert metadata == {'mode': 'joint', 'emotion': 'happy',
++                            'voice_style': '轻快、带笑意，语速适中'}
++
++
++@pytest.mark.parametrize('style', ['a' * 33, '(happy)', '开心\n说话', '开心|大笑', ''])
++def test_invalid_tone_never_becomes_speech_or_carries_across_segments(style):
++    metadata = {'mode': 'joint', 'emotion': 'neutral'}
++    parser = JointReplyFilter(ToolLeakFilter(), metadata)
++    assert parser.feed('[neko_emotion:happy|轻快]好。')[0] == '好。'
++    parser.reset()
++    assert parser.feed(f'[neko_emotion:sad|{style}]没关系。')[0] == '没关系。'
++    assert metadata == {'mode': 'joint', 'emotion': 'sad'}
++
++
+ @pytest.mark.parametrize('raw, expected', [
+     ('普通回复。', '普通回复。'),
+     ('[neko_emotion:unknown]正常回复', '正常回复'),
+@@ -82,7 +101,7 @@ async def test_real_offline_loop_strips_metadata_before_callback_and_history(mon
+     monkeypatch.setattr('utils.token_tracker.TokenTracker.get_instance', MagicMock())
+     client = _client()
+     client.joint_reply_emotion = True
+-    client.script = [[_text('[neko_'), _text('emotion:happy]'), _text('\n找到铁矿了。')]]
++    client.script = [[_text('[neko_'), _text('emotion:happy|轻快、带笑意]'), _text('\n找到铁矿了。')]]
+     received = []
+ 
+     async def output(text, first, **kwargs):
+@@ -93,6 +112,7 @@ async def test_real_offline_loop_strips_metadata_before_callback_and_history(mon
+     assert ''.join(text for text, _, _ in received) == '找到铁矿了。'
+     assert received[0][1] is True
+     assert all(meta['emotion'] == 'happy' for _, _, meta in received)
++    assert all(meta['voice_style'] == '轻快、带笑意' for _, _, meta in received)
+     assert 'neko_emotion' not in str(client._conversation_history)
+     assert reply_emotion_context.get() is None
+ 
+diff --git a/tests/unit/test_local_voxcpm_primary.py b/tests/unit/test_local_voxcpm_primary.py
+new file mode 100644
+index 0000000..6ee3ebb
+--- /dev/null
++++ b/tests/unit/test_local_voxcpm_primary.py
+@@ -0,0 +1,210 @@
++"""Local VoxCPM2 opt-in routing and the native failure boundary."""
++from functools import partial
++import queue
++import threading
++from unittest.mock import Mock
++
++import pytest
++
++from main_logic.tts_client.local_primary import (
++    LOCAL_PRIMARY_PROVIDER, resolve_local_primary,
++)
++
++
++def online(*args):
++    pass
++
++
++def silent(*args):
++    pass
++
++
++@pytest.fixture
++def config():
++    return {'enabled': True, 'source_voice_id': 'online-yui',
++            'base_url': 'http://127.0.0.1:18041/v1',
++            'model': 'voxcpm2', 'voice': 'yui-local'}
++
++
++def resolve(config, *, voice='online-yui', provider='free', excluded=()):
++    return resolve_local_primary(config, voice, frozenset(excluded),
++                                 (online, 'online-secret', provider), silent)
++
++
++@pytest.mark.parametrize('change', [{}, {'enabled': False},
++    {'source_voice_id': 'different'}, {'model': 'other'}, {'voice': ''},
++    {'base_url': 'http://localhost:18041/v1'},
++    {'base_url': 'https://remote.example/v1'},
++    {'base_url': 'http://user:secret@127.0.0.1:18041/v1'},
++    {'base_url': 'http://127.0.0.1:18041/v1?secret=x'},
++    {'base_url': 'http://127.0.0.1:18041/v1#fragment'},
++    {'base_url': 'http://127.0.0.1:18041/other'},
++    {'base_url': 'http://127.0.0.1:bad/v1'}])
++def test_invalid_or_disabled_keeps_online(config, change):
++    config = {**config, **change} if change else {}
++    assert resolve(config) == (online, 'online-secret', 'free')
++
++
++def test_exact_matching_voice_only_and_explicit_providers_preserved(config):
++    assert resolve(config, voice='another') == (online, 'online-secret', 'free')
++    assert resolve(config, provider='custom') == (online, 'online-secret', 'custom')
++    assert resolve(config, provider='qwen') == (online, 'online-secret', 'qwen')
++    assert resolve_local_primary(config, 'online-yui', frozenset(),
++                                 (silent, None, None), silent) == (silent, None, None)
++
++
++def test_native_http_worker_streams_48khz_and_never_forwards_online_identity(config, monkeypatch):
++    from main_logic.tts_client.workers import openai as worker_module
++    captured = Mock()
++    monkeypatch.setattr(worker_module, 'openai_tts_worker', captured)
++    worker, key, provider = resolve(config)
++    assert isinstance(worker, partial)
++    assert (key, provider) == ('', LOCAL_PRIMARY_PROVIDER)
++    worker('requests', 'responses', 'must-not-leak', 'online-yui')
++    adapter, *args = captured.call_args.args
++    assert adapter.queue == 'requests'
++    assert args == ['responses', '', 'yui-local']
++    options = captured.call_args.kwargs
++    assert options['extra_body_overrides'] == {'stream': True, 'stream_format': 'audio'}
++    assert options['pcm_sample_rate'] == 48000
++    assert options['max_retries'] == 0
++    assert options['base_url'] == config['base_url']
++    assert options['safe_error_provider'] == LOCAL_PRIMARY_PROVIDER
++    assert options['text_transform']('你好。', 'sid') == '(自然、亲切，语速适中)你好。'
++
++
++def test_tone_is_per_speech_id_and_never_changes_native_receipts():
++    from main_logic.tts_client.local_primary import _StyledRequestQueue, VOICE_STYLE_SENTINEL
++    requests = queue.Queue()
++    adapter = _StyledRequestQueue(requests)
++    for sid, style in [('a', '轻快、带笑意'), ('b', '轻柔、语速稍慢')]:
++        requests.put((VOICE_STYLE_SENTINEL, {'speech_id': sid, 'style': style}))
++        requests.put((sid, '正常正文。'))
++        assert adapter.get() == (sid, '正常正文。')
++    assert adapter.transform('正文。', 'a') == '(轻快、带笑意)正文。'
++    assert adapter.transform('正文。', 'b') == '(轻柔、语速稍慢)正文。'
++    requests.put(('__interrupt__', None))
++    assert adapter.get() == ('__interrupt__', None)
++    assert adapter.styles == {}
++    requests.put((None, None))
++    assert adapter.get() == (None, None)
++
++
++def test_invalid_tone_and_many_turns_are_bounded():
++    from main_logic.tts_client.local_primary import _StyledRequestQueue, VOICE_STYLE_SENTINEL
++    requests = queue.Queue()
++    adapter = _StyledRequestQueue(requests)
++    for sid in map(str, range(40)):
++        requests.put((VOICE_STYLE_SENTINEL, {'speech_id': sid, 'style': '自然'}))
++    requests.put((VOICE_STYLE_SENTINEL, {'speech_id': 'bad', 'style': '(念出描述)'}))
++    requests.put(('40', '正文。'))
++    assert adapter.get() == ('40', '正文。')
++    assert len(adapter.styles) == 32 and 'bad' not in adapter.styles
++
++
++def test_pending_style_survives_context_exit_and_online_replay_stays_clean():
++    from main_logic.core import LLMSessionManager
++    from utils.joint_reply_emotion import reply_emotion_context
++    from main_logic.tts_client.local_primary import VOICE_STYLE_SENTINEL
++    mgr = LLMSessionManager.__new__(LLMSessionManager)
++    mgr.tts_request_queue = queue.Queue()
++    mgr._tts_active_provider_key = LOCAL_PRIMARY_PROVIDER
++    token = reply_emotion_context.set({'emotion': 'happy', 'voice_style': '温柔、鼓励'})
++    try:
++        mgr._capture_tts_voice_style('pending')
++    finally:
++        reply_emotion_context.reset(token)
++    mgr._put_tts_text_chunk('pending', '加油！')
++    assert mgr.tts_request_queue.get_nowait() == (VOICE_STYLE_SENTINEL, {
++        'speech_id': 'pending', 'style': '温柔、鼓励'})
++    assert mgr.tts_request_queue.get_nowait() == ('pending', '加油！')
++    mgr._tts_active_provider_key = 'free'
++    mgr._put_tts_text_chunk('pending', '加油！')
++    assert mgr.tts_request_queue.get_nowait() == ('pending', '加油！')
++    assert mgr.tts_request_queue.empty()
++
++
++def test_real_http_sentence_worker_styles_payload_but_acknowledges_clean_text(monkeypatch):
++    from tests.unit.test_openai_compatible_tts import _install_fake_openai, _wait_for_item
++    from main_logic.tts_client.local_primary import voxcpm_primary_worker, VOICE_STYLE_SENTINEL
++    clients = _install_fake_openai(monkeypatch, [b'\x01\x00' * 4800])
++    requests, responses = queue.Queue(), queue.Queue()
++    thread = threading.Thread(target=voxcpm_primary_worker,
++        args=(requests, responses, '', 'ignored'),
++        kwargs={'base_url': 'http://127.0.0.1:18041/v1', 'local_voice': 'yui-local'}, daemon=True)
++    thread.start()
++    try:
++        _wait_for_item(responses, lambda item: item == ('__ready__', True))
++        requests.put((VOICE_STYLE_SENTINEL, {'speech_id': 's1', 'style': '轻快、带笑意'}))
++        requests.put(('s1', '谢谢你！'))
++        requests.put((None, None))
++        receipt = _wait_for_item(responses, lambda item:
++            isinstance(item, tuple) and item[0] == '__tts_sentence_done__')
++        assert receipt == ('__tts_sentence_done__', 's1', '谢谢你！')
++        assert clients[0].create_calls[0]['input'] == '(轻快、带笑意)谢谢你！'
++        assert clients[0].create_calls[0]['model'] == 'voxcpm2'
++    finally:
++        requests.put(('__shutdown__', None))
++        thread.join(5)
++        assert not thread.is_alive()
++
++
++def test_local_failure_returns_online_and_never_reselects_local(config):
++    assert resolve(config, excluded={LOCAL_PRIMARY_PROVIDER}) == (online, 'online-secret', 'free')
++    assert resolve(config, provider='free_local_backup', excluded={LOCAL_PRIMARY_PROVIDER}) == (
++        online, 'online-secret', 'free_local_backup')
++
++
++@pytest.mark.parametrize('heard_prefix', [False, True])
++def test_native_fallback_replays_only_clean_unheard_suffix(config, monkeypatch, heard_prefix):
++    from main_logic import tts_client
++    from main_logic.core import LLMSessionManager
++    cm = Mock()
++    cm.load_json_config.side_effect = lambda name, default: config if name == 'local_tts_primary.json' else {}
++    monkeypatch.setattr(tts_client, 'get_config_manager', lambda: cm)
++    monkeypatch.setattr(tts_client, '_get_primary_tts_worker', lambda *a, **kw: (online, 'online-secret', 'free'))
++    mgr = LLMSessionManager.__new__(LLMSessionManager)
++    mgr._tts_active_provider_key = LOCAL_PRIMARY_PROVIDER
++    mgr._tts_excluded_provider_keys = frozenset()
++    mgr.tts_request_queue = queue.Queue()
++    mgr.current_speech_id = 's1'
++    mgr.tts_pending_chunks = [('stale', 'discard'), ('s1', 'later')]
++    mgr._tts_replay_speech_id = 's1'
++    mgr._tts_replay_chunks = [('s1', 'first.second.')]
++    mgr._tts_replay_sent_chunks = [('s1', 'second.' if heard_prefix else 'first.second.')]
++    mgr._tts_replay_done = True
++    mgr._tts_replay_audio_emitted = heard_prefix
++    mgr._tts_replay_progress_supported = True
++    mgr._tts_done_queued_for_turn = True
++    mgr._tts_done_pending_until_ready = False
++    mgr._tts_fallback_uses_default_voice = False
++    mgr._reset_tts_stream_normalizer = lambda: None
++    selected = []
++
++    def start(*, preserve_provider_exclusions):
++        assert preserve_provider_exclusions
++        result = tts_client.get_tts_worker('free', True, 'online-yui',
++            excluded_provider_keys=mgr._tts_excluded_provider_keys)
++        selected.append(result)
++        mgr._tts_active_provider_key = result[2]
++    mgr._start_tts_thread = start
++    assert mgr._activate_configured_tts_fallback('injected_failure')
++    assert selected == [(online, 'online-secret', 'free')]
++    assert mgr.tts_pending_chunks == [('s1', 'second.' if heard_prefix else 'first.second.'), ('s1', 'later')]
++    assert mgr._tts_excluded_provider_keys == {LOCAL_PRIMARY_PROVIDER}
++    assert mgr.tts_request_queue.get_nowait() == ('__shutdown__', None)
++
++
++def test_real_dispatch_preserves_backup_and_registers_sentence_replay(config, monkeypatch):
++    from main_logic import tts_client
++    from utils.tts import provider_registry
++    cm = Mock()
++    cm.load_json_config.side_effect = lambda name, default: config if name == 'local_tts_primary.json' else {}
++    monkeypatch.setattr(tts_client, 'get_config_manager', lambda: cm)
++    monkeypatch.setattr(tts_client, '_get_primary_tts_worker', lambda *a, **kw: (online, 'online-secret', 'free'))
++    assert tts_client.get_tts_worker('free', True, 'online-yui')[1:] == ('', LOCAL_PRIMARY_PROVIDER)
++    assert tts_client.get_tts_worker('free', True, 'online-yui',
++        excluded_provider_keys={LOCAL_PRIMARY_PROVIDER}) == (online, 'online-secret', 'free')
++    assert provider_registry.falls_back_on_failure(LOCAL_PRIMARY_PROVIDER)
++    assert not provider_registry.uses_configured_preset_voice(LOCAL_PRIMARY_PROVIDER)
++    assert tts_client.TTS_PROVIDER_REGISTRY[LOCAL_PRIMARY_PROVIDER].category == 'http_sentence'
+diff --git a/utils/joint_reply_emotion.py b/utils/joint_reply_emotion.py
+index 0d0b051..2dfcceb 100644
+--- a/utils/joint_reply_emotion.py
++++ b/utils/joint_reply_emotion.py
+@@ -15,7 +15,11 @@ JOINT_REPLY_INSTRUCTION = (
+     'For each spoken reply, output one short header first: '
+     '[neko_emotion:neutral], [neko_emotion:happy], [neko_emotion:sad], '
+     '[neko_emotion:angry], or [neko_emotion:surprised]. '
+-    'Choose your outward emotion, then immediately write the normal reply in '
++    'You may add a short Chinese voice description after | inside the header, '
++    'for example [neko_emotion:happy|轻快、带笑意，语速适中]. '
++    'Describe only tone, pace or delivery, at most 32 characters; no brackets, '
++    'newlines or dialogue in that description. Choose your outward emotion, '
++    'then immediately write the normal reply in '
+     'the requested language. This header is private UI metadata, not speech. '
+     'Do not describe it, repeat it inside the reply, or put it in tool arguments. '
+     'Native tool calls keep their original schema. No extra emotion-analysis call.'
+@@ -28,6 +32,29 @@ reply_emotion_context: ContextVar[dict | None] = ContextVar(
+ )
+ 
+ 
++def clean_voice_style(value):
++    """Accept a bounded description that cannot escape VoxCPM2's parentheses."""
++    if not isinstance(value, str):
++        return ''
++    value = value.strip()
++    if not value or len(value) > 32:
++        return ''
++    if any(ord(c) < 32 or c in '()（）[]【】{}<>|' for c in value):
++        return ''
++    return value
++
++
++def reply_voice_style(metadata):
++    """Use the same generation's description, with modest emotion defaults."""
++    metadata = metadata if isinstance(metadata, dict) else {}
++    return clean_voice_style(metadata.get('voice_style')) or {
++        'happy': '轻快、带笑意，语速适中',
++        'sad': '轻柔、略带低落，语速稍慢',
++        'angry': '认真、坚定，语速适中',
++        'surprised': '略带惊讶，语速适中',
++    }.get(metadata.get('emotion'), '自然、亲切，语速适中')
++
++
+ def joint_reply_scope(function):
+     """Own metadata in the coroutine, never in an async generator finalizer."""
+     @wraps(function)
+@@ -93,7 +120,11 @@ class JointReplyFilter:
+             else:
+                 label = candidate[len(HEADER):end]
+                 visible = candidate[end + 1:].lstrip('\r\n ')
++            label, _, style = label.partition('|')
+             self.metadata['emotion'] = label if label in EMOTIONS else 'neutral'
++            self.metadata.pop('voice_style', None)
++            if label in EMOTIONS and clean_voice_style(style):
++                self.metadata['voice_style'] = clean_voice_style(style)
+             self.trim_header_gap = not bool(visible)
+         else:
+             visible = self.pending

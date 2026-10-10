@@ -54,12 +54,14 @@ def arrival_metrics(events, sample_rate):
     }
 
 
-def synthesize(client, backend, text, voice, output, reference_text=None):
+def synthesize(client, backend, text, voice, output, reference_text=None, voice_style=None):
     port, model, rate = BACKENDS[backend]
     streaming = backend == 'voxcpm2'
     payload = {'model': model, 'voice': voice, 'input': text, 'response_format': 'pcm'}
     if streaming:
         payload.update(stream=True, stream_format='audio')
+        if voice_style:
+            payload['input'] = f'({voice_style}){text}'
         if reference_text:
             payload['ref_text'] = reference_text
     else:
@@ -110,7 +112,8 @@ def synthesize(client, backend, text, voice, output, reference_text=None):
         wav.setframerate(rate)
         wav.writeframes(audio)
     result = {
-        'input_chars': len(text), 'sample_rate': rate, 'stream_requested': streaming,
+        'input_chars': len(text), 'voice_style_chars': len(voice_style or ''),
+        'sample_rate': rate, 'stream_requested': streaming,
         'media_type': media_type,
         'conditioning': 'reference_and_transcript' if reference_text else 'reference_only',
         'total_s': total, 'audio_s': len(pcm) / rate, 'rtf': total / (len(pcm) / rate),
@@ -130,9 +133,13 @@ def main():
     parser.add_argument('--rounds', type=int, default=2)
     parser.add_argument('--timeout', type=float, default=240)
     parser.add_argument('--reference-text-file', type=Path)
+    parser.add_argument('--style', help='Optional VoxCPM2 tone/pace description, at most 32 characters')
     args = parser.parse_args()
     if not 1 <= args.rounds <= 5 or args.timeout <= 0:
         parser.error('rounds must be 1..5 and timeout positive')
+    if args.style and (args.backend != 'voxcpm2' or len(args.style) > 32
+                      or any(ord(c) < 32 or c in '()（）[]【】{}<>|' for c in args.style)):
+        parser.error('style requires VoxCPM2 and a bounded, bracket-free description')
     reference_text = None
     if args.reference_text_file:
         if args.backend != 'voxcpm2':
@@ -152,7 +159,7 @@ def main():
             for index, text in enumerate(SAMPLES[:1] if turn == 0 else SAMPLES):
                 result = synthesize(client, args.backend, text, voice,
                                     args.output_directory / f'round-{turn}-sample-{index+1}.wav',
-                                    reference_text=reference_text)
+                                    reference_text=reference_text, voice_style=args.style)
                 result.update(round=turn, sample=index + 1, warmup=(turn == 0), backend=args.backend)
                 results.append(result)
                 (args.output_directory / 'results.json').write_text(
