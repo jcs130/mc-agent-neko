@@ -231,6 +231,7 @@ export function collectGameState(agent, presentation = {}) {
             properties: presentation.windowProperties ?? {}, trades: presentation.trades ?? null } : null,
         activity: { action: agent.actions?.currentActionLabel ?? null, skill: bot._currentSkill ?? null,
             mobility: bot._mobility ?? null, digging: blockState(bot.targetDigBlock),
+            recovery: bot._surfaceSwimRecovery?.expiresAt > Date.now() ? bot._surfaceSwimRecovery : null,
             usingHeldItem: bot.usingHeldItem ?? null },
         server: { welcome: presentation.welcome, scoreboards,
             protection: bot.serverProtection?.snapshot() ?? null,
@@ -306,6 +307,10 @@ export class GameInformation {
         this.on(this.bot, 'serverProtection', value => this.event('protection', {
             text: value.text, source: 'server_permission_check',
             data: boundedGameValue(Object.fromEntries(Object.entries(value).filter(([key]) => key !== 'text')), 4000).value,
+        }));
+        this.on(this.bot, 'autonomyRecovery', value => this.event('recovery', {
+            text: '水边脱困持续没有进展，附近破坏操作已被服务器拒绝；临时交回规划器选择合法通道或可用脱困技能。',
+            source: 'measured_native_recovery', data: boundedGameValue(value, 1200).value,
         }));
         this.on(this.bot, 'title', (value, type = 'title') => {
             this.presentation.titles[type] = { text: gameText(value), observedAt: now() };

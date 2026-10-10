@@ -60,6 +60,20 @@ test('snapshot retains body, world, inventory, menu, scoreboard and loaded surro
     assert.equal(state.server.tablist.footer, '输入 /help 查看功能');
 });
 
+test('measured swim handoff is an expiring state and internal recovery event', t => {
+    const { agent, bot, information } = fixture(t);
+    const recovery = { type: 'protected-surface-swim-stall', observedAt: Date.now(), expiresAt: Date.now() + 90000,
+        noProgressSeconds: 45, next: 'Use an existing passage.' };
+    bot._surfaceSwimRecovery = recovery;
+    bot.emit('autonomyRecovery', recovery);
+    assert.equal(collectGameState(agent).activity.recovery.type, recovery.type);
+    const event = information.snapshot().recentEvents.at(-1);
+    assert.equal(event.kind, 'recovery');
+    assert.equal(event.source, 'measured_native_recovery');
+    recovery.expiresAt = Date.now() - 1;
+    assert.equal(collectGameState(agent).activity.recovery, null);
+});
+
 test('unparsed channel chat retains a known sender and never gains admin authority', async t => {
     const { bot, information } = fixture(t);
     bot.players.Friend_1.uuid = 'friend-uuid';

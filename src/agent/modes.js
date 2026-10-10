@@ -21,6 +21,7 @@ import { resolve as arbitrate, setBodyOwner, releaseBodyOwner, currentOwner as a
 import { foodInstinctsEnabled } from './framework/contracts.js';
 import { chooseHealingPotion, shouldAutoEat } from './framework/healing_reflex.js';
 import { observeStallContext, recoveryMovedEnough } from './stall_recovery.js';
+import { protectedSurfaceSwimHandoff, protectedWaterExitRoute } from './surface_swim_recovery.js';
 import { hasMeleeWeapon, threatCanReachBot } from './combat_policy.js';
 
 const FAMINE_FOOD_RE = /cooked_|_bread|^bread$|apple|golden_apple|carrot|potato|beef|porkchop|chicken|mutton|cod|salmon|melon_slice|sweet_berries|_stew|rabbit|baked_|rotten_flesh|spider_eye/;
@@ -1834,6 +1835,12 @@ const modes_list = [
                 }
             }
             if (feetWater || headWater) {
+                const yieldProtectedSwim = () => agent.hasExternalAutonomyOwner?.() && protectedSurfaceSwimHandoff(bot, {
+                    externalOwner: true, inWater: WSET.includes((bot.blockAt(bot.entity.position) || {}).name),
+                    headWater: WSET.includes((bot.blockAt(bot.entity.position.offset(0, 1, 0)) || {}).name),
+                    closeThreat: this.nearbyHostiles(bot).some(e => e.position && e.position.distanceTo(bot.entity.position) < 12),
+                });
+                if (yieldProtectedSwim()) return;
                 // ★封顶水牢让位 mobility ENTOMBED (worker-death 06-28 实锤 drowning@y48 coveredAbove=2):
                 //   bot 在封顶水牢(enc+水+头顶实心石), mobility ENTOMBED dig-out 挖穿干侧是唯一有效解,但
                 //   self_preservation(优先级>mobility)的 drowning branch 'heading for air'(游上找 air——封顶
@@ -2094,8 +2101,10 @@ const modes_list = [
                         // consume stray interrupts for up to 8s (well under the 10s force-kill budget),
                         // then honor them. Death and live supervisor-cancels always break immediately.
                         const _swimT0 = Date.now();
+                        let protectedRoute = null, protectedRouteAt = 0;
                         let boatTried = false;   // ★C350: 每次 execute 至多一次上船尝试 (闭包局部, 无模块态)
                         for (let i = 0; i < 80; i++) {
+                            if (yieldProtectedSwim()) { _tr('yield: protected surface escape made no progress; external planner owns next step'); break; }
                             if (bot.interrupt_code || bot.health <= 0) {
                                 const _oxyCrit = bot.oxygenLevel !== undefined && bot.oxygenLevel <= 8;
                                 const _cancelWin = !!(bot._supervisorCancelAt && Date.now() - bot._supervisorCancelAt < 30000);
@@ -2108,6 +2117,20 @@ const modes_list = [
                                 }
                             }
                             if (!inWaterNow() && bot.entity.onGround) { _tr(`exit@${i} OUT ok`); break; }
+                            if (agent.hasExternalAutonomyOwner?.()) {
+                                if (Date.now() - protectedRouteAt >= 1000) {
+                                    protectedRoute = protectedWaterExitRoute(bot); protectedRouteAt = Date.now();
+                                }
+                                if (protectedRoute) {
+                                    const next = protectedRoute.next.offset(0.5, 1.6, 0.5);
+                                    try { await bot.lookAt(next, true); } catch (e) {}
+                                    bot.setControlState('forward', true); bot.setControlState('sprint', true);
+                                    bot.setControlState('jump', true);
+                                    if (i % 10 === 0) _tr(`protected water exit: ${protectedRoute.steps} known-passable steps`);
+                                    await new Promise(r => setTimeout(r, 220));
+                                    continue;
+                                }
+                            }
                             if (i % 10 === 0) _tr(`i=${i} pos=${Math.floor(bot.entity.position.x)},${Math.floor(bot.entity.position.y)},${Math.floor(bot.entity.position.z)} stall=${stall}`);
                             const target = findShore();
                             let stuck = false;
@@ -5806,7 +5829,8 @@ const modes_list = [
                         const hasPick0 = (() => { try { return bot.inventory.items().some(i => /_pickaxe$/.test(i.name || '')); } catch (e) { return false; } })();
                         const hard0 = (b) => /stone|deepslate|terracotta|andesite|diorite|granite|tuff|_ore$|obsidian|cobble|basalt|blackstone|netherrack|end_stone|prismarine|brick|concrete|amethyst|copper/.test((b && b.name) || '');
                         const keep0 = (b) => /bedrock|barrier|chest|furnace|crafting_table|_bed$|door|sign|portal|spawner|enchanting/.test((b && b.name) || '');
-                        if (now - this._chStuckSince > 900 && now - (this._chLastBreakAt || 0) > 700 && !keep0(cap0) && (!hard0(cap0) || hasPick0)) {
+                        if (now - this._chStuckSince > 900 && now - (this._chLastBreakAt || 0) > 700 && !keep0(cap0) && (!hard0(cap0) || hasPick0)
+                            && !bot.serverProtection?.isDenied('break', cap0.position)) {
                             this._chLastBreakAt = now; this._chDigBusy = true;
                             const ob0 = cap0;
                             (async () => { try { await bot.dig(ob0, true); } catch (e) {} finally { this._chDigBusy = false; this._chStuckSince = 0; } })();
@@ -5889,7 +5913,7 @@ const modes_list = [
                         const _walkFoot = _footAhead && _footAhead.boundingBox !== 'block' && !/water|lava/.test(_footAhead.name || '');
                         if (_floorAhead && _floorAhead.boundingBox === 'block' && _walkFoot && breakable(_headAhead)) obstr = _headAhead;
                     }
-                    if (obstr) {
+                    if (obstr && !bot.serverProtection?.isDenied('break', obstr.position)) {
                         this._digBusy = true;
                         const ob = obstr;
                         (async () => {
