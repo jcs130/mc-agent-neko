@@ -203,3 +203,22 @@ test('legacy review marks without confirmed writeback are reopened for diagnosis
     assert.equal(old.reviewed['T-0003'], 'old-revision');
     assert.equal(migrateLedger(migrated), migrated);
 });
+
+test('Chinese structured reports have a bounded per-role budget with no provider cap below it', async () => {
+    const { supervisorRoleOptions } = await import('../services/dsh-supervisor/core.mjs');
+    const rows = makeProfile({ appPath: 'app.mjs', runtimeRoot: 'state', nativeRoot: 'mc' }).flatMap(x => x.insert ?? [x]);
+    const provider = rows.find(x => x.id === 'llm-pi-ai').config.providers['neko-local'];
+    // The actual 512-token response ended during the Unicode-escaped summary,
+    // before required issues could be serialized; a two-issue report needs headroom.
+    assert.ok(provider.models[0].maxTokens >= 2048, 'the provider must not cap the observer at 512');
+    for (const [role, minimum] of [['observer', 2048], ['diagnoser', 1024], ['reviewer', 1536]]) {
+        const options = supervisorRoleOptions(role);
+        assert.equal(options.provider, 'neko-local');
+        assert.equal(options.reasoningEffort, 'off');
+        assert.equal(options.model, 'qwen3.8-flash-next-iq3_xxs');
+        assert.ok(options.maxTokens >= minimum && options.maxTokens <= 2048);
+        assert.ok(provider.defaultMaxTokens >= options.maxTokens);
+        assert.ok(provider.models[0].maxTokens >= options.maxTokens);
+    }
+    assert.throws(() => supervisorRoleOptions('unbounded-worker'));
+});

@@ -63,3 +63,13 @@ On-site follow-up: the first real audit confirmed the repaired publication path 
 - [ ] Run targeted and full regressions; review the explicit diff and commit only the planned files.
 - [ ] Gracefully replace only this monitoring service. Observe real role completions, refreshed evidence, ticket API writes and unchanged game/model process identities.
 - [ ] Push to `contribution-fork`, record inspection proof and report the actual result and remaining limits.
+
+### Task 4: Live output-budget failure
+
+The 10:17 observer hit its 512-token output cap during a Unicode-escaped Chinese summary, before serializing required fields. Preserve the failed acceptance record, use bounded role budgets (2048/1024/1536), shorten the requested prose, and synchronize provider limits. Keep non-thinking, serial admission and the five-minute cooldown. Treat detector/ticket conclusions as hypotheses rather than independent proof.
+
+- [x] Reproduce the insufficient provider budget with a failing regression, then pass the targeted gate (41 tests).
+- [ ] Run full regressions, commit, and replace only the owned monitoring processes.
+- [ ] Observe three actual role completions, candidate/actionability validation and confirmed ticket writeback; record the final runtime proof.
+
+Process continuity means this maintenance does not stop game or model processes. Separate model-process changes observed at 10:03 and around 10:23 must be recorded truthfully; they are not evidence that all process identities stayed unchanged.
