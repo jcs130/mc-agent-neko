@@ -61,6 +61,8 @@ inventory, survival HUD, chat and a minimap for the existing bot. Local and LAN
 devices can watch concurrently. The frontend comes from
 [mc-visual-console](https://github.com/jcs130/mc-visual-console), with a bundled
 Mineflayer host adapter. See [setup and resource generation](docs/modern-viewer.md).
+The shared content bridge also supplies server particles, map images and native
+TextDisplay bubbles; the versioned resources include original Chinese fonts.
 The modern renderer currently supports Minecraft Java 1.20.6; it is disabled by default.
 
 ## Project N.E.K.O. integration

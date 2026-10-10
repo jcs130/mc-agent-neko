@@ -5,6 +5,12 @@ or dungeon 2.5D (`/dungeon/`) view. The picture includes inventory, survival HUD
 received chat, a minimap and the renderer's game effects. It observes the existing
 bot; it does not create another Minecraft login or run another LLM.
 
+The October 2026 integration also relays original server particles, map pixels,
+item-frame/held maps and native TextDisplay entities through the same bot
+connection. Chinese TextDisplay glyphs use the original version-matched font
+assets. Dungeon terrain visibility follows the upstream avatar-occlusion
+logic. These rendering features do not add LLM requests or game commands.
+
 The optional modern renderer currently requires **Node.js 22** and **Minecraft
 Java 1.20.6**. The default configuration keeps visualization disabled and retains
 the Prismarine viewer option. Modern viewer startup failures are logged without
@@ -15,36 +21,43 @@ preventing the game agent from initializing.
 The frontend is [jcs130/mc-visual-console](https://github.com/jcs130/mc-visual-console),
 an MIT-licensed project with portable browser source and offline resource tools.
 The host adapter is included in this repository; generate browser code and
-Minecraft resources from the [pinned renderer source](https://github.com/jcs130/mc-visual-console/tree/ca958cb26fed0c459e226f6bc6b97308f50203af/packages/modern-viewer/renderer-src).
+Minecraft resources from the [pinned renderer source](https://github.com/jcs130/mc-visual-console/tree/06ca0f166675d67a69422a0479b3aeb4d76604fd/packages/modern-viewer/renderer-src).
 Its revision, source tree and license are recorded in
 [`renderer-source.json`](../src/agent/vision/modern/renderer-source.json) and
 [`RENDERER_LICENSE`](../src/agent/vision/modern/RENDERER_LICENSE).
 The pinned runtime source and build tools match the renderer accompanying this
 host adapter. The standalone frontend needs no Cortico checkout or service.
-The following commands work in PowerShell or a
-POSIX shell; replace the two absolute paths with your own client JAR and output
-directory. Use the same output directory throughout.
+The shared repository includes a hash-checked Java 1.20.6 resource pack. The
+following commands work in PowerShell or a POSIX shell; replace the output path
+with a new directory for your deployment. This prepares the generic preset,
+including particle/map resources and the original Chinese font ZIP.
 
 ```sh
 git clone https://github.com/jcs130/mc-visual-console.git mc-visual-console
-git -C mc-visual-console checkout ca958cb26fed0c459e226f6bc6b97308f50203af
-cd mc-visual-console/packages/modern-viewer/renderer-src
-npm ci
-python -m pip install -r tools/requirements.txt
-python tools/export-minecraft-viewer-assets.py "/path/to/1.20.6.jar" "/path/to/viewer-assets"
-node tools/build-minecraft-viewer-client.mjs . "/path/to/viewer-assets"
-node tools/verify-minecraft-viewer-assets.mjs "/path/to/1.20.6.jar" "/path/to/viewer-assets"
+git -C mc-visual-console checkout 06ca0f166675d67a69422a0479b3aeb4d76604fd
+cd mc-visual-console
+npm ci --prefix packages/modern-viewer/renderer-src
+node tools/prepare-viewer-assets.mjs java-1.20.6 "/path/to/viewer-assets-new"
 ```
 
-Use your installed Minecraft 1.20.6 **client** JAR. The output contains
+The output contains
 `viewer-client.json`, `dist/`, `public/` and `render-assets/`; these generated
-resources are not committed here. The exporter records the JAR hash and the
-builder records the browser bundle hash. The host checks that the manifests,
+resources are not committed here. `viewer-assets.json` records the shared pack
+manifest and original client JAR hashes; `viewer-client.json` records the browser
+bundle and content/font hashes. The host checks that the manifests,
 protocol version and generated bundle agree before accepting viewers.
-Use the default generic build shown above. The frontend's
-[Socket.IO contract](https://github.com/jcs130/mc-visual-console/blob/ca958cb26fed0c459e226f6bc6b97308f50203af/packages/modern-viewer/renderer-src/SOCKET_PROTOCOL.md)
+Keep the same Minecraft version, preset and sound choice when updating an
+existing deployment. Building the source does not update a previously copied
+runtime directory: switch the configured directory, reload the viewer and
+browser, and compare the served `/index.js` bytes with the recorded bundle hash.
+Keep the previous directory for rollback. The frontend's
+[Socket.IO contract](https://github.com/jcs130/mc-visual-console/blob/06ca0f166675d67a69422a0479b3aeb4d76604fd/packages/modern-viewer/renderer-src/SOCKET_PROTOCOL.md)
 documents the game state consumed by the browser; the bundled adapter supplies
 that stream from the existing bot.
+
+For a resource export from your own installed client, follow the upstream
+[resource and TextDisplay guide](https://github.com/jcs130/mc-visual-console/blob/06ca0f166675d67a69422a0479b3aeb4d76604fd/packages/modern-viewer/renderer-src/docs/text-display-bubbles.md).
+A JAR-only block export does not provide the complete launcher font resources.
 
 ## Enable local viewing
 
@@ -94,8 +107,10 @@ the bot is moving or that browser rendering has succeeded.
 
 ## Optional game sound
 
-Sound requires matching launcher resources in addition to the client JAR. From
-the same renderer source directory, run:
+Sound is optional and stays disabled when matching resources are absent. To
+include the shared pack's sounds, add `--sounds` to the preparation command.
+Alternatively, export your matching launcher cache from the renderer source
+directory:
 
 ```sh
 node tools/export-minecraft-viewer-sounds.mjs "/path/to/versions/1.20.6/1.20.6.json" "/path/to/launcher/assets" "/path/to/viewer-assets"
@@ -103,8 +118,9 @@ node tools/export-minecraft-viewer-sounds.mjs "/path/to/versions/1.20.6/1.20.6.j
 
 The exporter reads the local launcher cache. The renderer disables numbered
 sound events when the matching registry is missing. Browser interaction is
-required to allow playback. Cortico speech bubbles, host speech relays and
-livestream overlays are excluded from this adapter.
+required to allow playback. Cortico speech overlays, host speech relays and
+livestream overlays are excluded from this adapter. Native server TextDisplay
+entities remain visible; they are a separate game protocol feature.
 
 ## Validation and maintenance
 
@@ -113,7 +129,7 @@ client JAR or GPU. Their synthetic resources exercise the host and socket
 transport; they do not validate browser pixels.
 
 ```sh
-node --test test/browser_viewer.test.mjs test/modern_viewer.test.mjs test/viewer_lan_proxy.test.mjs
+node --test test/browser_viewer.test.mjs test/modern_viewer.test.mjs test/viewer_lan_proxy.test.mjs test/modern_vision_capture.test.mjs
 ```
 
 With a real agent online and four free viewing slots, check streaming and slot
@@ -125,10 +141,11 @@ node scripts/verify-modern-viewer-sessions.mjs http://192.168.1.20:3000
 ```
 
 The vendored `src/agent/vision/modern/host.mjs` is bundled from MIT-licensed
-Cortico sources. Its original license and the exact revision, input files and
-SHA-256 are stored beside it in `LICENSE` and `source.json`. This host provenance
-is separate from the frontend project's provenance. To rebuild the host, prepare
-the recorded Cortico checkout:
+Cortico sources, plus the shared renderer's content bridge and bounded asset
+server. `LICENSE` and `source.json` record Cortico's revision and inputs;
+`RENDERER_LICENSE`, `renderer-source.json` and the nested `source.json.renderer`
+record the shared source revision, tree and host inputs. The bundle hash covers
+the combined result. To rebuild the host, prepare the recorded Cortico checkout:
 
 ```sh
 git clone https://github.com/jcs130/Cortico.git cortico-viewer-source
@@ -140,11 +157,22 @@ pnpm install --frozen-lockfile
 Then return to this repository's root and run:
 
 ```sh
-node scripts/import-modern-viewer.mjs "/path/to/cortico-viewer-source"
+node scripts/import-modern-viewer.mjs "/path/to/cortico-viewer-source" "/path/to/mc-visual-console"
 ```
 
 Review the source revision and regenerated diff together. The importer removes
 the speech/stream overlay and makes viewing slots configurable; it fails if the
-expected upstream transformation points have changed. When updating either
-source, check the frontend's Socket.IO contract against the host, update the
-frontend pin in `renderer-source.json`, and rebuild and verify browser assets.
+expected upstream transformation points have changed. Both source checkouts
+must have clean tracked input files. The importer records both pins automatically,
+subscribes each accepted viewer to one shared content bridge, and releases it on
+close or bind failure. It removes the legacy particle listener to avoid rendering
+one packet twice.
+
+When updating either source, check the frontend's Socket.IO contract against the
+host, regenerate the host, and rebuild and verify browser assets. Keep source
+updates separate from unrelated Cortico gameplay changes. See the
+[October 10 integration verification](viewer-upstream-update-2026-10-10.md).
+
+Map decorations, native particle physics parity, Java pixel parity and arbitrary
+modded entity rendering are not claimed. The integration tests use synthetic
+protocol packets; real server effects need observation in that server session.

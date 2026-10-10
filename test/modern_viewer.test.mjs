@@ -46,6 +46,7 @@ async function assets(t) {
         'public/blocksStates/1.20.6.json': '{}', 'public/textures/1.20.6.png': '',
         'render-assets/blockStatesModels.json': '{}', 'render-assets/blocksAtlases.json': '{}',
         'render-assets/itemsAtlases.json': '{}', 'render-assets/painting-records.json': '[]',
+        'public/fonts/1.20.6/unifont.zip': Buffer.from([0x50, 0x4b, 3, 4]),
     };
     for (const [relative, value] of Object.entries(files)) {
         const file = path.join(root, relative);
@@ -71,6 +72,17 @@ function connect(t, base, socketPath = '/socket.io/', busy = false) {
         const timer = setTimeout(() => reject(new Error(`No ${ready} from ${base}${socketPath}`)), 4000);
         socket.once('connect_error', error => { clearTimeout(timer); reject(error); });
         socket.once(ready, value => { clearTimeout(timer); resolve({ socket, value }); });
+    });
+}
+
+function contentEvent(socket, name, predicate = () => true) {
+    return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => { socket.off(name, receive); reject(new Error(`Missing ${name}`)); }, 2000);
+        function receive(value) {
+            if (!predicate(value)) return;
+            clearTimeout(timer); socket.off(name, receive); resolve(value);
+        }
+        socket.on(name, receive);
     });
 }
 
@@ -130,4 +142,66 @@ test('vendored host matches its recorded source hash', async () => {
     const metadata = JSON.parse(await readFile(new URL('../src/agent/vision/modern/source.json', import.meta.url)));
     const host = await readFile(new URL('../src/agent/vision/modern/host.mjs', import.meta.url));
     assert.equal(sha256(host), metadata.bundleSha256);
+});
+
+test('both views receive same-connection maps, native particles and private text, then release observers', { timeout: 12000 }, async t => {
+    const root = await assets(t), port = await availablePort(), bot = fakeBot();
+    bot._client.write = () => assert.fail('viewer content must not write protocol packets');
+    const handle = await startModernViewer(bot, { port, assetsDir: root, maxSessions: 3 });
+    t.after(() => handle.close());
+    const base = `http://127.0.0.1:${port}`;
+    const first = (await connect(t, base)).socket;
+    const third = (await connect(t, base, '/third/socket.io/')).socket;
+    const mapReplies = [first, third].map(socket => contentEvent(socket, 'mapPixels'));
+    bot._client.emit('map', { itemDamage: 7, scale: 0, locked: false, columns: 1, rows: 1,
+        x: 0, y: 0, data: Buffer.from([12]) });
+    for (const reply of await Promise.all(mapReplies)) {
+        assert.equal(reply.mapId, 7); assert.equal(reply.epoch, 0);
+        assert.equal(reply.data[0], 12);
+        if (reply.snapshot) {
+            assert.equal(reply.data.length, 128 * 128);
+            assert.equal(reply.coverage[0] & 1, 1, 'coalesced replay must retain actual pixel coverage');
+        } else assert.equal(reply.data.length, 1);
+    }
+    const textReplies = [first, third].map(socket => contentEvent(socket, 'textDisplay',
+        value => value.runs?.some(run => run.text === '观察夹具气泡')));
+    bot._client.emit('spawn_entity', { entityId: 70, type: bot.registry.entitiesByName.text_display.id,
+        x: 1, y: 67, z: 0, yaw: 0, pitch: 0 });
+    bot._client.emit('entity_metadata', { entityId: 70, metadata: [{ key: 23,
+        value: { type: 'compound', value: { text: { type: 'string', value: '观察夹具气泡' } } } }] });
+    for (const reply of await Promise.all(textReplies)) assert.equal(reply.id, 70);
+    const deleted = [first, third].map(socket => contentEvent(socket, 'textDisplay', value => value.delete));
+    bot._client.emit('entity_destroy', { entityIds: [70] });
+    for (const reply of await Promise.all(deleted)) assert.equal(reply.id, 70);
+    const legacyParticles = [];
+    first.on('presentationEvent', value => { if (value.kind === 'particle') legacyParticles.push(value); });
+    const batches = [first, third].map(socket => contentEvent(socket, 'particleBatch'));
+    bot._client.emit('world_particles', { longDistance: false, x: 1, y: 65, z: 0,
+        offsetX: 0, offsetY: 0, offsetZ: 0, velocityOffset: 0, amount: 1,
+        particle: { type: 'flame' } });
+    for (const reply of await Promise.all(batches)) {
+        assert.equal(reply.events.length, 1); assert.equal(reply.events[0].name, 'flame');
+    }
+    assert.deepEqual(legacyParticles, [], 'raw particles must have a single rendering path');
+    const resets = [first, third].map(socket => contentEvent(socket, 'contentReset'));
+    bot.emit('respawn');
+    for (const reply of await Promise.all(resets)) assert.equal(reply.epoch, 1);
+    const font = await fetch(base + '/fonts/1.20.6/unifont.zip');
+    assert.equal(font.status, 200); assert.equal(font.headers.get('content-type'), 'application/zip');
+    assert.deepEqual(Buffer.from(await font.arrayBuffer()), Buffer.from([0x50, 0x4b, 3, 4]));
+    await handle.close();
+    for (const event of ['map', 'world_particles', 'entity_metadata', 'entity_destroy']) {
+        assert.equal(bot._client.listenerCount(event), 0, `${event} observer leaked`);
+    }
+});
+
+test('failed listener startup releases the shared content bridge', async t => {
+    const root = await assets(t), port = await availablePort();
+    const owner = await startModernViewer(fakeBot(), { port, assetsDir: root });
+    t.after(() => owner.close());
+    const rejected = fakeBot();
+    await assert.rejects(startModernViewer(rejected, { port, assetsDir: root }), { code: 'EADDRINUSE' });
+    for (const event of ['map', 'world_particles', 'entity_metadata', 'entity_destroy']) {
+        assert.equal(rejected._client.listenerCount(event), 0, `${event} observer leaked after bind failure`);
+    }
 });

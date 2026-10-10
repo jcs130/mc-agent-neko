@@ -2,7 +2,7 @@
   "repository": "https://github.com/jcs130/Cortico",
   "revision": "f0db612ce5075287330ab3e095ffa449c6e8e71c",
   "entry": "src/worlds/minecraft/modern-viewer.ts",
-  "bundleSha256": "e06e83949158b0497477d4e0c12d13308831a9215bee636a943bdeed9a91d3a3",
+  "bundleSha256": "d1ae8b6d88582ff427c9d768887515f94cc4755c850478380b7e67988931017c",
   "inputs": [
     "src/worlds/minecraft/viewer-biome.ts",
     "src/worlds/minecraft/viewer-light.ts",
@@ -26,7 +26,6 @@
     "src/worlds/minecraft/viewer-sound-registry.ts",
     "src/worlds/minecraft/viewer-fishing.ts",
     "src/worlds/minecraft/viewer-page-assets.ts",
-    "src/worlds/minecraft/viewer-asset-server.ts",
     "src/core/types.ts",
     "src/core/log-context.ts",
     "src/protocol/open-responses/context.ts",
@@ -44,9 +43,26 @@
     "src/worlds/minecraft/viewer-player-skin.ts",
     "src/worlds/minecraft/modern-viewer.ts"
   ],
+  "renderer": {
+    "repository": "https://github.com/jcs130/mc-visual-console",
+    "revision": "06ca0f166675d67a69422a0479b3aeb4d76604fd",
+    "directory": "packages/modern-viewer/renderer-src",
+    "gitTree": "044dcc3518de1d600a709da91e5d94dbe991ba24",
+    "minecraftVersion": "1.20.6",
+    "socketProtocol": "packages/modern-viewer/renderer-src/SOCKET_PROTOCOL.md",
+    "license": "MIT",
+    "licenseFile": "RENDERER_LICENSE",
+    "inputs": [
+      "packages/modern-viewer/renderer-src/host/text-display.mjs",
+      "packages/modern-viewer/renderer-src/host/viewer-content.mjs",
+      "packages/modern-viewer/renderer-src/host/viewer-asset-server.mjs"
+    ]
+  },
   "changes": [
     "Remove the host speech and livestream overlay; retain game rendering and sound.",
     "Make concurrent viewing configurable (default 8, range 1-16); keep the separate capture limit.",
-    "Report Minecraft connection health separately from the renderer HTTP listener."
+    "Report Minecraft connection health separately from the renderer HTTP listener.",
+    "Observe original particle, map and TextDisplay packets through the shared renderer bridge; remove the duplicate legacy particle path.",
+    "Serve original font ZIP resources through the shared bounded asset server."
   ]
 }

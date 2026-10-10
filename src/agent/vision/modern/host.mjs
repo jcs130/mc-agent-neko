@@ -1,3 +1,506 @@
+// ../neko-mc-trial/mc-visual-console-contrib-source/packages/modern-viewer/renderer-src/host/text-display.mjs
+var integer = (n, min, max) => Number.isInteger(n) && n >= min && n <= max;
+var vector = (v, fallback) => v === void 0 ? fallback : v && ["x", "y", "z"].every((k) => Number.isFinite(v[k]) && Math.abs(v[k]) <= 64) ? { x: v.x, y: v.y, z: v.z } : null;
+var colors = Object.freeze({ black: "#000000", dark_blue: "#0000aa", dark_green: "#00aa00", dark_aqua: "#00aaaa", dark_red: "#aa0000", dark_purple: "#aa00aa", gold: "#ffaa00", gray: "#aaaaaa", dark_gray: "#555555", blue: "#5555ff", green: "#55ff55", aqua: "#55ffff", red: "#ff5555", light_purple: "#ff55ff", yellow: "#ffff55", white: "#ffffff" });
+function textDisplayRuns(input) {
+  let nodes = 0, length = 0;
+  function nbt(value, depth = 0) {
+    if (++nodes > 512 || depth > 16) throw Error("component_budget");
+    if (!value || typeof value !== "object") return value;
+    if (value.type === "compound") return Object.fromEntries(Object.entries(value.value).map(([k, v]) => [k, nbt(v, depth + 1)]));
+    if (value.type === "list") return value.value.value.map((v) => nbt({ type: value.value.type, value: v }, depth + 1));
+    if (["string", "byte", "int", "float", "double"].includes(value.type)) return value.value;
+    if (Array.isArray(value)) return value.map((v) => nbt(v, depth + 1));
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, nbt(v, depth + 1)]));
+  }
+  const runs = [];
+  function visit(value, color = "#ffffff", depth = 0) {
+    if (++nodes > 512 || depth > 16) throw Error("component_budget");
+    if (typeof value === "string") {
+      length += [...value].length;
+      if (length > 512) throw Error("text_budget");
+      if (value) runs.push({ text: value, color });
+      return;
+    }
+    if (Array.isArray(value)) {
+      for (const v of value) visit(v, color, depth + 1);
+      return;
+    }
+    if (!value || typeof value !== "object") throw Error("component_type");
+    if (["translate", "selector", "score", "nbt", "keybind"].some((k) => Object.hasOwn(value, k)) || value.obfuscated || value.bold || value.italic || value.underlined || value.strikethrough || value.font && value.font !== "minecraft:default") throw Error("component_unsupported");
+    if (value.color !== void 0) {
+      color = colors[value.color] ?? (/^#[0-9a-f]{6}$/i.test(value.color) ? value.color : null);
+      if (!color) throw Error("component_color");
+    }
+    if (Object.hasOwn(value, "text")) visit(value.text, color, depth + 1);
+    if (value.extra !== void 0) {
+      if (!Array.isArray(value.extra)) throw Error("component_extra");
+      for (const v of value.extra) visit(v, color, depth + 1);
+    }
+  }
+  try {
+    let value = nbt(input);
+    if (typeof value === "string" && value.length > 16384) return null;
+    if (typeof value === "string" && /^[\[{]/.test(value.trim())) {
+      try {
+        value = JSON.parse(value);
+      } catch {
+      }
+    }
+    visit(value);
+    if (runs.some((r) => /[\u0000-\u0008\u000b-\u001f\u007f\u202a-\u202e\u2066-\u2069]/u.test(r.text))) return null;
+    return runs;
+  } catch {
+    return null;
+  }
+}
+function textDisplayMetadataKeys(registry) {
+  const keys = registry?.entitiesByName?.text_display?.metadataKeys;
+  return Array.isArray(keys) && keys[23] === "text" && keys[27] === "style_flags" ? keys : null;
+}
+function decodeTextDisplay(entity, registry) {
+  const keys = textDisplayMetadataKeys(registry);
+  if (!keys || entity?.name !== "text_display" || !integer(entity.id, 0, 2147483647)) return null;
+  const position2 = entity.position;
+  if (!position2 || !["x", "y", "z"].every((k) => Number.isFinite(position2[k]))) return null;
+  const values = entity.metadata ?? {};
+  const get = (key, fallback) => values[keys.indexOf(key)] ?? fallback;
+  const runs = textDisplayRuns(get("text", ""));
+  const translation = vector(get("translation"), { x: 0, y: 0, z: 0 }), scale = vector(get("scale"), { x: 1, y: 1, z: 1 });
+  const identity = (v) => !v || v.x === 0 && v.y === 0 && v.z === 0 && (v.w === 1 || v.w === -1);
+  const flags = get("style_flags", 0), billboard = get("billboard_render_constraints", 0);
+  const lineWidth = get("line_width", 200), opacity = get("text_opacity", -1), background = get("background_color", 1073741824);
+  const viewRange = get("view_range", 1), teleportTicks = get("pos_rot_interpolation_duration", 0);
+  const reason = !runs ? "text-component" : !identity(get("left_rotation")) || !identity(get("right_rotation")) ? "rotation" : get("transformation_interpolation_duration", 0) !== 0 ? "transform-interpolation" : flags & ~31 ? "style-flags" : null;
+  if (!integer(flags, -128, 255) || !integer(billboard, 0, 3) || !integer(lineWidth, 1, 2048) || !integer(opacity, -128, 255) || !integer(background, -2147483648, 4294967295) || !translation || !scale || !Number.isFinite(viewRange) || viewRange < 0 || viewRange > 4 || !integer(teleportTicks, 0, 59)) return null;
+  return {
+    schemaVersion: 1,
+    id: entity.id,
+    uuid: entity.uuid,
+    name: "text_display",
+    position: { ...position2 },
+    yaw: Number.isFinite(entity.yaw) ? entity.yaw : Math.PI,
+    pitch: Number.isFinite(entity.pitch) ? entity.pitch : 0,
+    runs: runs ?? [],
+    translation,
+    scale,
+    billboard,
+    flags: flags & 255,
+    lineWidth,
+    opacity: opacity & 255,
+    background: background >>> 0,
+    viewRange,
+    teleportTicks,
+    invisible: (get("shared_flags", 0) & 32) !== 0,
+    unavailable: reason
+  };
+}
+
+// ../neko-mc-trial/mc-visual-console-contrib-source/packages/modern-viewer/renderer-src/host/viewer-content.mjs
+var finite = (n) => typeof n === "number" && Number.isFinite(n);
+var integer2 = (n, min, max) => Number.isInteger(n) && n >= min && n <= max;
+var pos = (p) => p && [p.x, p.y, p.z].every(finite) ? { x: p.x, y: p.y, z: p.z } : null;
+var rgb = (p) => Array.isArray(p) && p.length === 3 && p.every((n) => finite(n) && n >= 0 && n <= 1) ? p : null;
+var VIEWER_CONTENT_LIMITS = Object.freeze({ maps: 64, frames: 128, textDisplays: 64, particleBatch: 64, flushMs: 50, range: 80 });
+function transitionFieldOrder(protocol) {
+  const fields = protocol?.types?.Particle?.[1]?.find((f) => f.name === "data")?.type?.[1]?.fields?.dust_color_transition?.[1];
+  return Array.isArray(fields) ? fields.map((f) => f.name).join(",") : null;
+}
+function viewerParticlePacket(packet, { version = "1.20.6", protocol } = {}) {
+  const position2 = pos(packet);
+  const name2 = packet?.particle?.type;
+  if (!position2 || typeof name2 !== "string" || !/^[a-z_]{1,64}$/.test(name2) || !integer2(packet.amount, 0, 4096) || ![packet.offsetX, packet.offsetY, packet.offsetZ, packet.velocityOffset].every(finite)) return null;
+  const data = packet.particle.data;
+  const result = {
+    kind: "particle",
+    name: name2,
+    position: position2,
+    spread: {
+      x: Math.max(-8, Math.min(8, packet.offsetX)),
+      y: Math.max(-8, Math.min(8, packet.offsetY)),
+      z: Math.max(-8, Math.min(8, packet.offsetZ))
+    },
+    count: Math.min(48, packet.amount),
+    speed: Math.max(0, Math.min(4, packet.velocityOffset)),
+    exact: packet.amount === 1 && packet.offsetX === 0 && packet.offsetY === 0 && packet.offsetZ === 0 && packet.velocityOffset === 0
+  };
+  if (name2 === "dust" || name2 === "dust_color_transition") {
+    if (!data) return null;
+    let color, colorEnd, scale;
+    if (name2 === "dust") {
+      color = [data.red, data.green, data.blue];
+      scale = data.scale;
+    } else {
+      color = [data.fromRed, data.fromGreen, data.fromBlue];
+      const order = transitionFieldOrder(protocol);
+      if (version === "1.20.6" && order === "fromRed,fromGreen,fromBlue,scale,toRed,toGreen,toBlue") {
+        colorEnd = [data.scale, data.toRed, data.toGreen];
+        scale = data.toBlue;
+      } else if (order === "fromRed,fromGreen,fromBlue,toRed,toGreen,toBlue,scale") {
+        colorEnd = [data.toRed, data.toGreen, data.toBlue];
+        scale = data.scale;
+      } else return null;
+    }
+    if (!rgb(color) || colorEnd && !rgb(colorEnd) || !finite(scale) || scale < 0.01 || scale > 4) return null;
+    result.color = color;
+    result.size = scale;
+    if (colorEnd) result.colorEnd = colorEnd;
+  }
+  return result;
+}
+function viewerMapPacket(packet) {
+  if (!packet || !integer2(packet.itemDamage, 0, 2147483647) || !integer2(packet.scale, 0, 4) || !integer2(packet.columns, 0, 128)) return null;
+  const row = { schemaVersion: 1, mapId: packet.itemDamage, scale: packet.scale, locked: packet.locked === true };
+  if (Array.isArray(packet.icons)) row.icons = packet.icons.slice(0, 256).filter((i) => integer2(i.type, 0, 255) && integer2(i.x, -128, 127) && integer2(i.z, -128, 127) && integer2(i.direction, 0, 255)).map((i) => ({ type: i.type, x: i.x, z: i.z, direction: i.direction }));
+  if (packet.columns === 0) return { ...row, columns: 0 };
+  if (!integer2(packet.rows, 1, 128) || !integer2(packet.x, 0, 127) || !integer2(packet.y, 0, 127) || packet.x + packet.columns > 128 || packet.y + packet.rows > 128 || !(packet.data instanceof Uint8Array) || packet.data.length !== packet.columns * packet.rows) return null;
+  return { ...row, x: packet.x, y: packet.y, columns: packet.columns, rows: packet.rows, data: Uint8Array.from(packet.data) };
+}
+function frameMapId(slot, registry) {
+  if (!slot || registry?.items?.[slot.itemId ?? slot.type]?.name !== "filled_map") return null;
+  const component = slot.components?.find((c) => c.type === "map_id" || c.type === "minecraft:map_id");
+  return integer2(component?.data, 0, 2147483647) ? component.data : null;
+}
+var normals = [[0, -1, 0], [0, 1, 0], [0, 0, -1], [0, 0, 1], [-1, 0, 0], [1, 0, 0]];
+function frameTileCenter(tile, normal) {
+  if (!pos(tile) || ![tile.x, tile.y, tile.z].every(Number.isInteger)) return null;
+  return Object.fromEntries(["x", "y", "z"].map((axis, i) => [axis, tile[axis] + 0.5 - normal[i] * 0.46875]));
+}
+function nativeFrameCenter(position2, normal) {
+  const tileCenter = frameTileCenter(position2, normal);
+  if (tileCenter) return tileCenter;
+  return pos(position2) && ["x", "y", "z"].every((axis, i) => Number.isInteger(position2[axis] + normal[i] * 0.46875 - 0.5)) ? pos(position2) : null;
+}
+function cachedMapFrame(entity, registry) {
+  if (!["item_frame", "glow_item_frame"].includes(entity?.name) || !integer2(entity.id, 0, 2147483647) || !pos(entity.position) || !finite(entity.yaw) || !finite(entity.pitch)) return null;
+  let normal;
+  if (Math.abs(Math.abs(entity.pitch) - Math.PI / 2) < 1e-5) normal = [0, Math.sign(entity.pitch), 0];
+  else if (Math.abs(entity.pitch) < 1e-5) {
+    const notchYaw = Math.PI - entity.yaw, quarter = Math.round(notchYaw / (Math.PI / 2));
+    if (Math.abs(notchYaw - quarter * Math.PI / 2) > 1e-5) return null;
+    normal = [[0, 0, 1], [-1, 0, 0], [0, 0, -1], [1, 0, 0]][(quarter % 4 + 4) % 4];
+  } else return null;
+  const rotation = entity.metadata?.[9] ?? 0;
+  if (!integer2(rotation, 0, 7)) return null;
+  const position2 = nativeFrameCenter(entity.position, normal);
+  if (!position2) return null;
+  return {
+    id: entity.id,
+    uuid: entity.uuid,
+    name: entity.name,
+    position: position2,
+    normal,
+    rotation,
+    mapId: frameMapId(entity.metadata?.[8], registry),
+    invisible: ((entity.metadata?.[0] ?? 0) & 32) !== 0
+  };
+}
+function createViewerContentBridge(bot, { now = Date.now, schedule = setInterval, unschedule = clearInterval } = {}) {
+  if (bot.version !== "1.20.6") throw Error("viewer_content_requires_1.20.6");
+  const protocol = bot._client, maps = /* @__PURE__ */ new Map(), frames = /* @__PURE__ */ new Map(), textEntities = /* @__PURE__ */ new Map(), textDisplays = /* @__PURE__ */ new Map(), listeners = /* @__PURE__ */ new Set(), hooks = [], socketDrainers = /* @__PURE__ */ new Set(), socketDisposers = /* @__PURE__ */ new Set();
+  let epoch = 0, queue = [], disposed = false;
+  const diagnostics = { particles: 0, droppedParticles: 0, mapPatches: 0, rejected: 0, subscriberErrors: 0, cachedFrames: 0, cachedTextDisplays: 0, rejectedTextDisplays: 0 };
+  const nearby = (p) => !bot.entity?.position || Math.hypot(p.x - bot.entity.position.x, p.y - bot.entity.position.y, p.z - bot.entity.position.z) <= VIEWER_CONTENT_LIMITS.range;
+  const deliver = (publish, name2, value) => {
+    try {
+      publish(name2, value);
+    } catch {
+      diagnostics.subscriberErrors++;
+    }
+  };
+  const send = (name2, value) => {
+    for (const publish of listeners) deliver(publish, name2, { ...value, epoch });
+  };
+  const on = (emitter, name2, fn) => {
+    emitter.on(name2, fn);
+    hooks.push(() => emitter.off(name2, fn));
+  };
+  function textSnapshot(display) {
+    return { ...display, position: { ...display.position }, translation: { ...display.translation }, scale: { ...display.scale }, runs: display.runs.map((r) => ({ ...r })) };
+  }
+  function publishText(entity) {
+    const display = decodeTextDisplay(entity, bot.registry);
+    if (!display) {
+      diagnostics.rejectedTextDisplays++;
+      if (textDisplays.delete(entity.id)) send("textDisplay", { schemaVersion: 1, id: entity.id, delete: true });
+      return;
+    }
+    textDisplays.set(display.id, display);
+    send("textDisplay", textSnapshot(display));
+  }
+  function removeText(id) {
+    textEntities.delete(id);
+    if (textDisplays.delete(id)) send("textDisplay", { schemaVersion: 1, id, delete: true });
+  }
+  on(protocol, "spawn_entity", (packet) => {
+    removeText(packet.entityId);
+    if (bot.registry?.entities?.[packet.type]?.name !== "text_display" || !textDisplayMetadataKeys(bot.registry) || !integer2(packet.entityId, 0, 2147483647) || !pos(packet)) return;
+    if (textEntities.size >= VIEWER_CONTENT_LIMITS.textDisplays) {
+      diagnostics.rejectedTextDisplays++;
+      return;
+    }
+    const entity = {
+      id: packet.entityId,
+      uuid: packet.objectUUID,
+      name: "text_display",
+      position: pos(packet),
+      metadata: {},
+      yaw: Math.PI - (packet.yaw ?? 0) * Math.PI / 128,
+      pitch: -(packet.pitch ?? 0) * Math.PI / 128
+    };
+    textEntities.set(entity.id, entity);
+    publishText(entity);
+  });
+  on(protocol, "entity_metadata", (packet) => {
+    const entity = textEntities.get(packet.entityId);
+    if (!entity || !Array.isArray(packet.metadata)) return;
+    for (const field of packet.metadata.slice(0, 64)) if (integer2(field.key, 0, 27)) entity.metadata[field.key] = field.value;
+    publishText(entity);
+  });
+  on(protocol, "entity_teleport", (packet) => {
+    const entity = textEntities.get(packet.entityId), position2 = pos(packet);
+    if (!entity || !position2) return;
+    const yaw = integer2(packet.yaw, -128, 255) ? Math.PI - packet.yaw * Math.PI / 128 : entity.yaw;
+    const pitch = integer2(packet.pitch, -128, 255) ? -packet.pitch * Math.PI / 128 : entity.pitch;
+    if (["x", "y", "z"].every((k) => entity.position[k] === position2[k]) && entity.yaw === yaw && entity.pitch === pitch) return;
+    entity.position = position2;
+    entity.yaw = yaw;
+    entity.pitch = pitch;
+    publishText(entity);
+  });
+  on(bot, "entityMoved", (moved) => {
+    const entity = textEntities.get(moved.id);
+    if (!entity || !pos(moved.position)) return;
+    if (JSON.stringify(entity.position) === JSON.stringify(pos(moved.position)) && entity.yaw === moved.yaw && entity.pitch === moved.pitch) return;
+    entity.position = pos(moved.position);
+    entity.yaw = moved.yaw;
+    entity.pitch = moved.pitch;
+    publishText(entity);
+  });
+  on(protocol, "entity_destroy", (packet) => {
+    for (const id of packet.entityIds ?? []) removeText(id);
+  });
+  on(protocol, "world_particles", (packet) => {
+    const event = viewerParticlePacket(packet, { version: bot.version, protocol: bot.registry?.protocol });
+    if (!event) {
+      diagnostics.rejected++;
+      return;
+    }
+    if (!nearby(event.position) || !listeners.size) return;
+    if (queue.length >= VIEWER_CONTENT_LIMITS.particleBatch) {
+      diagnostics.droppedParticles++;
+      return;
+    }
+    queue.push(event);
+    diagnostics.particles++;
+  });
+  function flush() {
+    if (disposed) return;
+    for (const drain of socketDrainers) try {
+      drain();
+    } catch {
+      diagnostics.subscriberErrors++;
+    }
+    if (!queue.length) return;
+    const events = queue;
+    queue = [];
+    send("particleBatch", { schemaVersion: 1, atMs: now(), events });
+  }
+  const timer = schedule(flush, VIEWER_CONTENT_LIMITS.flushMs);
+  timer?.unref?.();
+  on(protocol, "map", (packet) => {
+    const patch = viewerMapPacket(packet);
+    if (!patch) {
+      diagnostics.rejected++;
+      return;
+    }
+    let map = maps.get(patch.mapId);
+    if (!map) {
+      if (maps.size >= VIEWER_CONTENT_LIMITS.maps) maps.delete(maps.keys().next().value);
+      map = { mapId: patch.mapId, scale: patch.scale, locked: patch.locked, data: new Uint8Array(16384), coverage: new Uint8Array(2048), icons: [] };
+      maps.set(patch.mapId, map);
+    }
+    map.scale = patch.scale;
+    map.locked = patch.locked;
+    if (patch.icons) map.icons = patch.icons;
+    for (let y = 0; y < (patch.rows ?? 0); y++) for (let x = 0; x < patch.columns; x++) {
+      const index = (patch.y + y) * 128 + patch.x + x;
+      map.data[index] = patch.data[y * patch.columns + x];
+      map.coverage[index >> 3] |= 1 << (index & 7);
+    }
+    diagnostics.mapPatches++;
+    send("mapPixels", patch);
+  });
+  on(protocol, "spawn_entity", (packet) => {
+    const name2 = bot.registry?.entities?.[packet.type]?.name;
+    if (!["item_frame", "glow_item_frame"].includes(name2) || !integer2(packet.entityId, 0, 2147483647) || !pos(packet) || !integer2(packet.objectData, 0, 5)) return;
+    if (frames.size >= VIEWER_CONTENT_LIMITS.frames) return;
+    const normal = normals[packet.objectData], position2 = frameTileCenter(packet, normal);
+    if (!position2) return;
+    frames.set(packet.entityId, { id: packet.entityId, uuid: packet.objectUUID, name: name2, position: position2, normal, rotation: 0, mapId: null, invisible: false });
+  });
+  on(protocol, "entity_metadata", (packet) => {
+    const frame = frames.get(packet.entityId);
+    if (!frame || !Array.isArray(packet.metadata)) return;
+    for (const field of packet.metadata) {
+      if (field.key === 0 && integer2(field.value, -128, 255)) frame.invisible = (field.value & 32) !== 0;
+      if (field.key === 8) frame.mapId = frameMapId(field.value, bot.registry);
+      if (field.key === 9 && integer2(field.value, 0, 7)) frame.rotation = field.value;
+    }
+    if (nearby(frame.position)) send("mapFrame", { schemaVersion: 1, ...frame });
+  });
+  on(protocol, "entity_teleport", (packet) => {
+    const frame = frames.get(packet.entityId);
+    if (!frame) return;
+    const position2 = nativeFrameCenter(packet, frame.normal);
+    if (!position2) {
+      diagnostics.rejected++;
+      return;
+    }
+    frame.position = position2;
+    if (nearby(position2)) send("mapFrame", { schemaVersion: 1, ...frame });
+  });
+  on(protocol, "entity_destroy", (packet) => {
+    for (const id of packet.entityIds ?? []) if (frames.delete(id)) send("mapFrame", { schemaVersion: 1, id, delete: true });
+  });
+  for (const entity of Object.values(bot.entities ?? {})) {
+    if (frames.size >= VIEWER_CONTENT_LIMITS.frames) break;
+    const frame = cachedMapFrame(entity, bot.registry);
+    if (frame) {
+      frames.set(frame.id, frame);
+      diagnostics.cachedFrames++;
+    }
+  }
+  for (const entity of Object.values(bot.entities ?? {})) {
+    if (textEntities.size >= VIEWER_CONTENT_LIMITS.textDisplays) break;
+    if (entity.name !== "text_display") continue;
+    const display = decodeTextDisplay(entity, bot.registry);
+    if (!display) continue;
+    textEntities.set(entity.id, { ...entity, position: pos(entity.position), metadata: { ...entity.metadata } });
+    textDisplays.set(entity.id, display);
+    diagnostics.cachedTextDisplays++;
+  }
+  function reset() {
+    epoch++;
+    maps.clear();
+    frames.clear();
+    textEntities.clear();
+    textDisplays.clear();
+    queue = [];
+    send("contentReset", { schemaVersion: 1 });
+  }
+  on(bot, "respawn", reset);
+  on(bot, "end", reset);
+  function snapshot(map) {
+    return { schemaVersion: 1, epoch, ...map, data: Uint8Array.from(map.data), coverage: Uint8Array.from(map.coverage), snapshot: true, x: 0, y: 0, columns: 128, rows: 128 };
+  }
+  function subscribe(publish) {
+    if (disposed) throw Error("viewer_content_disposed");
+    if (typeof publish !== "function") throw TypeError("viewer_content_publish_required");
+    listeners.add(publish);
+    deliver(publish, "contentReset", { schemaVersion: 1, epoch });
+    for (const map of maps.values()) deliver(publish, "mapPixels", snapshot(map));
+    for (const frame of frames.values()) if (nearby(frame.position)) deliver(publish, "mapFrame", { schemaVersion: 1, epoch, ...frame });
+    for (const display of textDisplays.values()) deliver(publish, "textDisplay", { ...textSnapshot(display), epoch });
+    return () => listeners.delete(publish);
+  }
+  function subscribeSocket(socket, { writable = () => socket.connected && socket.conn?.transport?.writable !== false && (socket.conn?.writeBuffer?.length ?? 0) <= 4 } = {}) {
+    let closed = false, resetPending = false;
+    const mapIds = /* @__PURE__ */ new Set(), frameIds = /* @__PURE__ */ new Set(), textIds = /* @__PURE__ */ new Set();
+    const fullReplay = () => {
+      resetPending = true;
+      mapIds.clear();
+      frameIds.clear();
+      textIds.clear();
+      for (const id of maps.keys()) mapIds.add(id);
+      for (const id of frames.keys()) frameIds.add(id);
+      for (const id of textDisplays.keys()) textIds.add(id);
+    };
+    function drain() {
+      if (closed || !writable()) return;
+      if (resetPending) {
+        socket.emit("contentReset", { schemaVersion: 1, epoch });
+        resetPending = false;
+      }
+      let sent = 0;
+      for (const id of textIds) {
+        if (!writable() || sent >= 4) break;
+        textIds.delete(id);
+        const display = textDisplays.get(id);
+        socket.emit("textDisplay", display ? { ...textSnapshot(display), epoch } : { schemaVersion: 1, epoch, id, delete: true });
+        sent++;
+      }
+      for (const id of mapIds) {
+        if (!writable() || sent >= 4) break;
+        mapIds.delete(id);
+        const map = maps.get(id);
+        if (map) {
+          socket.emit("mapPixels", snapshot(map));
+          sent++;
+        }
+      }
+      for (const id of frameIds) {
+        if (!writable() || sent >= 4) break;
+        frameIds.delete(id);
+        const frame = frames.get(id);
+        socket.emit("mapFrame", frame ? { schemaVersion: 1, epoch, ...frame } : { schemaVersion: 1, epoch, id, delete: true });
+        sent++;
+      }
+    }
+    const off = subscribe((name2, value) => {
+      if (name2 === "contentReset") {
+        resetPending = true;
+        mapIds.clear();
+        frameIds.clear();
+        textIds.clear();
+      }
+      if (writable() && !resetPending && !mapIds.size && !frameIds.size && !textIds.size) {
+        socket.emit(name2, value);
+        return;
+      }
+      if (name2 === "mapPixels") mapIds.add(value.mapId);
+      if (name2 === "mapFrame") frameIds.add(value.id);
+      if (name2 === "textDisplay") textIds.add(value.id);
+      if (mapIds.size > VIEWER_CONTENT_LIMITS.maps || frameIds.size > VIEWER_CONTENT_LIMITS.frames || textIds.size > VIEWER_CONTENT_LIMITS.textDisplays) fullReplay();
+      drain();
+    });
+    function close() {
+      if (closed) return;
+      closed = true;
+      off();
+      mapIds.clear();
+      frameIds.clear();
+      textIds.clear();
+      socketDrainers.delete(drain);
+      socketDisposers.delete(close);
+      socket.off("disconnect", close);
+    }
+    socketDrainers.add(drain);
+    socketDisposers.add(close);
+    socket.on("disconnect", close);
+    return close;
+  }
+  return {
+    subscribe,
+    subscribeSocket,
+    flush,
+    stats: () => ({ ...diagnostics, epoch, maps: maps.size, frames: frames.size, textDisplays: textDisplays.size, viewers: listeners.size, pendingParticles: queue.length }),
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      unschedule(timer);
+      for (const close of [...socketDisposers]) close();
+      for (const off of hooks) off();
+      maps.clear();
+      frames.clear();
+      textEntities.clear();
+      textDisplays.clear();
+      listeners.clear();
+      queue = [];
+    }
+  };
+}
+
 // src/worlds/minecraft/modern-viewer.ts
 import { createRequire } from "node:module";
 import { createHash } from "node:crypto";
@@ -367,8 +870,8 @@ function minecraftTextComponent(value) {
 }
 
 // src/worlds/minecraft/viewer-state.ts
-var finite = (value) => typeof value === "number" && Number.isFinite(value);
-var bounded = (value, min, max) => finite(value) && value >= min && value <= max ? value : null;
+var finite2 = (value) => typeof value === "number" && Number.isFinite(value);
+var bounded = (value, min, max) => finite2(value) && value >= min && value <= max ? value : null;
 function viewerItemData(value, depth = 0) {
   if (value === null || typeof value === "boolean") return value;
   if (typeof value === "number") return Number.isFinite(value) ? value : void 0;
@@ -385,7 +888,7 @@ function viewerItemData(value, depth = 0) {
 function viewerItem(value) {
   if (!value || typeof value !== "object") return null;
   const item = value;
-  if (typeof item.name !== "string" || !finite(item.type)) return null;
+  if (typeof item.name !== "string" || !finite2(item.type)) return null;
   const customName = itemCustomName(item);
   const headTextureHash = item.name.replace(/^minecraft:/, "") === "player_head" ? itemProfileSkinHash(item) : null;
   const componentMap = item.componentMap instanceof Map ? item.componentMap : null;
@@ -393,7 +896,7 @@ function viewerItem(value) {
   const enchanted = Array.isArray(enchantComponent?.enchantments) && enchantComponent.enchantments.length > 0 || readEnchants(item).length > 0;
   const vanillaDurability = readDurability(item);
   const customMax = componentMap?.get("max_damage")?.data;
-  const max = finite(customMax) && customMax > 0 && customMax <= 1e6 ? customMax : vanillaDurability?.max;
+  const max = finite2(customMax) && customMax > 0 && customMax <= 1e6 ? customMax : vanillaDurability?.max;
   const damage = readDamage(item) ?? 0;
   const durability = max && !componentMap?.has("unbreakable") ? { left: Math.max(0, max - damage), max } : null;
   return {
@@ -425,9 +928,9 @@ function viewerTradeList(packet, decodeItem) {
     const secondInput = decodeItem(trade.inputItem2);
     const uses = bounded(trade.nbTradeUses, 0, 65535) ?? 0;
     const maxUses = bounded(trade.maximumNbTradeUses, 0, 65535) ?? 0;
-    const demand = finite(trade.demand) ? trade.demand : 0;
-    const multiplier = finite(trade.priceMultiplier) ? trade.priceMultiplier : 0;
-    const special = finite(trade.specialPrice) ? trade.specialPrice : 0;
+    const demand = finite2(trade.demand) ? trade.demand : 0;
+    const multiplier = finite2(trade.priceMultiplier) ? trade.priceMultiplier : 0;
+    const special = finite2(trade.specialPrice) ? trade.specialPrice : 0;
     const calculatedPrice = Math.max(1, Math.min(
       64,
       input.count + special + Math.max(0, Math.floor(input.count * demand * multiplier))
@@ -467,7 +970,7 @@ function windowSnapshot(window, properties = /* @__PURE__ */ new Map(), serializ
   const totalBurn = properties.get(1);
   const currentCook = properties.get(2);
   const totalCook = properties.get(3);
-  const ratio = (current, total) => finite(current) && finite(total) && total > 0 ? Math.max(0, Math.min(1, current / total)) : null;
+  const ratio = (current, total) => finite2(current) && finite2(total) && total > 0 ? Math.max(0, Math.min(1, current / total)) : null;
   return {
     id: window.id,
     type,
@@ -477,7 +980,7 @@ function windowSnapshot(window, properties = /* @__PURE__ */ new Map(), serializ
     hotbarStart,
     containerCount: inventoryStart,
     furnace: furnace ? { burn: ratio(currentBurn, totalBurn), cook: ratio(currentCook, totalCook) } : null,
-    properties: Object.fromEntries([...properties].filter(([key, value]) => Number.isInteger(key) && key >= 0 && key < 16 && finite(value))),
+    properties: Object.fromEntries([...properties].filter(([key, value]) => Number.isInteger(key) && key >= 0 && key < 16 && finite2(value))),
     trades: /(?:^|:)(?:merchant|villager)$/.test(type) && trades?.windowId === window.id ? trades : null
   };
 }
@@ -512,14 +1015,14 @@ function spellCatalogueFromText(text) {
 }
 function viewerBossBars(value) {
   if (!Array.isArray(value)) return [];
-  const colors = /* @__PURE__ */ new Set(["pink", "blue", "red", "green", "yellow", "purple", "white"]);
+  const colors2 = /* @__PURE__ */ new Set(["pink", "blue", "red", "green", "yellow", "purple", "white"]);
   return value.slice(0, 8).flatMap((entry) => {
     if (!entry || typeof entry !== "object") return [];
     const bar = entry;
     const title = minecraftTextComponent(bar.title).slice(0, 100);
     if (!title) return [];
-    const health = finite(bar.health) ? Math.max(0, Math.min(1, bar.health)) : 0;
-    const color = typeof bar.color === "string" && colors.has(bar.color) ? bar.color : "purple";
+    const health = finite2(bar.health) ? Math.max(0, Math.min(1, bar.health)) : 0;
+    const color = typeof bar.color === "string" && colors2.has(bar.color) ? bar.color : "purple";
     return [{ title, progress: health, color }];
   });
 }
@@ -527,7 +1030,7 @@ function viewerPlayerAbsorption(metadata, metadataKeys) {
   if (!metadata || typeof metadata !== "object") return 0;
   const index = metadataKeys?.indexOf("player_absorption") ?? 15;
   const value = metadata[index >= 0 ? index : 15];
-  return finite(value) ? Math.max(0, Math.min(80, value)) : 0;
+  return finite2(value) ? Math.max(0, Math.min(80, value)) : 0;
 }
 function parseSkillsPayload(channel, data) {
   if (channel !== VIEWER_STATE_CHANNEL && channel !== "mcviewer:state" && channel !== "corti:viewer_state" || !Buffer.isBuffer(data) || data.length > 65536) return null;
@@ -884,8 +1387,8 @@ function viewerBiomeClimate(value) {
     ...precipitation === "rain" || precipitation === "snow" || precipitation === "none" ? { precipitation } : {}
   };
 }
-var finite2 = (value) => typeof value === "number" && Number.isFinite(value);
-var point2 = (x, y, z) => finite2(x) && finite2(y) && finite2(z) && [x, y, z].every((value) => Math.abs(value) <= 3e7) ? { x, y, z } : null;
+var finite3 = (value) => typeof value === "number" && Number.isFinite(value);
+var point2 = (x, y, z) => finite3(x) && finite3(y) && finite3(z) && [x, y, z].every((value) => Math.abs(value) <= 3e7) ? { x, y, z } : null;
 function viewerParticle(packet) {
   if (!packet || typeof packet !== "object") return null;
   const row = packet;
@@ -893,9 +1396,9 @@ function viewerParticle(packet) {
   const spread = point2(row.offsetX, row.offsetY, row.offsetZ);
   const particle = row.particle;
   const name2 = typeof particle?.type === "string" ? particle.type.replace(/^minecraft:/, "") : "";
-  if (!position2 || !spread || !/^[a-z0-9_]{1,64}$/.test(name2) || !finite2(row.amount) || !finite2(row.velocityOffset)) return null;
+  if (!position2 || !spread || !/^[a-z0-9_]{1,64}$/.test(name2) || !finite3(row.amount) || !finite3(row.velocityOffset)) return null;
   const data = particle?.data;
-  const color = data && [data.red, data.green, data.blue].every(finite2) ? [data.red, data.green, data.blue].map((value) => Math.max(0, Math.min(1, value))) : void 0;
+  const color = data && [data.red, data.green, data.blue].every(finite3) ? [data.red, data.green, data.blue].map((value) => Math.max(0, Math.min(1, value))) : void 0;
   return {
     kind: "particle",
     name: name2,
@@ -910,7 +1413,7 @@ function viewerExplosion(packet) {
   if (!packet || typeof packet !== "object") return null;
   const row = packet;
   const position2 = point2(row.x, row.y, row.z);
-  return position2 && finite2(row.radius) ? { kind: "explosion", position: position2, radius: Math.min(12, Math.max(0.5, Math.abs(row.radius))) } : null;
+  return position2 && finite3(row.radius) ? { kind: "explosion", position: position2, radius: Math.min(12, Math.max(0.5, Math.abs(row.radius))) } : null;
 }
 function viewerWorldEvent(packet, registry) {
   if (!packet || typeof packet !== "object") return null;
@@ -1187,10 +1690,10 @@ var name = (value) => {
   return value.replace(/^minecraft:/, "");
 };
 var record = (value) => value && typeof value === "object" ? value : null;
-var finite3 = (value) => typeof value === "number" && Number.isFinite(value);
+var finite4 = (value) => typeof value === "number" && Number.isFinite(value);
 var position = (value, scale = 1) => {
   const p = record(value);
-  return p && [p.x, p.y, p.z].every(finite3) ? { x: Number(p.x) / scale, y: Number(p.y) / scale, z: Number(p.z) / scale } : null;
+  return p && [p.x, p.y, p.z].every(finite4) ? { x: Number(p.x) / scale, y: Number(p.y) / scale, z: Number(p.z) / scale } : null;
 };
 var seed = (value) => {
   if (typeof value === "bigint") return value.toString();
@@ -1202,34 +1705,34 @@ var seed = (value) => {
 };
 function viewerSoundPacket(kind, value, registry, entityPosition) {
   const packet = record(value);
-  if (!packet || !finite3(packet.volume) || !finite3(packet.pitch)) return null;
+  if (!packet || !finite4(packet.volume) || !finite4(packet.pitch)) return null;
   const holder = record(packet.sound);
   const inline = record(holder?.data);
   const id = holder?.soundId ?? packet.soundId;
   const soundName = name(packet.soundName ?? inline?.soundName ?? (Number.isSafeInteger(id) ? registry.sounds?.[Number(id)]?.name : void 0));
   if (!soundName) return null;
-  let pos2;
+  let pos3;
   let entityId;
   if (kind === "entity_sound_effect") {
     if (!Number.isSafeInteger(packet.entityId) || Number(packet.entityId) < 0) return null;
     entityId = Number(packet.entityId);
-    pos2 = position(entityPosition(entityId));
-    if (!pos2) return null;
+    pos3 = position(entityPosition(entityId));
+    if (!pos3) return null;
   } else if (kind === "sound_effect" || kind === "named_sound_effect") {
-    pos2 = position(packet, 8);
-    if (!pos2) return null;
+    pos3 = position(packet, 8);
+    if (!pos3) return null;
   } else return null;
   const source = category(packet.soundCategory);
   const randomSeed = seed(packet.seed);
   return {
     name: soundName,
-    position: pos2,
+    position: pos3,
     volume: Math.max(0, Math.min(16, packet.volume)),
     pitch: Math.max(0.01, Math.min(4, packet.pitch)),
     ...source ? { category: source } : {},
     ...entityId !== void 0 ? { entityId } : {},
     ...randomSeed !== void 0 ? { seed: randomSeed } : {},
-    ...finite3(inline?.fixedRange) && inline.fixedRange > 0 && inline.fixedRange <= 1024 ? { fixedRange: inline.fixedRange } : {}
+    ...finite4(inline?.fixedRange) && inline.fixedRange > 0 && inline.fixedRange <= 1024 ? { fixedRange: inline.fixedRange } : {}
   };
 }
 function viewerSoundStopPacket(value) {
@@ -1336,7 +1839,7 @@ function observeWrite(protocol, onWrite) {
     writeDispatchers.delete(protocol);
   };
 }
-var pos = (value) => {
+var pos2 = (value) => {
   const p = value;
   return p && [p.x, p.y, p.z].every((part) => typeof part === "number" && Number.isFinite(part)) ? { x: p.x, y: p.y, z: p.z } : null;
 };
@@ -1411,7 +1914,7 @@ function observeViewerFishingCatch(bot, publish, serializeItem, now = Date.now) 
     loot.delete(id);
     hooks.delete(id);
     const entities = bot.registry.entitiesByName;
-    const position2 = pos(packet);
+    const position2 = pos2(packet);
     if (!position2) return;
     if (packet.type === entities.fishing_bobber?.internalId && packet.objectData === bot.entity?.id) {
       hooks.set(id, { id, position: position2, biteAt: 0, reelAt: 0, before: /* @__PURE__ */ new Map() });
@@ -1422,13 +1925,13 @@ function observeViewerFishingCatch(bot, publish, serializeItem, now = Date.now) 
     const hook = [...hooks.values()].reverse().find((entry) => entry.reelAt && entry.biteAt && at - entry.reelAt <= 1500 && at - entry.reelAt >= 0 && Math.abs(entry.reelAt - entry.biteAt) <= 2e3 && distance(position2, entry.position) <= 2);
     if (!hook) return;
     const entity = bot.entities[id];
-    const caster = pos(bot.entity?.position);
-    const rawVelocity = pos(packet.velocity);
+    const caster = pos2(bot.entity?.position);
+    const rawVelocity = pos2(packet.velocity);
     const velocity = rawVelocity ? {
       x: rawVelocity.x / 8e3,
       y: rawVelocity.y / 8e3,
       z: rawVelocity.z / 8e3
-    } : pos(entity?.velocity);
+    } : pos2(entity?.velocity);
     if (!caster || !velocity) return;
     const dx = caster.x - position2.x, dz = caster.z - position2.z;
     if (Math.hypot(dx, dz) > 1 && (velocity.x * dx + velocity.z * dz <= 0.01 || velocity.y <= 0.02)) return;
@@ -1437,7 +1940,7 @@ function observeViewerFishingCatch(bot, publish, serializeItem, now = Date.now) 
   const onEntity = (entity) => {
     const hook = hooks.get(entity.id);
     if (hook) {
-      const position2 = pos(entity.position);
+      const position2 = pos2(entity.position);
       if (position2) hook.position = position2;
       const keys = bot.registry.entitiesByName.fishing_bobber?.metadataKeys;
       const biting = keys?.indexOf("biting") ?? -1;
@@ -1453,7 +1956,7 @@ function observeViewerFishingCatch(bot, publish, serializeItem, now = Date.now) 
     const particle = packet.particle?.type;
     const ids = bot.registry.particlesByName;
     if ((packet.amount ?? packet.particles) !== 6 || !(["fishing", "bubble"].includes(particle ?? "") || Number.isSafeInteger(packet.particleId) && (packet.particleId === ids.fishing?.id || packet.particleId === ids.bubble?.id))) return;
-    const position2 = pos(packet);
+    const position2 = pos2(packet);
     if (!position2) return;
     for (const hook of hooks.values()) if (Math.hypot(
       position2.x - hook.position.x,
@@ -1556,7 +2059,7 @@ async function viewerPageCss(root, fallback, speechCss = "") {
   return generated === null ? fallback : generated + speechCss;
 }
 
-// src/worlds/minecraft/viewer-asset-server.ts
+// ../neko-mc-trial/mc-visual-console-contrib-source/packages/modern-viewer/renderer-src/host/viewer-asset-server.mjs
 import { createReadStream } from "node:fs";
 import { stat as stat2 } from "node:fs/promises";
 import path3 from "node:path";
@@ -1570,27 +2073,33 @@ var MIME = {
   ".glb": "model/gltf-binary",
   ".vrm": "model/gltf-binary",
   ".webp": "image/webp",
-  ".jpg": "image/jpeg"
+  ".jpg": "image/jpeg",
+  ".zip": "application/zip"
 };
 function viewerByteRange(range, size) {
   const match = /^bytes=(\d*)-(\d*)$/.exec(range.trim());
-  if (!match || !match[1] && !match[2] || size <= 0) return null;
+  if (!match || !match[1] && !match[2] || size <= 0)
+    return null;
   if (!match[1]) {
     const suffix = Number(match[2]);
-    if (!Number.isSafeInteger(suffix) || suffix <= 0) return null;
+    if (!Number.isSafeInteger(suffix) || suffix <= 0)
+      return null;
     return { start: Math.max(0, size - suffix), end: size - 1 };
   }
   const start = Number(match[1]);
   const requestedEnd = match[2] ? Number(match[2]) : size - 1;
-  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(requestedEnd) || start >= size || requestedEnd < start) return null;
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(requestedEnd) || start >= size || requestedEnd < start)
+    return null;
   return { start, end: Math.min(requestedEnd, size - 1) };
 }
 async function serveViewerAsset(res, root, relative, cacheControl = "public, max-age=3600", range) {
   const file = path3.resolve(root, relative);
   const extension = path3.extname(file).toLowerCase();
-  if (!file.startsWith(path3.resolve(root) + path3.sep) || !MIME[extension]) return false;
+  if (!file.startsWith(path3.resolve(root) + path3.sep) || !MIME[extension])
+    return false;
   const info = await stat2(file).catch(() => null);
-  if (!info?.isFile() || info.size > MAX_ASSET_BYTES) return false;
+  if (!info?.isFile() || info.size > MAX_ASSET_BYTES)
+    return false;
   const ranged = extension === ".ogg";
   const headers = {
     "content-type": MIME[extension],
@@ -2388,6 +2897,7 @@ async function startModernViewer(bot, options) {
   const origin = `http://127.0.0.1:${options.port}`;
   const sessions = /* @__PURE__ */ new Set();
   const sessionSlots = new ViewerSessionSlots(MAX_SESSIONS, MAX_CAPTURE_SESSIONS);
+  const content = createViewerContentBridge(bot);
   const viewerSockets = /* @__PURE__ */ new Set();
   let latestRoute = { points: [], goal: viewerGoal(bot.pathfinder?.goal), status: "pending" };
   const publishRoute = (route) => {
@@ -3010,8 +3520,8 @@ async function startModernViewer(bot, options) {
     const entityTimer = setInterval(flushEntities, 100);
     const publishDigging = () => {
       const block = bot.targetDigBlock;
-      const pos2 = block?.position;
-      const next = pos2 && [pos2.x, pos2.y, pos2.z].every(Number.isInteger) ? `${pos2.x},${pos2.y},${pos2.z}` : "";
+      const pos3 = block?.position;
+      const next = pos3 && [pos3.x, pos3.y, pos3.z].every(Number.isInteger) ? `${pos3.x},${pos3.y},${pos3.z}` : "";
       if (!next) {
         if (digKey) socket.emit("digProgress", { stage: null });
         digKey = "";
@@ -3032,9 +3542,9 @@ async function startModernViewer(bot, options) {
       if (stage !== digStage) {
         digStage = stage;
         socket.emit("digProgress", {
-          x: pos2.x,
-          y: pos2.y,
-          z: pos2.z,
+          x: pos3.x,
+          y: pos3.y,
+          z: pos3.z,
           stage,
           blockName: block.name,
           mergedShape: diggingShape(block)
@@ -3237,6 +3747,7 @@ async function startModernViewer(bot, options) {
     viewerSockets.add(socket);
     socket.once("disconnect", stop);
     socket.emit("version", bot.version);
+    content.subscribeSocket(socket);
     socket.emit("tacticalRoute", latestRoute);
     if (latestSkills) socket.emit("skillsState", latestSkills);
     if (recentCastCue && Date.now() - recentCastCue.atMs < 4e3)
@@ -3300,6 +3811,7 @@ async function startModernViewer(bot, options) {
       });
     });
   } catch (error) {
+    content.dispose();
     first.close();
     third.close();
     throw error;
@@ -3323,7 +3835,6 @@ async function startModernViewer(bot, options) {
   protocol.on("packet", onPacketObserved);
   protocol.on("spawn_entity", onSpawnEntity);
   bot.on("entityGone", forgetFishingBobberOwner);
-  protocol.on("world_particles", onParticle);
   protocol.on("explosion", onExplosion);
   protocol.on("world_event", onWorldEvent);
   protocol.on("collect", onCollect);
@@ -3399,6 +3910,7 @@ async function startModernViewer(bot, options) {
     async close() {
       if (closed) return;
       closed = true;
+      content.dispose();
       speechRelay.close();
       stopInventoryPreview();
       bot.off("path_update", onPathUpdate);
@@ -3410,7 +3922,6 @@ async function startModernViewer(bot, options) {
       protocol.off("packet", onPacketObserved);
       protocol.off("spawn_entity", onSpawnEntity);
       bot.off("entityGone", forgetFishingBobberOwner);
-      protocol.off("world_particles", onParticle);
       protocol.off("explosion", onExplosion);
       protocol.off("world_event", onWorldEvent);
       protocol.off("collect", onCollect);
