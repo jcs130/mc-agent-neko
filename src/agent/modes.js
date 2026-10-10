@@ -2922,7 +2922,19 @@ const modes_list = [
             // committed shelter-night plan is the SUCCESS state, not a stall: suppress unstuck
             // while that commitment holds; nightShelter's own exits (drift >2b, taking hits,
             // hostile <4b, dawn-direct) own every way the state can actually go bad.)
-            const shelterCommit = (() => { try { return !!(bot._commitment && /^(NIGHT_DIG_ONE|NIGHT_SEAL)$/.test(bot._commitment.kind || '')); } catch (e) { return false; } })();
+            const shelterCommit = (() => {
+                try {
+                    if (!/^(NIGHT_DIG_ONE|NIGHT_SEAL)$/.test(bot._commitment?.kind || '')) return false;
+                    const tod = bot.time?.timeOfDay;
+                    if (!(tod >= 12000 && tod <= 23500)) return false;
+                    // With an external planner, the legacy world-model proposal is
+                    // advisory. It is not proof that nightShelter actually owns the
+                    // body: clearing controls here cancelled harvesting/escape paths
+                    // every tick even with FREE mobility and no shelter executor.
+                    if (agent.hasExternalAutonomyOwner?.() && bot._currentSkill !== 'nightShelter') return false;
+                    return true;
+                } catch (e) { return false; }
+            })();
             if (shelterCommit) {
                 try {
                     bot.pathfinder && bot.pathfinder.setGoal && bot.pathfinder.setGoal(null);
