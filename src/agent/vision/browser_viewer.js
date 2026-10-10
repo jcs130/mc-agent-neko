@@ -21,6 +21,9 @@ export async function addBrowserViewer(bot, count_id = 0) {
     const { startModernViewer } = await import('./modern/host.mjs');
     const handle = await startModernViewer(bot, { port,
         assetsDir: settings.modern_viewer_assets_dir, speakerName: bot.username,
+        selfSkinPath: settings.modern_viewer_self_skin,
+        selfSkinModel: settings.modern_viewer_self_skin_model ?? 'slim',
+        observerState: settings.modern_viewer_observer_state === true,
         maxSessions: settings.modern_viewer_max_sessions ?? 8 });
     let lan;
     try {

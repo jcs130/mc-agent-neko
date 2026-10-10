@@ -2,7 +2,7 @@
   "repository": "https://github.com/jcs130/Cortico",
   "revision": "f0db612ce5075287330ab3e095ffa449c6e8e71c",
   "entry": "src/worlds/minecraft/modern-viewer.ts",
-  "bundleSha256": "d1ae8b6d88582ff427c9d768887515f94cc4755c850478380b7e67988931017c",
+  "bundleSha256": "1dbf5d0dc1d92d7b0c5c903004ee77e87e7e38a7eb28c989569ff5f3d62eab10",
   "inputs": [
     "src/worlds/minecraft/viewer-biome.ts",
     "src/worlds/minecraft/viewer-light.ts",
@@ -43,16 +43,22 @@
     "src/worlds/minecraft/viewer-player-skin.ts",
     "src/worlds/minecraft/modern-viewer.ts"
   ],
+  "localInputs": [
+    "src/agent/vision/viewer_self_skin.js"
+  ],
   "renderer": {
     "repository": "https://github.com/jcs130/mc-visual-console",
-    "revision": "06ca0f166675d67a69422a0479b3aeb4d76604fd",
+    "revision": "79ddc629a7ba0c74ba064234e7928052be6dfc15",
     "directory": "packages/modern-viewer/renderer-src",
-    "gitTree": "044dcc3518de1d600a709da91e5d94dbe991ba24",
+    "gitTree": "032446771e1551bce5a668b8517f9959e411f07b",
     "minecraftVersion": "1.20.6",
     "socketProtocol": "packages/modern-viewer/renderer-src/SOCKET_PROTOCOL.md",
     "license": "MIT",
     "licenseFile": "RENDERER_LICENSE",
     "inputs": [
+      "packages/modern-viewer/renderer-src/host/viewer-observer.mjs",
+      "packages/modern-viewer/renderer-src/host/viewer-ysm-assets.mjs",
+      "packages/modern-viewer/renderer-src/host/viewer-appearance.mjs",
       "packages/modern-viewer/renderer-src/host/text-display.mjs",
       "packages/modern-viewer/renderer-src/host/viewer-content.mjs",
       "packages/modern-viewer/renderer-src/host/viewer-asset-server.mjs"
@@ -63,6 +69,8 @@
     "Make concurrent viewing configurable (default 8, range 1-16); keep the separate capture limit.",
     "Report Minecraft connection health separately from the renderer HTTP listener.",
     "Observe original particle, map and TextDisplay packets through the shared renderer bridge; remove the duplicate legacy particle path.",
-    "Serve original font ZIP resources through the shared bounded asset server."
+    "Serve original font ZIP resources through the shared bounded asset server.",
+    "Use the shared appearance/asset bridge; observer registration remains opt-in for spectator consumers.",
+    "Optionally serve a validated local 64x64 PNG for the own bot; preserve server skins for other players."
   ]
 }

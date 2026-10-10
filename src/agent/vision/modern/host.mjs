@@ -1,3 +1,405 @@
+// ../neko-mc-trial/mc-agent-neko/src/agent/vision/viewer_self_skin.js
+import { readFile, stat } from "node:fs/promises";
+import { createHash } from "node:crypto";
+async function loadViewerSelfSkin(filename, model = "slim") {
+  if (!filename) return null;
+  if (!["slim", "classic"].includes(model)) throw new Error("Invalid viewer self skin model");
+  if ((await stat(filename)).size > 128 * 1024) throw new Error("Viewer self skin exceeds 128 KiB");
+  const bytes = await readFile(filename);
+  if (bytes.length < 33 || bytes.length > 128 * 1024 || !bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])) || bytes.toString("ascii", 12, 16) !== "IHDR" || bytes.readUInt32BE(16) !== 64 || bytes.readUInt32BE(20) !== 64) throw new Error("Viewer self skin must be a 64\xD764 PNG");
+  const hash = createHash("sha256").update(bytes).digest("hex");
+  return { bytes, entity: { skinUrl: `/head-texture/${hash}.png`, skinModel: model } };
+}
+
+// ../neko-mc-trial/mc-visual-console-contrib-source/packages/modern-viewer/renderer-src/host/viewer-observer.mjs
+var CHANNELS = /* @__PURE__ */ new Set(["mcviewer:state", "corti:viewer_state"]);
+var UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function createViewerObserverBridge(bot, { now = Date.now, staleMs = 12e3, serializeWindow } = {}) {
+  const subscribers = /* @__PURE__ */ new Set();
+  let nativeWindow = null;
+  const windowChanged = () => {
+    if (nativeWindow && current?.viewerSession?.attached && current.viewerSession.windowOpen && serializeWindow)
+      emit("containerState", serializeWindow(nativeWindow));
+  };
+  function openWindow(window) {
+    nativeWindow?.off?.("updateSlot", windowChanged);
+    nativeWindow = window;
+    nativeWindow?.on?.("updateSlot", windowChanged);
+    windowChanged();
+  }
+  let current = null, pending = null, cameraId = null, at = 0, closed = false;
+  const key = (state) => state?.viewerSession?.attached ? [
+    state.viewerSession.playerUuid,
+    state.viewerSession.entityId,
+    state.viewerSession.worldUuid
+  ].join(":") : "";
+  const emit = (event, value) => {
+    for (const socket of subscribers) socket.emit(event, value);
+  };
+  function reset(reason) {
+    openWindow(null);
+    current = null;
+    pending = null;
+    at = 0;
+    emit("viewerSession", { mode: "observer", attached: false, reason });
+    emit("containerState", null);
+    emit("skillsState", { schemaVersion: 1, mana: null, skills: [], abilities: [] });
+    emit("observerState", { attached: false, reason });
+  }
+  function accept(state) {
+    const session = state.viewerSession;
+    if (session.mode === "observer" && session.attached && session.entityId !== cameraId) {
+      pending = state;
+      return;
+    }
+    if (key(current) !== key(state)) emit("containerState", null);
+    current = state;
+    pending = null;
+    at = now();
+    emit("viewerSession", session);
+    if (!session.attached || !session.windowOpen) emit("containerState", null);
+    emit("skillsState", state);
+    emit("observerState", { ...session, vitals: state.vitals ?? null });
+    windowChanged();
+  }
+  function payload(packet) {
+    if (!CHANNELS.has(packet.channel) || !Buffer.isBuffer(packet.data) || packet.data.length > 16384) return;
+    let state;
+    try {
+      state = JSON.parse(packet.data.toString("utf8"));
+    } catch {
+      return;
+    }
+    const session = state?.viewerSession;
+    if (state?.schemaVersion !== 1 || !session || !UUID.test(session.recipientUuid ?? "") || session.recipientUuid.toLowerCase() !== String(bot.player?.uuid ?? bot.entity?.uuid ?? bot.uuid).toLowerCase() || !["self", "observer"].includes(session.mode) || typeof session.attached !== "boolean") return;
+    if (session.attached && (!UUID.test(session.playerUuid ?? "") || !UUID.test(session.worldUuid ?? "") || !Number.isSafeInteger(session.entityId) || !/^[A-Za-z0-9_.]{1,32}$/.test(session.playerName ?? "") || typeof session.windowOpen !== "boolean")) return;
+    accept(state);
+  }
+  function camera(packet) {
+    const previous = cameraId, candidate = pending;
+    cameraId = packet.cameraId;
+    if (current?.viewerSession?.mode === "observer" && current.viewerSession.entityId !== cameraId) reset("camera_changed");
+    if (previous !== cameraId && candidate?.viewerSession?.entityId === cameraId) accept(candidate);
+  }
+  const respawn = () => {
+    cameraId = null;
+    reset("respawn");
+  };
+  const closeWindow = () => {
+    openWindow(null);
+    emit("containerState", null);
+  };
+  const outgoing = (name2) => {
+    if (name2 === "close_window") closeWindow();
+  };
+  const register = () => {
+    if (bot._client?.state === "play") bot._client.write("custom_payload", {
+      channel: "minecraft:register",
+      data: Buffer.from("mcviewer:state")
+    });
+  };
+  bot._client.on("custom_payload", payload);
+  bot._client.on("camera", camera);
+  bot._client.on("respawn", respawn);
+  bot._client.on("close_window", closeWindow);
+  bot._client.on("writePacket", outgoing);
+  bot.on("windowClose", closeWindow);
+  bot.on("spawn", register);
+  if (serializeWindow) bot.on("windowOpen", openWindow);
+  const onEnd = () => reset("disconnected");
+  bot.on("end", onEnd);
+  register();
+  const timer = setInterval(() => {
+    if (current && now() - at > staleMs) reset("state_stale");
+  }, 1e3);
+  timer.unref?.();
+  return {
+    subscribeSocket(socket) {
+      if (closed) throw Error("observer_bridge_closed");
+      subscribers.add(socket);
+      if (current) {
+        socket.emit("viewerSession", current.viewerSession);
+        socket.emit("skillsState", current);
+        socket.emit("observerState", { ...current.viewerSession, vitals: current.vitals ?? null });
+        if (nativeWindow && current.viewerSession.attached && current.viewerSession.windowOpen && serializeWindow)
+          socket.emit("containerState", serializeWindow(nativeWindow));
+      }
+      const off = () => {
+        subscribers.delete(socket);
+        socket.off?.("disconnect", off);
+      };
+      socket.on("disconnect", off);
+      return off;
+    },
+    snapshot: () => current,
+    dispose() {
+      if (closed) return;
+      closed = true;
+      clearInterval(timer);
+      reset("disposed");
+      subscribers.clear();
+      bot._client.off("custom_payload", payload);
+      bot._client.off("camera", camera);
+      bot._client.off("respawn", respawn);
+      bot._client.off("close_window", closeWindow);
+      bot._client.off("writePacket", outgoing);
+      bot.off("windowClose", closeWindow);
+      bot.off("spawn", register);
+      bot.off("end", onEnd);
+      bot.off("windowOpen", openWindow);
+    }
+  };
+}
+
+// ../neko-mc-trial/mc-visual-console-contrib-source/packages/modern-viewer/renderer-src/host/viewer-ysm-assets.mjs
+import { createHash as createHash2, randomBytes } from "node:crypto";
+import { gunzipSync } from "node:zlib";
+var YSM_ASSET_CHANNEL = "mcagent:ysm_asset";
+var MAX_BYTES = 2 * 1024 * 1024;
+var MAX_RAW = 8 * 1024 * 1024;
+var sha = (bytes) => createHash2("sha256").update(bytes).digest("hex");
+function decodeYsmBundle(compressed, hash) {
+  if (compressed.length > MAX_BYTES || sha(compressed) !== hash) throw Error("YSM_ASSET_HASH_MISMATCH");
+  const raw = gunzipSync(compressed, { maxOutputLength: MAX_RAW });
+  const bundle = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(raw));
+  if (bundle.schemaVersion !== 1 || bundle.ysmVersion !== "2.4.1" || bundle.format !== "ysm-bedrock-original" || typeof bundle.modelId !== "string" || bundle.modelId.length > 96 || !bundle.files || Object.keys(bundle.files).length > 20) throw Error("YSM_ASSET_FORMAT_UNSUPPORTED");
+  let total = 0;
+  for (const [path5, file] of Object.entries(bundle.files)) {
+    if (path5.startsWith("/") || path5.includes("\\") || path5.includes(":") || path5.split("/").includes("..") || typeof file.base64 !== "string") throw Error("YSM_ASSET_PATH_INVALID");
+    const bytes = Buffer.from(file.base64, "base64");
+    total += bytes.length;
+    if (total > MAX_RAW || bytes.length !== file.bytes || sha(bytes) !== file.sha256) throw Error("YSM_SOURCE_HASH_MISMATCH");
+  }
+  if (!bundle.files[bundle.model] || !bundle.files[bundle.animation] || !bundle.files["ysm.json"] || Object.values(bundle.textures ?? {}).some((path5) => !bundle.files[path5])) throw Error("YSM_SOURCE_MISSING");
+  return { ...bundle, assetSha256: hash };
+}
+function createYsmAssetReceiver(bot, { onAsset = () => {
+}, onError = () => {
+} } = {}) {
+  const cache = /* @__PURE__ */ new Map(), queue = /* @__PURE__ */ new Map(), attempts = /* @__PURE__ */ new Map();
+  let active = null, disposed = false, bytes = 0, lastStarted = 0;
+  const start = () => {
+    if (disposed || active || !queue.size || bot._client.state !== "play" || Date.now() - lastStarted < 600) return;
+    const [hash, row] = queue.entries().next().value;
+    queue.delete(hash);
+    const requestId = randomBytes(16).toString("hex");
+    active = { row, hash, requestId, parts: [], size: 0, count: null, started: Date.now() };
+    lastStarted = Date.now();
+    attempts.set(hash, (attempts.get(hash) ?? 0) + 1);
+    bot._client.write("custom_payload", { channel: YSM_ASSET_CHANNEL, data: Buffer.from(JSON.stringify({ type: "get", modelId: row.modelId, sha256: hash, requestId })) });
+  };
+  const fail = (reason) => {
+    const prior = active;
+    active = null;
+    if (prior) onError(prior.row, reason);
+    start();
+  };
+  const payload = (packet) => {
+    if (packet.channel !== YSM_ASSET_CHANNEL || !active || packet.data.length > 18e3) return;
+    try {
+      const p = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(packet.data));
+      if (p.schemaVersion !== 1 || p.type !== "chunk" || p.requestId !== active.requestId || p.sha256 !== active.hash) return;
+      if (!Number.isInteger(p.count) || p.count < 1 || p.count > 171 || !Number.isInteger(p.index) || p.index < 0 || p.index >= p.count || !Number.isInteger(p.bytes) || p.bytes < 1 || p.bytes > MAX_BYTES || typeof p.data !== "string" || p.data.length > 16384 || active.count !== null && (active.count !== p.count || active.bytes !== p.bytes)) throw Error("YSM_TRANSFER_INVALID");
+      active.count = p.count;
+      active.bytes = p.bytes;
+      if (active.parts[p.index]) return;
+      const part = Buffer.from(p.data, "base64");
+      if (part.length !== Math.min(12288, p.bytes - p.index * 12288)) throw Error("YSM_TRANSFER_SIZE_INVALID");
+      active.parts[p.index] = part;
+      active.size += part.length;
+      if (active.parts.filter(Boolean).length === p.count) {
+        if (active.size !== p.bytes) throw Error("YSM_TRANSFER_SIZE_INVALID");
+        const bundle = decodeYsmBundle(Buffer.concat(active.parts), active.hash);
+        if (bundle.modelId !== active.row.modelId) throw Error("YSM_MODEL_BINDING_MISMATCH");
+        const size = Buffer.byteLength(JSON.stringify(bundle));
+        while (cache.size >= 32 || bytes + size > 32 * 1024 * 1024) {
+          const key = cache.keys().next().value;
+          bytes -= cache.get(key).size;
+          cache.delete(key);
+        }
+        const hash = active.hash;
+        cache.set(hash, { bundle, size });
+        bytes += size;
+        active = null;
+        onAsset(bundle);
+        setTimeout(start, 600).unref?.();
+      }
+    } catch (error) {
+      fail(error.message?.startsWith("YSM_") ? error.message : "YSM_TRANSFER_INVALID");
+    }
+  };
+  const timer = setInterval(() => {
+    if (active && Date.now() - active.started > 2e4) fail("YSM_TRANSFER_TIMEOUT");
+    else start();
+  }, 1e3);
+  timer.unref?.();
+  bot._client.on("custom_payload", payload);
+  return { get: (hash) => cache.get(hash)?.bundle, request(row) {
+    if (disposed || row.webAvailable !== true || cache.has(row.assetSha256) || active?.hash === row.assetSha256 || (attempts.get(row.assetSha256) ?? 0) >= 3 || queue.size >= 40) return;
+    queue.set(row.assetSha256, row);
+    start();
+  }, reset() {
+    active = null;
+    queue.clear();
+    attempts.clear();
+  }, dispose() {
+    disposed = true;
+    clearInterval(timer);
+    bot._client.off("custom_payload", payload);
+    cache.clear();
+    queue.clear();
+    active = null;
+  } };
+}
+
+// ../neko-mc-trial/mc-visual-console-contrib-source/packages/modern-viewer/renderer-src/host/viewer-appearance.mjs
+var UUID2 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+var APPEARANCE_CHANNEL = "mcagent:appearance";
+var PAPER_YSM_JAR_SHA256 = "ec51cfae84d219a45fac5098a31bfe980bcb7c2d8b413e8fffbd05a411a85680";
+function parseAppearancePacket(packet) {
+  if (packet?.channel !== APPEARANCE_CHANNEL || !(packet.data instanceof Uint8Array) || packet.data.length > 2048) return null;
+  let value;
+  try {
+    value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(packet.data));
+  } catch {
+    return null;
+  }
+  if (!value || value.schemaVersion !== 1 || value.source !== "freesia_worker" || !UUID2.test(value.epoch ?? "") || !UUID2.test(value.playerUuid ?? "")) return null;
+  const base = { schemaVersion: 1, source: value.source, epoch: value.epoch, playerUuid: value.playerUuid.toLowerCase(), type: value.type };
+  if (value.type === "remove") return base;
+  if (value.type !== "state" || typeof value.available !== "boolean" || value.ysmVersion !== "2.4.1" || value.protocolVersion !== "2.4.0" || value.jarSha256 !== PAPER_YSM_JAR_SHA256) return null;
+  Object.assign(base, { available: value.available, ysmVersion: value.ysmVersion, protocolVersion: value.protocolVersion, jarSha256: value.jarSha256 });
+  if (!value.available) return { ...base, reason: value.reason === "YSM_WORKER_STATE_UNSUPPORTED" ? "YSM_WORKER_STATE_UNSUPPORTED" : "YSM_WORKER_STATE_UNAVAILABLE" };
+  if (!Number.isSafeInteger(value.entityId) || value.entityId < 0 || value.entityId > 2147483647 || typeof value.mandatory !== "boolean" || !/^[\p{L}\p{N}_./-]{1,96}$/u.test(value.modelId ?? "") || value.modelId.includes("..") || value.modelId.startsWith("/") || !/^[\p{L}\p{N}_.-]{1,96}$/u.test(value.texture ?? "") || typeof value.animation !== "string" || value.animation.length > 96) return null;
+  const web = value.webAvailable === true && /^[a-f0-9]{64}$/.test(value.assetSha256 ?? "") && Number.isInteger(value.assetBytes) && value.assetBytes > 0 && value.assetBytes <= 2 * 1024 * 1024;
+  return {
+    ...base,
+    entityId: value.entityId,
+    modelId: value.modelId,
+    texture: value.texture,
+    mandatory: value.mandatory,
+    animation: value.animation,
+    webAvailable: web,
+    ...web ? { assetSha256: value.assetSha256, assetBytes: value.assetBytes } : { webReason: typeof value.webReason === "string" ? value.webReason.slice(0, 96) : "YSM_SOURCE_NOT_REGISTERED" }
+  };
+}
+function createViewerAppearanceBridge(bot, { now = Date.now } = {}) {
+  const records = /* @__PURE__ */ new Map(), listeners = /* @__PURE__ */ new Set();
+  let epoch = null, disposed = false;
+  const errors = /* @__PURE__ */ new Map();
+  const assets = createYsmAssetReceiver(bot, { onAsset: (bundle) => {
+    emit("appearanceAsset", bundle);
+    for (const row of records.values()) if (row.assetSha256 === bundle.assetSha256) {
+      const bound = binding(row);
+      if (bound) emit("appearanceState", bound);
+    }
+  }, onError: (row, reason) => {
+    errors.set(row.assetSha256, reason);
+    const bound = binding(row);
+    if (bound) emit("appearanceState", bound);
+  } });
+  const emit = (name2, row) => {
+    for (const fn of listeners) try {
+      fn(name2, row);
+    } catch {
+      listeners.delete(fn);
+    }
+  };
+  const reset = () => {
+    records.clear();
+    errors.clear();
+    assets.reset();
+    epoch = null;
+    emit("appearanceReset", { schemaVersion: 1 });
+  };
+  function binding(row) {
+    const ownUuid = bot._client.uuid ?? bot.player?.uuid;
+    const own = ownUuid?.toLowerCase() === row.playerUuid;
+    const entity = own ? bot.entity : bot.entities?.[row.entityId];
+    const actualUuid = own ? ownUuid : entity?.uuid;
+    if (!entity || typeof actualUuid !== "string" || actualUuid.toLowerCase() !== row.playerUuid || row.available && entity.id !== row.entityId) return null;
+    const { receivedAt, ...publicRow } = row;
+    const asset = assets.get(row.assetSha256), renderAvailable = row.available === true && asset?.modelId === row.modelId && Object.hasOwn(asset.textures, row.texture);
+    return { ...publicRow, entityId: entity.id, renderAvailable, renderReason: renderAvailable ? null : errors.get(row.assetSha256) ?? row.webReason ?? "YSM_ASSET_PENDING", completeEntityParityVerified: false };
+  }
+  function payload(packet) {
+    const row = parseAppearancePacket(packet);
+    if (!row) return;
+    if (epoch !== row.epoch) {
+      reset();
+      epoch = row.epoch;
+    }
+    if (row.type === "remove") {
+      records.delete(row.playerUuid);
+      emit("appearanceRemove", { schemaVersion: 1, playerUuid: row.playerUuid });
+      return;
+    }
+    if (records.size >= 40 && !records.has(row.playerUuid)) return;
+    if (!row.available) row.entityId = records.get(row.playerUuid)?.entityId;
+    records.set(row.playerUuid, { ...row, receivedAt: now() });
+    const bound = binding(row);
+    if (bound) {
+      const bundle = assets.get(row.assetSha256);
+      if (bundle) emit("appearanceAsset", bundle);
+      emit("appearanceState", bound);
+      if (listeners.size) assets.request(row);
+    }
+  }
+  const tracked = (entity) => {
+    const uuid = entity?.uuid?.toLowerCase();
+    const row = uuid && records.get(uuid);
+    const bound = row && binding(row);
+    if (bound) emit("appearanceState", bound);
+  };
+  const gone = (entity) => {
+    if (entity?.uuid) emit("appearanceRemove", { schemaVersion: 1, playerUuid: entity.uuid.toLowerCase() });
+  };
+  bot._client.on("custom_payload", payload);
+  bot.on("entitySpawn", tracked);
+  bot.on("entityGone", gone);
+  bot.on("login", reset);
+  bot.on("respawn", reset);
+  bot.on("end", reset);
+  const expire = () => {
+    for (const [uuid, row] of records) if (now() - row.receivedAt > 15e3) {
+      records.delete(uuid);
+      emit("appearanceRemove", { schemaVersion: 1, playerUuid: uuid });
+    }
+  };
+  const timer = setInterval(expire, 1e3);
+  timer.unref?.();
+  const snapshot = () => {
+    expire();
+    return Array.from(records.values()).map(binding).filter(Boolean);
+  };
+  return { snapshot, subscribeSocket(socket) {
+    if (disposed) throw Error("viewer_appearance_disposed");
+    const fn = (name2, row) => socket.emit(name2, row);
+    listeners.add(fn);
+    socket.emit("appearanceReset", { schemaVersion: 1 });
+    for (const row of snapshot()) {
+      const bundle = assets.get(row.assetSha256);
+      if (bundle) socket.emit("appearanceAsset", bundle);
+      socket.emit("appearanceState", row);
+      assets.request(row);
+    }
+    return () => listeners.delete(fn);
+  }, dispose() {
+    if (disposed) return;
+    disposed = true;
+    assets.dispose();
+    clearInterval(timer);
+    bot._client.off("custom_payload", payload);
+    bot.off("entitySpawn", tracked);
+    bot.off("entityGone", gone);
+    bot.off("login", reset);
+    bot.off("respawn", reset);
+    bot.off("end", reset);
+    records.clear();
+    listeners.clear();
+  } };
+}
+
 // ../neko-mc-trial/mc-visual-console-contrib-source/packages/modern-viewer/renderer-src/host/text-display.mjs
 var integer = (n, min, max) => Number.isInteger(n) && n >= min && n <= max;
 var vector = (v, fallback) => v === void 0 ? fallback : v && ["x", "y", "z"].every((k) => Number.isFinite(v[k]) && Math.abs(v[k]) <= 64) ? { x: v.x, y: v.y, z: v.z } : null;
@@ -503,9 +905,9 @@ function createViewerContentBridge(bot, { now = Date.now, schedule = setInterval
 
 // src/worlds/minecraft/modern-viewer.ts
 import { createRequire } from "node:module";
-import { createHash } from "node:crypto";
+import { createHash as createHash3 } from "node:crypto";
 import { createServer } from "node:http";
-import { readFile as readFile3, stat as stat3 } from "node:fs/promises";
+import { readFile as readFile4, stat as stat4 } from "node:fs/promises";
 import path4 from "node:path";
 import { Server as SocketServer } from "socket.io";
 import { Vec3 as Vec33 } from "vec3";
@@ -1773,7 +2175,7 @@ function observeViewerSounds(protocol, registry, entityPosition, publish, stop, 
 }
 
 // src/worlds/minecraft/viewer-sound-registry.ts
-import { readFile } from "node:fs/promises";
+import { readFile as readFile2 } from "node:fs/promises";
 import path from "node:path";
 var CLIENT_1206_SHA256 = "02dfd345ac1ad55692d5dbc8486ac7e4fea72cd54ac494a79cd48963048e56b2";
 var SOUND_1206_COUNT = 1607;
@@ -1798,7 +2200,7 @@ function validateViewerSoundRegistry(value, expectedVersion) {
 async function loadViewerSoundRegistry(assetsDir, minecraftVersion, fallbackRegistry) {
   if (minecraftVersion !== "1.20.6") return { registry: fallbackRegistry, source: "minecraft-data", diagnostic: null };
   try {
-    const source = await readFile(path.join(assetsDir, "public", "sounds", "registry.json"), "utf8");
+    const source = await readFile2(path.join(assetsDir, "public", "sounds", "registry.json"), "utf8");
     if (source.length > 1024 * 1024) throw new Error("Sound registry metadata too large");
     const value = JSON.parse(source);
     const registry = validateViewerSoundRegistry(value, minecraftVersion);
@@ -2028,17 +2430,17 @@ function observeViewerFishingCatch(bot, publish, serializeItem, now = Date.now) 
 }
 
 // src/worlds/minecraft/viewer-page-assets.ts
-import { readFile as readFile2, stat } from "node:fs/promises";
+import { readFile as readFile3, stat as stat2 } from "node:fs/promises";
 import path2 from "node:path";
 var MAX_DOCUMENT_BYTES = 2 * 1024 * 1024;
 async function document(root, relative) {
   const filename = path2.join(root, "public", relative);
-  const info = await stat(filename).catch((error) => {
+  const info = await stat2(filename).catch((error) => {
     if (error.code === "ENOENT" || error.code === "ENOTDIR") return null;
     throw error;
   });
   if (!info?.isFile() || info.size > MAX_DOCUMENT_BYTES) return null;
-  const bytes = await readFile2(filename);
+  const bytes = await readFile3(filename);
   if (bytes.length > MAX_DOCUMENT_BYTES) return null;
   return bytes.toString("utf8");
 }
@@ -2061,7 +2463,7 @@ async function viewerPageCss(root, fallback, speechCss = "") {
 
 // ../neko-mc-trial/mc-visual-console-contrib-source/packages/modern-viewer/renderer-src/host/viewer-asset-server.mjs
 import { createReadStream } from "node:fs";
-import { stat as stat2 } from "node:fs/promises";
+import { stat as stat3 } from "node:fs/promises";
 import path3 from "node:path";
 var MAX_ASSET_BYTES = 32 * 1024 * 1024;
 var MIME = {
@@ -2097,7 +2499,7 @@ async function serveViewerAsset(res, root, relative, cacheControl = "public, max
   const extension = path3.extname(file).toLowerCase();
   if (!file.startsWith(path3.resolve(root) + path3.sep) || !MIME[extension])
     return false;
-  const info = await stat2(file).catch(() => null);
+  const info = await stat3(file).catch(() => null);
   if (!info?.isFile() || info.size > MAX_ASSET_BYTES)
     return false;
   const ranged = extension === ".ogg";
@@ -2602,8 +3004,8 @@ var VIEWER_LAYOUT_CSS = `
 `;
 var SPEECH_BUBBLE_CSS = `.corti-speech-bubble{position:fixed;z-index:7;left:50%;bottom:150px;width:min(720px,72vw);height:178px;transform:translateX(-50%);border:0;background:transparent;pointer-events:none}@media(max-width:720px){.corti-speech-bubble{bottom:140px;width:calc(100vw - 20px);height:152px}}`;
 async function requiredAssetsPresent(root, version) {
-  const source = JSON.parse(await readFile3(path4.join(root, "public", "asset-source.json"), "utf8"));
-  const client = JSON.parse(await readFile3(path4.join(root, "viewer-client.json"), "utf8"));
+  const source = JSON.parse(await readFile4(path4.join(root, "public", "asset-source.json"), "utf8"));
+  const client = JSON.parse(await readFile4(path4.join(root, "viewer-client.json"), "utf8"));
   if (source.minecraftVersion !== version || client.minecraftVersion !== version || !source.clientJarSha256 || client.clientJarSha256 !== source.clientJarSha256) return false;
   for (const relative of [
     "dist/modern-viewer.js",
@@ -2617,11 +3019,11 @@ async function requiredAssetsPresent(root, version) {
     "render-assets/itemsAtlases.json",
     "render-assets/painting-records.json"
   ]) {
-    if (!(await stat3(path4.join(root, relative)).catch(() => null))?.isFile()) return false;
+    if (!(await stat4(path4.join(root, relative)).catch(() => null))?.isFile()) return false;
   }
-  const browserHash = createHash("sha256").update(await readFile3(path4.join(root, "dist", "modern-viewer.js"))).digest("hex");
+  const browserHash = createHash3("sha256").update(await readFile4(path4.join(root, "dist", "modern-viewer.js"))).digest("hex");
   if (browserHash !== client.browserBundleSha256) return false;
-  if (client.mesherSha256 && createHash("sha256").update(await readFile3(path4.join(root, "public", "mesher.js"))).digest("hex") !== client.mesherSha256) return false;
+  if (client.mesherSha256 && createHash3("sha256").update(await readFile4(path4.join(root, "public", "mesher.js"))).digest("hex") !== client.mesherSha256) return false;
   return true;
 }
 function ownEntity(bot) {
@@ -2897,7 +3299,16 @@ async function startModernViewer(bot, options) {
   const origin = `http://127.0.0.1:${options.port}`;
   const sessions = /* @__PURE__ */ new Set();
   const sessionSlots = new ViewerSessionSlots(MAX_SESSIONS, MAX_CAPTURE_SESSIONS);
+  const selfSkin = await loadViewerSelfSkin(options.selfSkinPath, options.selfSkinModel ?? "slim");
+  const presentOwnEntity = () => ({ ...ownEntity(bot), ...selfSkin?.entity ?? {} });
   const content = createViewerContentBridge(bot);
+  const appearance = createViewerAppearanceBridge(bot);
+  const observer = options.observerState === true ? createViewerObserverBridge(bot) : null;
+  const disposeContent = () => {
+    observer?.dispose();
+    appearance.dispose();
+    content.dispose();
+  };
   const viewerSockets = /* @__PURE__ */ new Set();
   let latestRoute = { points: [], goal: viewerGoal(bot.pathfinder?.goal), status: "pending" };
   const publishRoute = (route) => {
@@ -3209,6 +3620,11 @@ async function startModernViewer(bot, options) {
         return;
       }
       if (await speechRelay.handle(req, res, pathname)) return;
+      if (selfSkin && pathname === selfSkin.entity.skinUrl) {
+        res.writeHead(200, { "content-type": "image/png", "cache-control": "no-cache" });
+        res.end(selfSkin.bytes);
+        return;
+      }
       if (pathname === "/healthz") {
         res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
         res.end(JSON.stringify({ ok: !closed, gameOnline: gameOnline(bot), version: bot.version, ...sessionSlots.status() }));
@@ -3553,7 +3969,7 @@ async function startModernViewer(bot, options) {
     };
     const publishAvatar = () => {
       if (active && bot.entity && socket.connected) {
-        socket.emit("avatarState", avatarState(bot, ++sequence, shieldRaised));
+        socket.emit("avatarState", { ...avatarState(bot, ++sequence, shieldRaised), entity: presentOwnEntity() });
         publishDigging();
       }
     };
@@ -3622,7 +4038,7 @@ async function startModernViewer(bot, options) {
         addMesh: view === "third",
         teleport: teleport === true
       });
-      socket.emit(view === "third" ? "entityMoved" : "playerEntity", ownEntity(bot));
+      socket.emit(view === "third" ? "entityMoved" : "playerEntity", presentOwnEntity());
       updateChunkPosition();
     };
     const forcedPosition = () => position2(void 0, true);
@@ -3748,6 +4164,8 @@ async function startModernViewer(bot, options) {
     socket.once("disconnect", stop);
     socket.emit("version", bot.version);
     content.subscribeSocket(socket);
+    socket.once("disconnect", appearance.subscribeSocket(socket));
+    observer?.subscribeSocket(socket);
     socket.emit("tacticalRoute", latestRoute);
     if (latestSkills) socket.emit("skillsState", latestSkills);
     if (recentCastCue && Date.now() - recentCastCue.atMs < 4e3)
@@ -3764,7 +4182,7 @@ async function startModernViewer(bot, options) {
       });
     }
     socket.emit("biome", { name: "unknown", dimension: String(bot.game.dimension || "minecraft:overworld"), id: null });
-    socket.emit(view === "third" ? "entity" : "playerEntity", ownEntity(bot));
+    socket.emit(view === "third" ? "entity" : "playerEntity", presentOwnEntity());
     bot.on("move", position2);
     bot.on("forcedMove", forcedPosition);
     bot.on("time", time);
@@ -3811,7 +4229,7 @@ async function startModernViewer(bot, options) {
       });
     });
   } catch (error) {
-    content.dispose();
+    disposeContent();
     first.close();
     third.close();
     throw error;
@@ -3910,7 +4328,7 @@ async function startModernViewer(bot, options) {
     async close() {
       if (closed) return;
       closed = true;
-      content.dispose();
+      disposeContent();
       speechRelay.close();
       stopInventoryPreview();
       bot.off("path_update", onPathUpdate);

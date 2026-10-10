@@ -12,6 +12,7 @@ import { Vec3 } from 'vec3';
 import settings from '../src/agent/settings.js';
 import { addBrowserViewer } from '../src/agent/vision/browser_viewer.js';
 import { startModernViewer } from '../src/agent/vision/modern/host.mjs';
+import { loadViewerSelfSkin } from '../src/agent/vision/viewer_self_skin.js';
 
 const require = createRequire(import.meta.url);
 const sha256 = value => createHash('sha256').update(value).digest('hex');
@@ -142,6 +143,36 @@ test('vendored host matches its recorded source hash', async () => {
     const metadata = JSON.parse(await readFile(new URL('../src/agent/vision/modern/source.json', import.meta.url)));
     const host = await readFile(new URL('../src/agent/vision/modern/host.mjs', import.meta.url));
     assert.equal(sha256(host), metadata.bundleSha256);
+});
+
+test('local YUI skin is bounded and sent only as the own avatar, without game packets', async t => {
+    const filename = new URL('../skins/yui-lolita-slim.png', import.meta.url);
+    const skin = await loadViewerSelfSkin(filename);
+    assert.match(skin.entity.skinUrl, /^\/head-texture\/[0-9a-f]{64}\.png$/,
+        'the shared renderer rejects skin URLs outside its trusted hashed route');
+    const root = await assets(t), port = await availablePort(), bot = fakeBot();
+    bot._client.write = () => assert.fail('passive own-bot viewing cannot write game packets');
+    const handle = await startModernViewer(bot, { port, assetsDir: root, selfSkinPath: filename });
+    t.after(() => handle.close());
+    const base = `http://127.0.0.1:${port}`;
+    const first = await connect(t, base);
+    const third = await connect(t, base, '/third/socket.io/');
+    for (const { value } of [first, third]) {
+        assert.equal(value.entity.skinUrl, skin.entity.skinUrl);
+        assert.equal(value.entity.skinModel, 'slim');
+    }
+    assert.deepEqual(Buffer.from(await (await fetch(base + skin.entity.skinUrl)).arrayBuffer()), skin.bytes);
+    await handle.close();
+    assert.equal(bot._client.listenerCount('custom_payload'), 0, 'shared bridge listeners must be released');
+});
+
+test('local skin rejects wrong dimensions and oversized files', async t => {
+    const root = await assets(t), file = path.join(root, 'bad-skin.png');
+    await writeFile(file, Buffer.alloc(128 * 1024 + 1));
+    await assert.rejects(loadViewerSelfSkin(file), /128 KiB/);
+    const wrong = Buffer.from(await readFile(new URL('../skins/yui-lolita-slim.png', import.meta.url)));
+    wrong.writeUInt32BE(128, 16); await writeFile(file, wrong);
+    await assert.rejects(loadViewerSelfSkin(file), /64×64 PNG/);
 });
 
 test('both views receive same-connection maps, native particles and private text, then release observers', { timeout: 12000 }, async t => {

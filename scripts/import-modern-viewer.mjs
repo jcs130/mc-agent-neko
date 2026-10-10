@@ -42,6 +42,12 @@ const result = await build({
             build.onResolve({ filter: /^neko-shared-viewer\/content$/ }, () => ({
                 path: path.join(rendererHost, 'viewer-content.mjs'),
             }));
+            build.onResolve({ filter: /^neko-shared-viewer\/(appearance|observer)$/ }, args => ({
+                path: path.join(rendererHost, `viewer-${args.path.split('/').at(-1)}.mjs`),
+            }));
+            build.onResolve({ filter: /^neko-local-viewer\/self-skin$/ }, () => ({
+                path: path.resolve('src/agent/vision/viewer_self_skin.js'),
+            }));
             build.onResolve({ filter: /^\.\/viewer-asset-server\.ts$/ }, () => ({
                 path: path.join(rendererHost, 'viewer-asset-server.mjs'),
             }));
@@ -69,14 +75,35 @@ const result = await build({
                       .replace(/<iframe\b[^>]*\bid=["']corti-speech-bubble["'][^>]*>[\s\S]*?<\/iframe>/gi, '')
                       .replace(/<script\b[^>]*\bsrc=["']\/speech-bubble\.js["'][^>]*>[\s\S]*?<\/script>/gi, '')); return;`);
                 source = "import { createViewerContentBridge } from 'neko-shared-viewer/content';\n" + source;
+                source = "import { createViewerAppearanceBridge } from 'neko-shared-viewer/appearance';\n" + source;
+                source = "import { createViewerObserverBridge } from 'neko-shared-viewer/observer';\n" + source;
+                source = "import { loadViewerSelfSkin } from 'neko-local-viewer/self-skin';\n" + source;
                 source = replaceOnce(source, '  const viewerSockets = new Set<Socket>();',
-                    '  const content = createViewerContentBridge(bot);\n  const viewerSockets = new Set<Socket>();', 'content lifecycle');
+                    `  const selfSkin = await loadViewerSelfSkin(options.selfSkinPath, options.selfSkinModel ?? 'slim');
+  const presentOwnEntity = () => ({ ...ownEntity(bot), ...(selfSkin?.entity ?? {}) });
+  const content = createViewerContentBridge(bot);
+  const appearance = createViewerAppearanceBridge(bot);
+  // Spectator registration is explicit; normal own-bot viewing stays passive.
+  const observer = options.observerState === true ? createViewerObserverBridge(bot) : null;
+  const disposeContent = () => { observer?.dispose(); appearance.dispose(); content.dispose(); };
+  const viewerSockets = new Set<Socket>();`, 'content lifecycle');
                 source = replaceOnce(source, "    socket.emit('version', bot.version);",
-                    "    socket.emit('version', bot.version);\n    content.subscribeSocket(socket);", 'content subscription');
+                    "    socket.emit('version', bot.version);\n    content.subscribeSocket(socket);\n    socket.once('disconnect', appearance.subscribeSocket(socket));\n    observer?.subscribeSocket(socket);", 'content subscription');
                 source = replaceOnce(source, '    first.close(); third.close();\n    throw error;',
-                    '    content.dispose();\n    first.close(); third.close();\n    throw error;', 'failed-start cleanup');
+                    '    disposeContent();\n    first.close(); third.close();\n    throw error;', 'failed-start cleanup');
                 source = replaceOnce(source, '      closed = true;\n      speechRelay.close();',
-                    '      closed = true;\n      content.dispose();\n      speechRelay.close();', 'content shutdown');
+                    '      closed = true;\n      disposeContent();\n      speechRelay.close();', 'content shutdown');
+                source = replaceOnce(source, "      if (pathname === '/healthz') {", `      if (selfSkin && pathname === selfSkin.entity.skinUrl) {
+        res.writeHead(200, { 'content-type': 'image/png', 'cache-control': 'no-cache' });
+        res.end(selfSkin.bytes); return;
+      }
+      if (pathname === '/healthz') {`, 'local own skin route');
+                source = replaceOnce(source, "        socket.emit('avatarState', avatarState(bot, ++sequence, shieldRaised));",
+                    "        socket.emit('avatarState', { ...avatarState(bot, ++sequence, shieldRaised), entity: presentOwnEntity() });", 'avatar own skin');
+                source = replaceOnce(source, "socket.emit(view === 'third' ? 'entityMoved' : 'playerEntity', ownEntity(bot));",
+                    "socket.emit(view === 'third' ? 'entityMoved' : 'playerEntity', presentOwnEntity());", 'moving own skin');
+                source = replaceOnce(source, "socket.emit(view === 'third' ? 'entity' : 'playerEntity', ownEntity(bot));",
+                    "socket.emit(view === 'third' ? 'entity' : 'playerEntity', presentOwnEntity());", 'initial own skin');
                 source = replaceOnce(source, "  protocol.on('world_particles', onParticle);", '', 'legacy particle registration');
                 source = replaceOnce(source, "      protocol.off('world_particles', onParticle);", '', 'legacy particle cleanup');
                 return { contents: source, loader: 'ts', resolveDir: path.dirname(filename) };
@@ -105,12 +132,15 @@ await writeFile(path.join(destination, 'source.json'), JSON.stringify({
     entry: 'src/worlds/minecraft/modern-viewer.ts',
     bundleSha256: createHash('sha256').update(bundle).digest('hex'),
     inputs: inputsFrom(sourceRoot),
+    localInputs: ['src/agent/vision/viewer_self_skin.js'],
     renderer: { ...rendererSource, inputs: inputsFrom(rendererRoot) },
     changes: ['Remove the host speech and livestream overlay; retain game rendering and sound.',
         'Make concurrent viewing configurable (default 8, range 1-16); keep the separate capture limit.',
         'Report Minecraft connection health separately from the renderer HTTP listener.',
         'Observe original particle, map and TextDisplay packets through the shared renderer bridge; remove the duplicate legacy particle path.',
-        'Serve original font ZIP resources through the shared bounded asset server.'],
+        'Serve original font ZIP resources through the shared bounded asset server.',
+        'Use the shared appearance/asset bridge; observer registration remains opt-in for spectator consumers.',
+        'Optionally serve a validated local 64x64 PNG for the own bot; preserve server skins for other players.'],
 }, null, 2) + '\n');
 await writeFile(path.join(destination, 'renderer-source.json'), JSON.stringify(rendererSource, null, 2) + '\n');
 console.log(`Imported modern viewer host (${bundle.length} bytes).`);

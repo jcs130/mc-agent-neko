@@ -55,6 +55,9 @@ const settings = {
     "modern_viewer_lan_address": "", // optional local IPv4 address for subnet-only viewing
     "modern_viewer_lan_prefix": 24,
     "modern_viewer_max_sessions": 8, // shared across local/LAN pages and all viewpoints (1-16)
+    "modern_viewer_self_skin": "", // optional own-bot 64x64 PNG; local viewer only
+    "modern_viewer_self_skin_model": "slim",
+    "modern_viewer_observer_state": false, // explicit spectator registration; requires server support
     "proactive_night_shelter": true, // disable for protected plugin hubs driven by an external agent
 
     "allow_insecure_coding": true, // allows newAction command and model can write/run code on your computer. enable at own risk

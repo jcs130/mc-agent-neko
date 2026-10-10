@@ -21,7 +21,7 @@ preventing the game agent from initializing.
 The frontend is [jcs130/mc-visual-console](https://github.com/jcs130/mc-visual-console),
 an MIT-licensed project with portable browser source and offline resource tools.
 The host adapter is included in this repository; generate browser code and
-Minecraft resources from the [pinned renderer source](https://github.com/jcs130/mc-visual-console/tree/06ca0f166675d67a69422a0479b3aeb4d76604fd/packages/modern-viewer/renderer-src).
+Minecraft resources from the [pinned renderer source](https://github.com/jcs130/mc-visual-console/tree/79ddc629a7ba0c74ba064234e7928052be6dfc15/packages/modern-viewer/renderer-src).
 Its revision, source tree and license are recorded in
 [`renderer-source.json`](../src/agent/vision/modern/renderer-source.json) and
 [`RENDERER_LICENSE`](../src/agent/vision/modern/RENDERER_LICENSE).
@@ -34,7 +34,7 @@ including particle/map resources and the original Chinese font ZIP.
 
 ```sh
 git clone https://github.com/jcs130/mc-visual-console.git mc-visual-console
-git -C mc-visual-console checkout 06ca0f166675d67a69422a0479b3aeb4d76604fd
+git -C mc-visual-console checkout 79ddc629a7ba0c74ba064234e7928052be6dfc15
 cd mc-visual-console
 npm ci --prefix packages/modern-viewer/renderer-src
 node tools/prepare-viewer-assets.mjs java-1.20.6 "/path/to/viewer-assets-new"
@@ -51,12 +51,12 @@ existing deployment. Building the source does not update a previously copied
 runtime directory: switch the configured directory, reload the viewer and
 browser, and compare the served `/index.js` bytes with the recorded bundle hash.
 Keep the previous directory for rollback. The frontend's
-[Socket.IO contract](https://github.com/jcs130/mc-visual-console/blob/06ca0f166675d67a69422a0479b3aeb4d76604fd/packages/modern-viewer/renderer-src/SOCKET_PROTOCOL.md)
+[Socket.IO contract](https://github.com/jcs130/mc-visual-console/blob/79ddc629a7ba0c74ba064234e7928052be6dfc15/packages/modern-viewer/renderer-src/SOCKET_PROTOCOL.md)
 documents the game state consumed by the browser; the bundled adapter supplies
 that stream from the existing bot.
 
 For a resource export from your own installed client, follow the upstream
-[resource and TextDisplay guide](https://github.com/jcs130/mc-visual-console/blob/06ca0f166675d67a69422a0479b3aeb4d76604fd/packages/modern-viewer/renderer-src/docs/text-display-bubbles.md).
+[resource and TextDisplay guide](https://github.com/jcs130/mc-visual-console/blob/79ddc629a7ba0c74ba064234e7928052be6dfc15/packages/modern-viewer/renderer-src/docs/text-display-bubbles.md).
 A JAR-only block export does not provide the complete launcher font resources.
 
 ## Enable local viewing
