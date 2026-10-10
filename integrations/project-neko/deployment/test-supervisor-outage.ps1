@@ -6,6 +6,11 @@ $cases = @(
   @{name='remote-offline';viewer='@{ok=$true;gameOnline=$false}';expected='waiting_for_minecraft_server';ensure=0},
   @{name='remote-offline-repeated';viewer='@{ok=$true;gameOnline=$false}';expected='waiting_for_minecraft_server';ensure=0;loops=4},
   @{name='viewer-gone';viewer='$null';expected='recovering';ensure=1},
+  @{name='native-reconnecting';viewer='$null';native='owned';expected='waiting_for_minecraft_server';ensure=0;loops=4},
+  @{name='native-stale-record';viewer='$null';native='stale';expected='recovering';ensure=1},
+  @{name='native-foreign-port';viewer='$null';native='foreign-port';expected='recovering';ensure=1},
+  @{name='native-child-gone';viewer='$null';native='no-child';expected='recovering';ensure=1},
+  @{name='native-wrong-command';viewer='$null';native='wrong-command';expected='recovering';ensure=1},
   @{name='main-gone';viewer='@{ok=$true;gameOnline=$false}';main='$null';expected='recovering';ensure=1},
   @{name='plugin-gone';viewer='@{ok=$true;gameOnline=$false}';plugin='$null';expected='recovering';ensure=1},
   @{name='stopped';viewer='@{ok=$true;gameOnline=$true}';expected=$null;ensure=0}
@@ -28,12 +33,30 @@ function Get-TrialHttp([string]$Url) {
   return __PLUGIN__
 }
 function Stop-OwnedTrialProcess { throw 'Healthy processes must not be stopped in a one-pass test.' }
+function Get-CimInstance {
+  param($ClassName,[string]$Filter,$ErrorAction)
+  if ($Filter -like 'ParentProcessId*') {
+    if ('__NATIVE__' -eq 'no-child') { return $null }
+    return [pscustomobject]@{ProcessId=9002;ParentProcessId=9001;CreationDate=[DateTime]'2026-10-10T12:00:01';
+      CommandLine='node src/process/init_agent.js ag_NEKO';Name='node.exe'}
+  }
+  return [pscustomobject]@{ProcessId=9001;CreationDate=$(if ('__NATIVE__' -eq 'stale') {[DateTime]'2026-10-10T12:05:00'}else{[DateTime]'2026-10-10T12:00:00'});
+    CommandLine=$(if ('__NATIVE__' -eq 'wrong-command') {'node unrelated.js'}else{'node main.js'});Name='node.exe'}
+}
+function Get-NetTCPConnection {
+  param($State,$LocalPort,$ErrorAction)
+  return [pscustomobject]@{LocalPort=8765;OwningProcess=$(if ('__NATIVE__' -eq 'foreign-port') {9999}else{9001})}
+}
 '@
   $loopLimit = if ($case.loops) {$case.loops} else {1}
   $fake = $fake.Replace('__VIEWER__', $case.viewer).Replace('__ENABLED__', $(if ($case.name -eq 'stopped') {'$false'} elseif ($loopLimit -gt 1) {'($script:iterations -lt ' + $loopLimit + ')'} else {'$true'}))
   $fake = $fake.Replace('__MAIN__', $(if ($case.main) {$case.main} else {'@{ok=$true}'}))
   $fake = $fake.Replace('__PLUGIN__', $(if ($case.plugin) {$case.plugin} else {'@{status=@{status="running"}}'}))
+  $fake = $fake.Replace('__NATIVE__', [string]$case.native)
   [IO.File]::WriteAllText((Join-Path $sandbox 'trial-lifecycle.ps1'), $fake)
+  if ($case.native) {
+    [IO.File]::WriteAllText((Join-Path $sandbox 'mc-process.json'), '{"pid":9001,"started":"2026-10-10T12:00:00"}')
+  }
   [IO.File]::WriteAllText((Join-Path $sandbox 'start-trial.ps1'), 'param([switch]$RequireUnattended)' + "`n" + 'Add-Content -LiteralPath "$PSScriptRoot\ensure-calls.txt" -Value ensure')
   if ($loopLimit -gt 1) { & (Join-Path $sandbox 'unattended-supervisor.ps1') }
   else { & (Join-Path $sandbox 'unattended-supervisor.ps1') -Once }

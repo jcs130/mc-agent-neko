@@ -18,6 +18,26 @@ function Write-SupervisorEvent([string]$Message) {
   Add-Content -LiteralPath "$trialRoot\logs\unattended-supervisor.log" -Value "[$((Get-Date).ToString('o'))] $Message"
 }
 
+function Test-OwnedNativeController {
+  # The viewer starts after login and disappears during remote maintenance.
+  # Preserve the existing reconnect loop only when its exact owner is alive.
+  try {
+    $recordPath="$trialRoot\mc-process.json"
+    if (-not (Test-Path -LiteralPath $recordPath)) { return $false }
+    $record=Get-Content -LiteralPath $recordPath -Raw | ConvertFrom-Json
+    $controller=Get-CimInstance Win32_Process -Filter "ProcessId = $($record.pid)" -ErrorAction SilentlyContinue
+    if (-not $controller -or $controller.Name -ne 'node.exe' -or $controller.CommandLine -notlike '*main.js*' -or
+        [Math]::Abs(($controller.CreationDate-[DateTime]::Parse($record.started)).TotalSeconds) -gt 10) { return $false }
+    $listener=Get-NetTCPConnection -State Listen -LocalPort 8765 -ErrorAction SilentlyContinue |
+      Where-Object { $_.OwningProcess -eq $controller.ProcessId }
+    if (-not $listener) { return $false }
+    $child=Get-CimInstance Win32_Process -Filter "ParentProcessId = $($controller.ProcessId)" -ErrorAction SilentlyContinue |
+      Where-Object { $_.Name -eq 'node.exe' -and $_.CommandLine -like '*src*process*init_agent.js*' -and
+        $_.CreationDate -ge $controller.CreationDate } | Select-Object -First 1
+    return [bool]$child
+  } catch { return $false }
+}
+
 try {
   do {
     if (-not (Test-TrialEnabled)) { break }
@@ -27,16 +47,17 @@ try {
     $plugin=Get-TrialHttp 'http://127.0.0.1:48916/plugin/status?plugin_id=game_agent_minecraft'
     $modelReady=$model -and $model.loaded -and $model.model -eq 'qwen3.8-flash-next-iq3_xxs'
     $mainReady=[bool]$main
-    # A remote server outage is handled by the native client's reconnect loop.
-    # Only a missing local viewer service counts toward process recovery.
+    # Viewer absence alone cannot distinguish a remote outage from a dead client.
     $mcServiceReady=[bool]($viewer -and $viewer.ok)
+    $mcControlReady=[bool](-not $mcServiceReady -and (Test-OwnedNativeController))
+    $mcLifecycleReady=$mcServiceReady -or $mcControlReady
     $mcReady=[bool]($mcServiceReady -and $viewer.gameOnline -ne $false)
     foreach ($component in @('main','mc')) {
-      $healthy=$(if ($component -eq 'main') { $mainReady } else { $mcServiceReady })
+      $healthy=$(if ($component -eq 'main') { $mainReady } else { $mcLifecycleReady })
       $failures[$component]=$(if ($healthy) { 0 } else { $failures[$component]+1 })
     }
     $pluginReady=$plugin -and $plugin.status.status -eq 'running'
-    $nextState=$(if (-not $modelReady) { 'waiting_for_local_model' } elseif ($mainReady -and $mcReady -and $pluginReady) { 'running' } elseif ($mainReady -and $mcServiceReady -and $pluginReady) { 'waiting_for_minecraft_server' } else { 'recovering' })
+    $nextState=$(if (-not $modelReady) { 'waiting_for_local_model' } elseif ($mainReady -and $mcReady -and $pluginReady) { 'running' } elseif ($mainReady -and $mcLifecycleReady -and $pluginReady) { 'waiting_for_minecraft_server' } else { 'recovering' })
     if ($nextState -ne $state) { Write-SupervisorEvent "state=$nextState"; $state=$nextState }
     if ($state -eq 'running') { $backoff=15 }
     $mayRecover=((Get-Date)-$lastRecovery).TotalSeconds -ge $backoff
@@ -70,6 +91,7 @@ try {
     Write-TrialJson "$trialRoot\unattended-status.json" @{
       checked_at=(Get-Date).ToString('o');pid=$PID;enabled=(Test-TrialEnabled);state=$state
       model_ready=[bool]$modelReady;main_ready=$mainReady;mc_ready=$mcReady;mc_service_ready=$mcServiceReady;plugin_ready=[bool]$pluginReady
+      mc_control_ready=$mcControlReady
       model='qwen3.8-flash-next-iq3_xxs';model_url='http://127.0.0.1:18030/v1'
       viewer='http://192.168.3.133:3000/dungeon/';recoveries=$recoveryCount
     }
