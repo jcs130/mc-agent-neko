@@ -1,0 +1,269 @@
+From a2ad656dd4a63fdb192f63019b64d80c226022e0 Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Sat, 10 Oct 2026 21:36:37 +0800
+Subject: [PATCH] fix: coalesce avatar work on assistant turn completion
+
+Claim repeated turn/text completions once, skip obsolete queued classification, and prevent late emotion results from replacing newer turns. Clear the existing timeout without cancelling other model clients.
+---
+ static/app/app-websocket.js                   |  35 +++-
+ .../frontend/test_avatar_turn_coalescing.mjs  | 172 ++++++++++++++++++
+ 2 files changed, 204 insertions(+), 3 deletions(-)
+ create mode 100644 tests/frontend/test_avatar_turn_coalescing.mjs
+
+diff --git a/static/app/app-websocket.js b/static/app/app-websocket.js
+index 5940177..68a6187 100644
+--- a/static/app/app-websocket.js
++++ b/static/app/app-websocket.js
+@@ -1818,11 +1818,13 @@
+     //     防止 proactive 自己触发下一条 proactive。
+     // emotion 本身是只读的（仅向头像推一条表情，不触发对话 / 记忆 / 再投递），
+     // 没有自触发风险，因此 proactive 轮也应当照常触发。
++    var finalizedAssistantTurns = new Map();
++    var assistantEmotionVersion = 0;
++
+     function finalizeAssistantTurn(assistantTurnId, options) {
+         options = options || {};
+         var enableMusic = options.enableMusic !== false;
+-        var reactionTarget = options.enableReactions !== false ? S.messageReactionTarget : null;
+-        S.messageReactionTarget = null;
++        var normalizedTurnId = normalizeAssistantTurnId(assistantTurnId);
+ 
+         var bufferedFullText = typeof window._geminiTurnFullText === 'string'
+             ? window._geminiTurnFullText
+@@ -1835,6 +1837,21 @@
+             : '';
+ 
+         var fullText = (bufferedFullText && bufferedFullText.trim()) ? bufferedFullText : fallbackFromBubble;
++        if (!fullText || !fullText.trim()) return;
++        var completionKey = normalizedTurnId ? JSON.stringify([normalizedTurnId, fullText]) : null;
++        if (completionKey && finalizedAssistantTurns.has(completionKey)) return;
++
++        // Normal and callback completion can name the same turn. Claim it
++        // before scheduling optional model work. A legacy fallback may reuse
++        // an ID, so different text must remain observable.
++        if (completionKey) {
++            finalizedAssistantTurns.set(completionKey, true);
++            if (finalizedAssistantTurns.size > 64) {
++                finalizedAssistantTurns.delete(finalizedAssistantTurns.keys().next().value);
++            }
++        }
++        var reactionTarget = options.enableReactions !== false ? S.messageReactionTarget : null;
++        S.messageReactionTarget = null;
+ 
+         // Trigger music bubble generation
+         if (enableMusic && typeof window.processMusicCommands === 'function' && fullText) {
+@@ -1848,16 +1865,26 @@
+             return;
+         }
+ 
++        var emotionVersion = ++assistantEmotionVersion;
++        function isCurrentEmotionTurn() {
++            if (emotionVersion !== assistantEmotionVersion || S.suppressAssistantStreamUntilNextSession) return false;
++            var activeTurnId = normalizeAssistantTurnId(S.assistantTurnId);
++            return !normalizedTurnId || !activeTurnId || normalizedTurnId === activeTurnId;
++        }
++
+         // Emotion analysis (5s timeout)
+         setTimeout(async function () {
++            if (!isCurrentEmotionTurn()) return;
++            var emotionTimeoutId = null;
+             try {
+                 var emotionPromise = (typeof window.analyzeEmotion === 'function')
+                     ? window.analyzeEmotion(fullText)
+                     : Promise.resolve(null);
+                 var timeoutPromise = new Promise(function (_, reject2) {
+-                    setTimeout(function () { reject2(new Error('情感分析超时')); }, 5000);
++                    emotionTimeoutId = setTimeout(function () { reject2(new Error('情感分析超时')); }, 5000);
+                 });
+                 var emotionResult = await Promise.race([emotionPromise, timeoutPromise]);
++                if (!isCurrentEmotionTurn()) return;
+                 if (emotionResult && emotionResult.emotion) {
+                     if (typeof window.applyMessageReactionFromEmotion === 'function') {
+                         try { window.applyMessageReactionFromEmotion(reactionTarget, emotionResult); } catch (_) { }
+@@ -1878,6 +1905,8 @@
+                 } else {
+                     console.warn(window.t('console.emotionAnalysisFailed'), emotionError);
+                 }
++            } finally {
++                if (emotionTimeoutId !== null) clearTimeout(emotionTimeoutId);
+             }
+         }, 100);
+ 
+diff --git a/tests/frontend/test_avatar_turn_coalescing.mjs b/tests/frontend/test_avatar_turn_coalescing.mjs
+new file mode 100644
+index 0000000..1503241
+--- /dev/null
++++ b/tests/frontend/test_avatar_turn_coalescing.mjs
+@@ -0,0 +1,172 @@
++import test from 'node:test';
++import assert from 'node:assert/strict';
++import vm from 'node:vm';
++import { readFileSync } from 'node:fs';
++
++const source = readFileSync(new URL('../../static/app/app-websocket.js', import.meta.url), 'utf8');
++const begin = source.indexOf('// 一轮 AI 文本说完后的统一收尾');
++const end = source.indexOf('    function ensureAssistantTurnStarted(', begin);
++assert.ok(begin >= 0 && end > begin);
++
++function harness({ deferred = false } = {}) {
++    const timers = new Map();
++    const calls = [], applied = [], events = [], pending = [];
++    const counts = { music: 0, subtitles: 0 };
++    let timerId = 0;
++    const S = { assistantTurnId: null, messageReactionTarget: null };
++    const window = {
++        _geminiTurnFullText: '好开心，找到铁矿了。',
++        t: key => key,
++        processMusicCommands() { counts.music++; },
++        translateAndShowSubtitle: async () => { counts.subtitles++; },
++        applyEmotion: emotion => applied.push(emotion),
++        analyzeEmotion(text) {
++            calls.push(text);
++            if (deferred) return new Promise((resolve, reject) => pending.push({ resolve, reject }));
++            return Promise.resolve({ emotion: 'happy', confidence: 0.9 });
++        }
++    };
++    const context = { S, window, Node: { ELEMENT_NODE: 1 },
++        normalizeAssistantTurnId: value => value == null ? null : String(value).trim() || null,
++        emitAssistantLifecycleEvent: (name, detail) => events.push({ name, detail }),
++        console: { log() {}, warn() {}, error() {} },
++        setTimeout(fn, delay) { const id = ++timerId; timers.set(id, { fn, delay }); return id; },
++        clearTimeout(id) { timers.delete(id); }
++    };
++    vm.runInNewContext(source.slice(begin, end), context);
++    const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
++    return { S, window, calls, applied, events, counts, pending, timers, flush,
++        finalize(id, options) { context.finalizeAssistantTurn(id, options); },
++        async run(delay = 100) {
++            for (const [id, timer] of [...timers]) {
++                if (timer.delay === delay) { timers.delete(id); void timer.fn(); }
++            }
++            await flush();
++        }
++    };
++}
++
++test('duplicate normal/callback finalization submits optional work once per turn', async () => {
++    const h = harness();
++    h.finalize('T1');
++    h.finalize('T1', { enableMusic: false, enableReactions: false });
++    await h.run();
++    assert.equal(h.calls.length, 1);
++    assert.equal(h.counts.subtitles, 1);
++    assert.equal(h.counts.music, 1);
++});
++
++test('distinct turns with identical text are not merged', async () => {
++    const h = harness();
++    h.finalize('T1'); await h.run();
++    h.finalize('T2'); await h.run();
++    assert.equal(h.calls.length, 2);
++    assert.equal(h.counts.subtitles, 2);
++});
++
++test('reused lifecycle fallback ID cannot suppress a new callback with different text', async () => {
++    const h = harness();
++    h.finalize('T1'); await h.run();
++    h.window._geminiTurnFullText = '现在我去找吃的。';
++    h.finalize('T1', { enableMusic: false }); await h.run();
++    assert.equal(h.calls.length, 2);
++    assert.equal(h.counts.subtitles, 2);
++});
++
++test('a newer finalized turn discards the older scheduled classifier before dispatch', async () => {
++    const h = harness();
++    h.finalize('T1');
++    h.window._geminiTurnFullText = '小心，有怪物。';
++    h.finalize('T2');
++    await h.run();
++    assert.deepEqual(h.calls, ['小心，有怪物。']);
++});
++
++test('an old in-flight classifier cannot overwrite a newer turn', async () => {
++    const h = harness({ deferred: true });
++    h.finalize('T1'); await h.run();
++    h.finalize('T2'); await h.run();
++    h.pending[0].resolve({ emotion: 'happy' }); await h.flush();
++    assert.deepEqual(h.applied, []);
++    h.pending[1].resolve({ emotion: 'surprised' }); await h.flush();
++    assert.deepEqual(h.applied, ['surprised']);
++    assert.deepEqual(h.events.map(event => event.detail.turnId), ['T2']);
++});
++
++test('starting a new turn prevents old queued and in-flight avatar work', async () => {
++    const queued = harness();
++    queued.S.assistantTurnId = 'T1'; queued.finalize('T1');
++    queued.S.assistantTurnId = 'T2'; await queued.run();
++    assert.equal(queued.calls.length, 0);
++    const active = harness({ deferred: true });
++    active.S.assistantTurnId = 'T1'; active.finalize('T1'); await active.run();
++    active.S.assistantTurnId = 'T2';
++    active.pending[0].resolve({ emotion: 'happy' }); await active.flush();
++    assert.deepEqual(active.applied, []);
++});
++
++test('successful and failed classifiers release their timeout timer', async () => {
++    const success = harness();
++    success.finalize('T1'); await success.run();
++    assert.equal(success.timers.size, 0);
++    const failure = harness({ deferred: true });
++    failure.finalize('T1'); await failure.run();
++    failure.pending[0].reject(new Error('unavailable')); await failure.flush();
++    assert.equal(failure.timers.size, 0);
++});
++
++test('missing turn identities are not treated as one permanent turn', async () => {
++    const h = harness();
++    h.finalize(null); await h.run();
++    h.finalize(null); await h.run();
++    assert.equal(h.calls.length, 2);
++});
++
++test('empty completion does not consume its identity before meaningful text arrives', async () => {
++    const h = harness();
++    h.window._geminiTurnFullText = ''; h.finalize('T1');
++    assert.equal(h.timers.size, 0);
++    h.window._geminiTurnFullText = '回来啦。'; h.finalize('T1'); await h.run();
++    assert.equal(h.calls.length, 1);
++});
++
++test('structured completion keeps expression analysis and skips subtitle translation', async () => {
++    const h = harness();
++    h.window._turnIsStructured = true;
++    let structured = 0;
++    h.window.finalizeSubtitleAsStructured = () => { structured++; };
++    h.finalize('T1'); await h.run();
++    assert.equal(h.calls.length, 1);
++    assert.equal(h.counts.subtitles, 0);
++    assert.equal(structured, 1);
++});
++
++test('session cancellation suppresses queued and in-flight avatar application', async () => {
++    const queued = harness();
++    queued.finalize('T1'); queued.S.suppressAssistantStreamUntilNextSession = true;
++    await queued.run(); assert.equal(queued.calls.length, 0);
++    const active = harness({ deferred: true });
++    active.finalize('T1'); await active.run();
++    active.S.suppressAssistantStreamUntilNextSession = true;
++    active.pending[0].resolve({ emotion: 'happy' }); await active.flush();
++    assert.deepEqual(active.applied, []);
++});
++
++test('timeout discards a late result without pretending to cancel backend inference', async () => {
++    const h = harness({ deferred: true });
++    h.finalize('T1'); await h.run();
++    await h.run(5000);
++    h.pending[0].resolve({ emotion: 'happy' }); await h.flush();
++    assert.deepEqual(h.applied, []);
++    assert.equal(h.calls.length, 1);
++    assert.equal(h.timers.size, 0);
++});
++
++test('music-only repeated completion plays once and sends no classifier request', async () => {
++    const h = harness();
++    h.window._geminiTurnFullText = '[play_music:test]';
++    h.finalize('T1'); h.finalize('T1'); await h.run();
++    assert.equal(h.counts.music, 1);
++    assert.equal(h.counts.subtitles, 0);
++    assert.equal(h.calls.length, 0);
++});

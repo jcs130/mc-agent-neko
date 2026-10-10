@@ -74,7 +74,7 @@ alongside the Minecraft body in this fork. The ordered plugin series includes
 scoped protection receipts, adaptive heartbeat pacing, readable custom items,
 protected operational inventory, storage capacity, matched recovery history,
 compact task authority and conditional post-observation action guidance.
-The manifest lists the exact plugin series and five companion host patches.
+The manifest lists the exact plugin series and six companion host patches.
 
 The series targets [Project-N-E-K-O/N.E.K.O](https://github.com/Project-N-E-K-O/N.E.K.O)
 at commit `fb2a2e731a8c954478d08678b0c8cf40e8145a54`. It changes only
@@ -121,12 +121,15 @@ git rev-parse HEAD:plugin/plugins/game_agent_minecraft
 ```
 
 The manifest is authoritative for the current bundle: 65 ordered plugin patches
-and five host patches reproduce the declared source's plugin tree and all 16
+and six host patches reproduce the declared source's plugin tree and all 18
 affected host-file blobs. Test counts are dated delivery evidence, not a claim
 that every later checkout has already been tested. See the
 [prefill verification report](../../docs/neko-llm-prefill-2026-10-10.md) for plugin
 coverage and the [latest timing delivery report](../../docs/llm-client-latency-observations-2026-10-10.md)
-for the native, contribution and host regression results.
+for the native, contribution and host regression results. The
+[avatar call audit](../../docs/neko-avatar-calls-2026-10-10.md) covers local
+turn coalescing, separate emotion calls, and the remaining one-pass metadata
+experiment.
 
 Follow the patched plugin's README for the existing N.E.K.O. plugin lifecycle,
 viewer and unattended settings. On the Minecraft body, set

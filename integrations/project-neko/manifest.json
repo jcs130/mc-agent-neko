@@ -1,7 +1,7 @@
 {
   "upstreamRepository": "https://github.com/Project-N-E-K-O/N.E.K.O",
   "baseCommit": "fb2a2e731a8c954478d08678b0c8cf40e8145a54",
-  "sourceCommit": "38654e3b2c81c54aad85c117f9b821c5d1b23249",
+  "sourceCommit": "a2ad656dd4a63fdb192f63019b64d80c226022e0",
   "scope": "plugin/plugins/game_agent_minecraft",
   "resultPluginTree": "21691ceb077d3ab3e880dba3b796e978703f8787",
   "patches": [
@@ -330,6 +330,15 @@
       "sourceCommit": "38654e3b2c81c54aad85c117f9b821c5d1b23249",
       "scopePaths": [
         "tests/frontend/test_emotion_csrf_retry.mjs"
+      ]
+    },
+    {
+      "file": "host-patches/0006-fix-coalesce-avatar-work-on-assistant-turn-completio.patch",
+      "sha256": "ae4eebea24a2ed9ca87e0bb618b8807156305f5231577cf5dfd9889cba15a066",
+      "sourceCommit": "a2ad656dd4a63fdb192f63019b64d80c226022e0",
+      "scopePaths": [
+        "static/app/app-websocket.js",
+        "tests/frontend/test_avatar_turn_coalescing.mjs"
       ]
     }
   ],
@@ -730,6 +739,33 @@
       "sampleCount": 1,
       "audibleSpeechVerified": false,
       "renderedExpressionVerified": false
+    }
+  },
+  "avatarCallCoalescingVerification": {
+    "date": "2026-10-10",
+    "sourceCommit": "a2ad656dd4a63fdb192f63019b64d80c226022e0",
+    "finalizerCasesPassed": 13,
+    "frontendTestsPassed": 16,
+    "initialReproFailed": 5,
+    "syntaxCheckPassed": true,
+    "duplicateReplayClassifierCallsBefore": 2,
+    "duplicateReplayClassifierCallsAfter": 1,
+    "scheduledSupersededReplayCallsBefore": 2,
+    "scheduledSupersededReplayCallsAfter": 1,
+    "normalReplyStillHasSeparateClassification": true,
+    "backendCancellationAdded": false,
+    "fullReplayMatchesSource": true,
+    "hostFilesMatched": 18,
+    "deploymentPhase": "deployed",
+    "renderedExpressionVerified": false,
+    "endToEndLatencyImprovementMeasured": false,
+    "desktopDeployment": {
+      "checkedAt": "2026-10-10T21:38:22.1861047+08:00",
+      "mainPreserved": true,
+      "nativePreserved": true,
+      "modelPreserved": true,
+      "backendReady": true,
+      "servedFileMatchesSource": true
     }
   }
 }
