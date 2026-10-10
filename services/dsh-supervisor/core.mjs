@@ -15,8 +15,9 @@ export function roleSchema(role, evidenceIds = [], issueKeys = []) {
         key: text, title: text, severity: text, scope: { ...text, enum: ['current', 'execution'] }, detail: text, evidenceIds: ids,
     }) } });
     if (role === 'diagnoser') return object({ summary: text, evidenceIds: ids });
+    const keys = { type: 'array', items: issueKeys.length ? { ...text, enum: issueKeys } : text };
     if (role === 'reviewer') return object({ decision: { ...text, enum: ['accept', 'reject', 'uncertain'] },
-        acceptedKeys: { type: 'array', items: issueKeys.length ? { ...text, enum: issueKeys } : text }, evidenceIds: ids, summary: text });
+        acceptedKeys: keys, actionableKeys: keys, evidenceIds: ids, summary: text });
     throw new Error('Unknown supervisor role');
 }
 
@@ -242,12 +243,12 @@ export async function writeDiagnosis({ ticket, evidence, diagnosis, read, post }
 export function approvedIssues(issues, reviewer, evidence, current, now = Date.now()) {
     if (!current.fresh || current.sessionId !== evidence.sessionId || !evidence.fresh
         || now - evidence.observedAt > 90000 || reviewer?.decision !== 'accept'
-        || !Array.isArray(reviewer.acceptedKeys)) return [];
+        || !Array.isArray(reviewer.acceptedKeys) || !Array.isArray(reviewer.actionableKeys)) return [];
     const aged = { ...evidence, facts: evidence.facts.map(fact => Number.isFinite(fact.observedAt)
         ? { ...fact, ageMs: Math.max(0, now - fact.observedAt), stale: now - fact.observedAt > 90000 } : fact) };
     const known = new Set(aged.facts.map(fact => fact.id));
     if (!Array.isArray(reviewer.evidenceIds) || reviewer.evidenceIds.some(id => !known.has(id))) return [];
-    return issues.filter(issue => reviewer.acceptedKeys.includes(issue.key) && validateIssue(issue, aged)
+    return issues.filter(issue => reviewer.acceptedKeys.includes(issue.key) && reviewer.actionableKeys.includes(issue.key) && validateIssue(issue, aged)
         && reviewer.evidenceIds.some(id => issue.evidenceIds.includes(id)));
 }
 

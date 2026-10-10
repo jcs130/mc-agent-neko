@@ -113,14 +113,22 @@ test('monitor inference yields to a running or queued game request and unknown m
 test('independent review cannot publish unsupported, expired, or previous-session issues', () => {
     const evidence = buildEvidence(frame, null, null, NOW);
     const issue = validateIssue({ key: 'stuck', title: 'possible stall', evidenceIds: ['game.activity'] }, evidence);
-    const reviewer = { decision: 'accept', acceptedKeys: ['stuck'], evidenceIds: ['game.activity'] };
+    const reviewer = { decision: 'accept', acceptedKeys: ['stuck'], actionableKeys: ['stuck'], evidenceIds: ['game.activity'] };
     assert.equal(approvedIssues([issue], reviewer, evidence, evidence, NOW).length, 1);
     for (const invalid of [
         { ...reviewer, decision: 'uncertain' }, { ...reviewer, acceptedKeys: ['invented'] },
         { ...reviewer, evidenceIds: ['invented'] }, { ...reviewer, evidenceIds: ['game.self'] },
+        { ...reviewer, actionableKeys: [] }, { ...reviewer, actionableKeys: undefined },
     ]) assert.equal(approvedIssues([issue], invalid, evidence, evidence, NOW).length, 0);
     assert.equal(approvedIssues([issue], reviewer, evidence, { ...evidence, sessionId: 'next-session' }, NOW).length, 0);
     assert.equal(approvedIssues([issue], reviewer, evidence, evidence, NOW + 91000).length, 0);
+});
+
+test('confirmed historical facts alone are not a repair ticket', () => {
+    const evidence = buildEvidence(frame, null, null, NOW);
+    const issue = validateIssue({ key: 'past-task-failures', title: 'normal past failure', evidenceIds: ['game.activity'] }, evidence);
+    const reviewer = { decision: 'accept', acceptedKeys: [issue.key], actionableKeys: [], evidenceIds: issue.evidenceIds };
+    assert.deepEqual(approvedIssues([issue], reviewer, evidence, evidence, NOW), []);
 });
 
 test('native failure history and original ticket evidence survive a fresh snapshot', () => {

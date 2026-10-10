@@ -99,7 +99,7 @@ test('slow review cannot refresh a current-state issue but can inspect a dated e
                     ? f.sourceId === 'game.activity' : f.sourceId.startsWith('native.execution.')) : null;
                 const report = role === 'observer' ? { issues: [{ key: 'fault', title: 'fault', scope, evidenceIds: [fact.id] }] }
                     : role === 'diagnoser' ? { summary: 'inspect error', evidenceIds: [prompt.issues[0].evidenceIds[0]] }
-                        : { decision: 'accept', acceptedKeys: ['fault'], evidenceIds: prompt.issues[0].evidenceIds };
+                        : { decision: 'accept', acceptedKeys: ['fault'], actionableKeys: ['fault'], evidenceIds: prompt.issues[0].evidenceIds };
                 return { report, evidence: prompt.evidence };
             } });
         const approved = core.approvedIssues(result.issues, result.reviewer.report, result.evidence,

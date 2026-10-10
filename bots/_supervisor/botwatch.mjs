@@ -38,6 +38,7 @@ import http from 'http';
 // shared black-box read layer (paths/parse/omniscient-fuse) — same readers overseer-snapshot uses,
 // so field names + staleness semantics can never drift between the two consumers.
 import { DIR, TICKET_PORT, now, rd, rj, latestFrame, eventsTail, readState } from './bb-readers.mjs';
+import { initialEventCursor, consumeEvents } from './event-cursor.mjs';
 
 const POLL_MS = 15000;
 const HEARTBEAT_SEC = parseInt(process.argv[2] || '1800', 10);
@@ -54,6 +55,7 @@ function postTicket(t) {
                 let b = ''; res.on('data', c => b += c); res.on('end', () => { try { resolve(JSON.parse(b)?.ticket?.id || null); } catch { resolve(null); } });
             });
             req.on('error', () => resolve(null));
+            req.setTimeout(5000, () => req.destroy(new Error('Ticket request timeout')));
             req.write(data); req.end();
         } catch { resolve(null); }
     });
@@ -63,7 +65,7 @@ function apiPost(p, body) {
         try {
             const data = JSON.stringify({ actor: 'sentinel', ...body });
             const req = http.request({ host: '127.0.0.1', port: TICKET_PORT, path: p, method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) } }, (res) => { res.on('data', () => {}); res.on('end', resolve); });
-            req.on('error', resolve); req.write(data); req.end();
+            req.on('error', resolve); req.setTimeout(5000, () => req.destroy(new Error('Ticket request timeout'))); req.write(data); req.end();
         } catch { resolve(); }
     });
 }
@@ -290,24 +292,25 @@ async function runDetector(d, s, t) {
 }
 
 // ── edge detectors (events, not states): fire on appearance, dedup by server ──────────────
-let seenEventTs = 0;   // ms of newest events.log line already processed
-function edgeDetectors(s, t) {
+let eventCursor = initialEventCursor(rj('edge-cursor.json'), rj('sentinel.json')?.ts);
+async function edgeDetectors(s, t) {
     // self-reported stuck — the bot's OWN watchdog screaming. highest precision.
-    for (const ln of s.events) {
-        const m = ln.match(/^\[([^\]]+)\]/); const lt = m ? Date.parse(m[1]) : 0;
-        if (!lt || lt <= seenEventTs) continue;
+    eventCursor = await consumeEvents(s.events, eventCursor, async ln => {
         if (/Pinned 15min\+|STUCK-ZONE|kicking the stack/.test(ln)) {
-            postTicket({
+            const ticketId = await postTicket({
                 type: 'stuck', severity: 'high', dedupKey: 'self-pin-kick',
                 title: `bot 自报卡死 — ${(ln.match(/"(?:reason|message)":"([^"]+)"/) || [, ln])[1]}`.slice(0, 140),
                 detail: `world_model 自身的反卡死机制触发 (15min+ pin / stuck-zone). skill=${s.skill} mob=${s.mob} picks=${s.picks} @${s.v ? s.v.x + ',' + s.v.y + ',' + s.v.z : '?'}`.slice(0, 240),
                 evidence: { pos: s.v ? [s.v.x, s.v.y, s.v.z] : null, vitals: { hp: s.hp, food: s.food, skill: s.skill }, line: ln.slice(0, 200), progressTail: s.progTail },
             });
+            if (!ticketId) return false;
             flagsOut.push('★PINKICK');
         }
-    }
-    // advance the cursor to newest line ts
-    for (const ln of s.events) { const m = ln.match(/^\[([^\]]+)\]/); const lt = m ? Date.parse(m[1]) : 0; if (lt > seenEventTs) seenEventTs = lt; }
+        return true;
+    }, t);
+    const file = path.join(DIR, 'edge-cursor.json');
+    fs.writeFileSync(file + '.tmp', JSON.stringify(eventCursor));
+    fs.renameSync(file + '.tmp', file);
 }
 
 // ── death / seal-fail / hp / food (kept; transition-edged) ────────────────────────────────
@@ -370,7 +373,7 @@ function writeDigest(s, t) {
 
 // ── main loop ─────────────────────────────────────────────────────────────────────────────
 let lastEmit = 0;
-async function tick() {
+async function tickOnce() {
     const t = now();
     flagsOut.length = 0;
     const s = readState(t);
@@ -383,7 +386,7 @@ async function tick() {
         flagsOut.push(`★STALE(vitals ${s.ageS}s old)`);
     } else {
         for (const d of D) await runDetector(d, s, t);
-        edgeDetectors(s, t);
+        await edgeDetectors(s, t);
         await classicDetectors(s, t);
     }
     writeDigest(s, t);
@@ -397,6 +400,12 @@ async function tick() {
     }
 }
 
-console.log(`sentinel: world-model-driven, debounced(fire+clear), close-loop verify. heartbeat ${HEARTBEAT_SEC}s, poll ${POLL_MS / 1000}s, ticket :${TICKET_PORT}`);
-tick();
+let ticking = false;
+async function tick() {
+    if (ticking) return;
+    ticking = true;
+    try { await tickOnce(); } finally { ticking = false; }
+}
+console.log(`sentinel: world-model-driven, debounced(fire+clear), persistent event cursor. heartbeat ${HEARTBEAT_SEC}s, poll ${POLL_MS / 1000}s, ticket :${TICKET_PORT}`);
+tick().catch(error => console.error('tick err', error.message));
 setInterval(() => { tick().catch(e => console.error('tick err', e && e.message)); }, POLL_MS);

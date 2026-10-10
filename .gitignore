@@ -48,6 +48,7 @@ watchdog.stop
 !bots/_supervisor/
 bots/_supervisor/*
 !bots/_supervisor/bb-readers.mjs
+!bots/_supervisor/event-cursor.mjs
 !bots/_supervisor/overseer-snapshot.mjs
 !bots/_supervisor/bot-medic.mjs
 !bots/_supervisor/oracle_shared.mjs

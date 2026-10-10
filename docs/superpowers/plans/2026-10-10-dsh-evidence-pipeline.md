@@ -43,6 +43,8 @@
 
 **Interfaces:** `executionRevision(events, now)`; issues carry `scope: current|execution`; `auditDue(state, tickets, now, executionRevision)` retains the existing cooldown.
 
+On-site follow-up: the first real audit confirmed the repaired publication path but treated expected failures as repair work. Add independently constrained `actionableKeys` and require both factual acceptance and repair necessity. The sentinel also replayed old pin events after restart: add `bots/_supervisor/event-cursor.mjs` and `test/supervisor_event_cursor.test.mjs`, mirror these source files to the native checkout, and retain the exact timestamps/IDs until API confirmation. Validate with the installed DSH schema validator (`test/dsh_schema_compat.test.mjs`), since its subset rejects standard `maxItems`.
+
 - [ ] Add failures for repeated receipts with different task IDs, a fresh poll containing old failures, and unchanged failures during cooldown.
 - [ ] Preserve stable execution IDs and compact failure groups with first/last occurrence and distinct task counts. Permit bounded historical execution citations only for execution-scoped findings.
 - [ ] Capture the execution revision actually inspected; later failures remain pending. Rotate already-reviewed tickets fairly.

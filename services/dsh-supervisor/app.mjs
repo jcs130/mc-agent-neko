@@ -178,6 +178,7 @@ export function apply(ctx, config) {
         // Model output is data. The coordinator owns this narrow ticket API boundary.
         const approved = approvedIssues(issues, reviewer.report, evidence, buildEvidence(frame, null, null));
         report.publication = { decision: reviewer.report.decision, approvedKeys: approved.map(issue => issue.key),
+            actionableKeys: reviewer.report.actionableKeys,
             withheldKeys: issues.filter(issue => !approved.includes(issue)).map(issue => issue.key),
             reason: issues.length && !approved.length ? 'review rejected, expired/missing citations, or session changed' : null };
         for (const issue of approved) {

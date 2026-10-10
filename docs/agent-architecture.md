@@ -23,6 +23,12 @@ node main.js                                        ← 入口
 
 ## 1. 慢脑 —— LLM prompt / command / coding
 
+### 2026-10 外置 Neko 与 DSH 监工
+
+当前试跑由 N.E.K.O. 驾驶原生游戏；`services/dsh-supervisor/app.mjs` 被动订阅 `:48909`，在本机模型空闲时串行运行 DSH 的 observer、diagnoser、reviewer 三个独立会话。`audit.mjs` 在各角色准入后采样并保留不可变证据；协调器验证后调用 `:48920` 工单服务，原生 botwatch 继续提供规则检测。
+
+工单经 `repair-queue.json` 交给既有每小时维护任务。维护者修代码、检查和部署，再用 `repair.mjs` 写回提交、日志哈希与运行验证；DSH 将回执作为记录读取，不取得游戏控制权，也不自动关单。部署过、哨兵条件清除、模型给出诊断和实际恢复分别记录。配置、边界和验证入口见 [dsh-supervisor.md](dsh-supervisor.md)。
+
 | 文件 | 职责 |
 |---|---|
 | `src/models/prompter.js` | Prompter 类：读 profile 层级合并（defaults/_default.json → base → individual），构建 conversing/coding/memSaving prompt，路由到 chat_model / code_model / vision_model |

@@ -22,9 +22,9 @@ test('role output schemas pass the installed DSH validator, including no-candida
                 assertSupportedJsonSchema(roleSchema(role, ['game.self', 'native.failure'], candidates)));
         }
         const schema = roleSchema('reviewer', ['native.failure'], ['real-issue']);
-        const report = { decision: 'accept', acceptedKeys: ['real-issue'], evidenceIds: ['native.failure'], summary: 'confirmed' };
+        const report = { decision: 'accept', acceptedKeys: ['real-issue'], actionableKeys: ['real-issue'], evidenceIds: ['native.failure'], summary: 'confirmed' };
         assert.deepEqual(validateJsonSchemaValue(schema, report), []);
         assert.ok(validateJsonSchemaValue(schema, { ...report, acceptedKeys: ['native.failure'] }).length);
         assert.deepEqual(validateJsonSchemaValue(roleSchema('reviewer', ['game.self'], []),
-            { decision: 'reject', acceptedKeys: [], evidenceIds: [], summary: 'no issue' }), []);
+            { decision: 'reject', acceptedKeys: [], actionableKeys: [], evidenceIds: [], summary: 'no issue' }), []);
     });
