@@ -42,6 +42,8 @@ bash /mnt/d/path/to/mc-agent-neko/services/local-index-tts/bootstrap-wsl.sh \
 
 当前 CUDA wheel 的编译器与运行时曾被解析成 13.4 / 13.2 混用，出现头文件不兼容、PTX 9.4 / 9.2 错误。脚本固定 NVCC、CRT、NVVM 为 13.2.78，并仅在隔离环境内补齐 `lib64` / `libcudart.so` 链接；WSL 的 `libcuda` 由 `/usr/lib/wsl/lib` 提供。
 
+后续在独立环境复现安装时，强制 `--torch-backend=cu132` 会因缺少对应 TorchAudio wheel 而解析失败，安装入口已改为实测通过的 `auto`；本机实际 Torch 仍为 cu132，现有环境无需重装。同卡的 [VoxCPM2 流式候选测试](voxcpm2-streaming-test-2026-10-10.md)仅作评估，未替换这条生产备用链路。
+
 ## Neko 回退语义
 
 - 默认关闭，仅在配置的原音色精确匹配、原选择为 free 且 TTS 启用时包装其身份；其他角色和提供方沿用原路由。

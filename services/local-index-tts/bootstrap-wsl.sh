@@ -35,7 +35,7 @@ fi
 git -C "$TASK_ROOT/vllm-omni" checkout --detach "$OMNI_COMMIT"
 export CUDA_VISIBLE_DEVICES="$GPU_UUID" CUDA_DEVICE_ORDER=PCI_BUS_ID VLLM_TARGET_DEVICE=cuda
 [[ -x $TASK_ROOT/venv/bin/python ]] || "$UV" venv "$TASK_ROOT/venv" --python python3.12
-"$UV" pip install --python "$TASK_ROOT/venv/bin/python" 'vllm==0.30.0' --torch-backend=cu132
+"$UV" pip install --python "$TASK_ROOT/venv/bin/python" 'vllm==0.30.0' --torch-backend=auto
 "$UV" pip install --python "$TASK_ROOT/venv/bin/python" "$TASK_ROOT/vllm-omni[indextts2]" 'nvidia-cuda-nvcc==13.2.78' 'nvidia-cuda-crt==13.2.78' 'nvidia-nvvm==13.2.78'
 mkdir -p "$TASK_ROOT/models/IndexTTS-2.5" "$TASK_ROOT/private/speakers"
 if [[ $(realpath "$MODEL_SOURCE") != $(realpath "$TASK_ROOT/models/IndexTTS-2.5") ]]; then

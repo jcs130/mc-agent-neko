@@ -9,9 +9,10 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('reference', type=Path)
     parser.add_argument('--voice', default='yui-local')
+    parser.add_argument('--port', type=int, choices=(18040, 18041), default=18040)
     parser.add_argument('--consent', required=True)
     args = parser.parse_args()
-    with httpx.Client(base_url='http://127.0.0.1:18040', timeout=60) as client:
+    with httpx.Client(base_url=f'http://127.0.0.1:{args.port}', timeout=60, trust_env=False) as client:
         existing = client.get('/v1/audio/voices')
         existing.raise_for_status()
         voices = existing.json().get('data', existing.json().get('voices', []))
