@@ -5,6 +5,7 @@ import vm from 'node:vm';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { RequestTrace } from '../src/utils/llm_timing.js';
+import { playerInventorySlots } from '../src/agent/library/inventory_snapshot.js';
 
 const prose = '连续无进展就用 !cannotComplete 返回具体证据。\n'
     + '或者先尝试 `!craftRecipe("stick", ...)`？没有 `!serverQuery` 的结果。\n'
@@ -51,7 +52,7 @@ function fixture() {
         calls.performed.push({ name, args }); return 'actual result';
     } });
     const context = vm.createContext({
-        console: { log() {}, warn() {}, error() {} }, Date, setTimeout, clearTimeout,
+        console: { log() {}, warn() {}, error() {} }, Date, setTimeout, clearTimeout, playerInventorySlots,
         process: { env: {} }, settings: { max_commands: 1, show_command_syntax: 'none' },
         actionsList: [action('!getWood', { num: { type: 'int', domain: [1, 1000] } }),
             action('!mineOres', { ore: { type: 'string' } }),
@@ -83,8 +84,33 @@ function fixture() {
         _adminMultiCmdActive: () => true, _adminMultiCmdMax: () => 8, blocked_actions: [],
         routeResponse: (_source, reply) => calls.replies.push(reply), checkTaskDone: async () => {},
     });
-    return { api, agent, calls };
+    return { api, agent, calls, context };
 }
+
+test('the unlimited mission response loop exits after unchanged query warnings are ignored', async () => {
+    const { agent, calls, context } = fixture();
+    const source = readFileSync(new URL('../src/agent/admin_mission.js', import.meta.url), 'utf8')
+        .replace(/^import .*;\r?\n/gm, '').replace(/\bexport /g, '');
+    vm.runInContext(source, context);
+    vm.runInContext('wsServer.beginMissionTask = () => {}; wsServer.finishMission = () => {};', context);
+    const Mission = vm.runInContext('AdminMission', context);
+    agent._missionEnabled = true;
+    agent.requestInterrupt = () => {};
+    agent.self_prompter.stop = async () => {};
+    agent.adminMission = new Mission(agent);
+    agent.adminMission._handoff({ text: '收割小麦', taskId: 'unlimited-stats-loop', origin: 'ws' });
+    let requests = 0;
+    agent.prompter.promptConvo = async () => {
+        if (++requests > 5) throw new Error('unbounded query loop escaped the guard');
+        return '!stats';
+    };
+    await agent.handleMessage('system', '继续当前任务', -1);
+    assert.equal(requests, 5, 'no extra adjudication model request is required');
+    assert.equal(agent.adminMission.isActive(), false);
+    assert.equal(calls.performed.length, 5);
+    assert(calls.performed.every(call => call.name === '!stats'), 'detection must never force a game action');
+    assert(calls.history.some(turn => /Query loop:/.test(turn.content)));
+});
 
 test('reasoning references never precede the actual command selected for execution', () => {
     const { api } = fixture();

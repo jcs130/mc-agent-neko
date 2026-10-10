@@ -9,7 +9,8 @@ function harness(perform = async () => '生命 20/20；魔力 20/20；技能点 
     const context = vm.createContext({
         console, Date, setTimeout, clearTimeout, playerInventorySlots, process: { env: { DEBUG_CHAT: '0' } },
         wsServer: { beginMissionTask() {}, finishMission: (...args) => finishes.push(args) },
-        queryList: [{ name: '!readBook', params: { slot: { type: 'int' } }, perform }],
+        queryList: [{ name: '!readBook', params: { slot: { type: 'int' } }, perform },
+            { name: '!stats', perform }],
         actionsList: [{ name: '!endGoal', perform: async agent => {
             await agent.adminMission.end('done');
             return 'Mission complete.';
@@ -30,6 +31,45 @@ function harness(perform = async () => '生命 20/20；魔力 20/20；技能点 
     const execute = vm.runInContext('executeCommand', context);
     return { agent, mission: agent.adminMission, finishes, execute };
 }
+
+test('repeated identical model stats queries warn then return the stalled task to its owner', async () => {
+    const { agent, mission, finishes, execute } = harness(() => 'STATS: position unchanged, HP20, food20');
+    mission._handoff({ text: '采集口粮', taskId: 'stats-loop', origin: 'ws' });
+    for (let i = 0; i < 2; i++) assert.doesNotMatch(await execute(agent, '!stats', () => {}), /Query loop/);
+    assert.match(await execute(agent, '!stats', () => {}), /Query loop.*unchanged/s);
+    assert.equal(mission.isActive(), true, 'first give the model a chance to choose a useful next step');
+    await execute(agent, '!stats', () => {});
+    await execute(agent, '!stats', () => {});
+    assert.equal(mission.isActive(), false, 'a query cannot keep the unlimited response loop alive forever');
+    assert.equal(finishes.length, 1);
+    assert.equal(finishes[0][1], 'failed');
+    assert.match(finishes[0][2], /查询空转/);
+    assert.match(finishes[0][2], /!stats/);
+    assert.doesNotMatch(finishes[0][2], /已判定无法完成/, 'executor stall is not proof the game objective is impossible');
+});
+
+test('changed query results and parameters are useful discovery and reset the repetition counter', async () => {
+    let value = 'first page';
+    const { agent, mission, finishes, execute } = harness(() => value);
+    mission._handoff({ text: '查阅说明', taskId: 'query-discovery', origin: 'ws' });
+    for (let i = 0; i < 4; i++) await execute(agent, '!readBook(1)', () => {});
+    await execute(agent, '!readBook(2)', () => {});
+    for (let i = 0; i < 4; i++) { value = `updated page ${i}`; await execute(agent, '!readBook(2)', () => {}); }
+    assert.equal(finishes.length, 0);
+    assert.equal(mission.isActive(), true);
+    assert.equal(await execute(agent, '!endGoal', () => {}), 'Mission complete.', 'read-only goals may finish normally');
+});
+
+test('an executed action or an explicit player command breaks a model query streak', async () => {
+    const { agent, mission, finishes, execute } = harness(undefined, [{ name: '!testAction', perform: () => 'Action completed' }]);
+    mission._handoff({ text: '先观察再行动', taskId: 'query-action', origin: 'ws' });
+    for (let i = 0; i < 4; i++) await execute(agent, '!stats', () => {});
+    await execute(agent, '!testAction', () => {});
+    await execute(agent, '!stats', () => {});
+    for (let i = 0; i < 6; i++) await execute(agent, '!stats');
+    assert.equal(finishes.length, 0, 'manual status checks retain their authority');
+    assert.equal(mission.isActive(), true);
+});
 
 test('model cannot finish a fresh task before any game result or measured change', async () => {
     const { agent, mission, finishes, execute } = harness();

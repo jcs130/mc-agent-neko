@@ -578,6 +578,34 @@ export class AdminMission {
         while (observations.length > 8 || observations.reduce((size, text) => size + text.length, 0) > 12000) observations.shift();
     }
 
+    async queryLoopFeedback(mission, parsed, result, { model, query }) {
+        if (this.state !== RUNNING || this.mission !== mission) return null;
+        // Count validated model queries only. A real action, human command, new
+        // argument or changed answer breaks the streak. Do not truncate evidence
+        // into a false match; oversized/empty results are deliberately excluded.
+        const invocation = JSON.stringify([parsed.commandName, parsed.args || []]);
+        if (!model || !query || typeof result !== 'string' || !result.trim()
+            || result.length > 12000 || invocation.length > 512) {
+            mission.queryLoop = null;
+            return null;
+        }
+        const previous = mission.queryLoop;
+        const count = previous?.invocation === invocation && previous.result === result
+            ? previous.count + 1 : 1;
+        mission.queryLoop = { invocation, result, count };
+        if (count >= 5) {
+            const detail = `${parsed.commandName} 连续5次返回相同结果，提醒后仍未选择行动或结束查询任务。`
+                + '这是执行器查询空转，不代表服务器故障或游戏目标无法完成；请结合真实观测重新规划下一步。';
+            await this.end('query-loop', detail);
+            return 'Query loop stopped; the task owner received the unchanged query evidence.';
+        }
+        if (count === 3) return `Query loop: ${parsed.commandName} returned the same unchanged result 3 consecutive times. `
+            + 'The data is already available above. If this is a read-only task, finish with the observed answer. '
+            + 'Otherwise choose the next relevant action, a different necessary query, or report a specific blocker. '
+            + 'For deliberate waiting use a bounded wait, rather than repeating this query. Two more identical queries will return this stalled task to its owner.';
+        return null;
+    }
+
     completionFeedback(command = '!endGoal') {
         if (!this.isActive() || this.mission.observations?.length || this.progressEvidence()) return null;
         // A new task can otherwise be marked done on the model's first reply,
@@ -634,6 +662,7 @@ export class AdminMission {
             case 'done': return 'ok';
             case 'superseded': return 'superseded';
             case 'impossible':
+            case 'query-loop':
             case 'no-progress':
             case 'deadline':
             case 'deaths-exceeded': return 'failed';
@@ -647,6 +676,7 @@ export class AdminMission {
             case 'done': return reply || '任务已完成。';
             case 'superseded': return '任务已被新指令覆盖。';
             case 'impossible': return '任务无法完成' + (detail ? '：' + detail : '。');
+            case 'query-loop': return '任务因查询空转停止：' + detail;
             case 'no-progress': return '任务无进展，已判定无法完成。';
             case 'deadline': return '任务超时（超过时限），已停止。';
             case 'deaths-exceeded': return '任务因多次死亡而中止。';
