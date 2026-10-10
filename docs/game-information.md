@@ -49,6 +49,10 @@ verified. Ambient drops and ordinary mining pickups do not wake another model
 turn. Independent attention batches cannot replace each other in the host queue.
 Ordinary chat and nonurgent independent system feedback defer during actions,
 bounded to 32 events/5 minutes; full deferred evidence is queryable.
+Attention cues and complete chat text survive up to five minutes of queue/work
+delay. Explicit full queries prefer retained conversation over ambient event
+pressure. Routine decision views still use the recent two-minute window, so
+retention does not repeatedly inject old greetings into every planning turn.
 
 See [the player perception audit](neko-player-perception-2026-10-10.md) for replay
 evidence, service routes, the independent desktop token fix and live limits.

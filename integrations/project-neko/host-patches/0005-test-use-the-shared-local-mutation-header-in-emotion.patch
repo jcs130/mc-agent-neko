@@ -1,0 +1,33 @@
+From 38654e3b2c81c54aad85c117f9b821c5d1b23249 Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Sat, 10 Oct 2026 21:06:12 +0800
+Subject: [PATCH] test: use the shared local mutation header in emotion replay
+
+---
+ tests/frontend/test_emotion_csrf_retry.mjs | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/tests/frontend/test_emotion_csrf_retry.mjs b/tests/frontend/test_emotion_csrf_retry.mjs
+index 5fec203..e4ab710 100644
+--- a/tests/frontend/test_emotion_csrf_retry.mjs
++++ b/tests/frontend/test_emotion_csrf_retry.mjs
+@@ -11,7 +11,7 @@ assert.ok(begin >= 0 && end > begin);
+ async function scenario(replies, { security = true } = {}) {
+     const requests = [];
+     let refreshes = 0;
+-    const sec = { getMutationHeaders: async () => ({ 'X-Autostart-CSRF-Token': refreshes ? 'new-token' : 'old-token' }),
++    const sec = { getMutationHeaders: async () => ({ 'X-CSRF-Token': refreshes ? 'new-token' : 'old-token' }),
+         refreshToken: async () => { refreshes++; } };
+     const context = { mod: {}, console: { log() {}, warn() {}, error() {} },
+         window: { t: key => key, lanlan_config: { lanlan_name: 'YUI' }, nekoLocalMutationSecurity: security ? sec : null },
+@@ -32,8 +32,8 @@ test('expired local token refreshes and retries the same emotion request once',
+     assert.equal(run.result.emotion, 'happy');
+     assert.equal(run.refreshes, 1);
+     assert.equal(run.requests.length, 2);
+-    assert.equal(run.requests[0].headers['X-Autostart-CSRF-Token'], 'old-token');
+-    assert.equal(run.requests[1].headers['X-Autostart-CSRF-Token'], 'new-token');
++    assert.equal(run.requests[0].headers['X-CSRF-Token'], 'old-token');
++    assert.equal(run.requests[1].headers['X-CSRF-Token'], 'new-token');
+     assert.equal(run.requests[0].body, run.requests[1].body);
+ });
+ 

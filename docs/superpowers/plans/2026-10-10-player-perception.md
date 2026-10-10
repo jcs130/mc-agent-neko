@@ -15,4 +15,5 @@
 - [x] Test and fix independent attention batch keys, queued feedback during long actions, and social item collection at idle. Keep deduplication, body ownership and callback token bounds.
 - [x] Test stale-token emotion requests, then refresh and retry only the known local-validation failure once in `static/app/app-buttons.js`.
 - [x] Run relevant suites, export/replay scoped plugin and host patches, document evidence and limits, commit only owned files to the existing fork branch.
-- [ ] Deploy at a safe idle boundary using the existing lifecycle, preserve main/model generations, and passively verify fresh runtime data. Report unexercised real-player scenarios honestly.
+- [x] Deploy the native observer and initial attention changes at a safe boundary using the existing lifecycle; refresh the desktop independently, preserve main/model generations, and passively verify fresh runtime data. Report unexercised real-player scenarios honestly.
+- [ ] Load the additional five-minute attention/full-chat retention patch at a safe idle boundary. Prepared source is `2427fbd`; live gameplay still has a pending task, so no cancellation/reload was forced. This remaining deployment is recorded in the maintenance baseline.

@@ -1,0 +1,136 @@
+From 2427fbde48761b9c05c263e7d227f8c622476060 Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Sat, 10 Oct 2026 21:06:12 +0800
+Subject: [PATCH] fix: retain queued player messages across long game actions
+
+---
+ plugin/plugins/game_agent_minecraft/README.md |  2 ++
+ .../game_agent_minecraft/observations.py      | 19 +++++++++++++++---
+ .../plugins/game_agent_minecraft/service.py   |  4 ++--
+ .../test_execution_pacing.py                  |  2 +-
+ .../test_player_perception.py                 | 20 +++++++++++++++++++
+ 5 files changed, 41 insertions(+), 6 deletions(-)
+
+diff --git a/plugin/plugins/game_agent_minecraft/README.md b/plugin/plugins/game_agent_minecraft/README.md
+index 9f9d824..57eff51 100644
+--- a/plugin/plugins/game_agent_minecraft/README.md
++++ b/plugin/plugins/game_agent_minecraft/README.md
+@@ -229,6 +229,8 @@ mc-agent 需要启用 `render_bot_view`、`viewer_type="modern"`，并配置
+ 普通玩家聊天和非紧急的独立系统报错在长动作期间保存，空闲后再处理；最多保留 32 条、5 分钟，
+ 完整的有界待处理内容可通过 `minecraft_observe(detail="full",sections=[],max_events=48)` 查询。
+ 不同注意力批次使用事件 ID 派生的独立队列键，主脑忙时不会被后一批消息合并覆盖；普通状态仍可合并。
++注意力提醒在宿主队列最多保留 5 分钟，完整聊天正文也保留 5 分钟并优先于高频动作条缓存；
++显式完整查询可补读这些历史消息，日常决策仍只带最近 2 分钟的事件，避免每轮重复旧招呼。
+ 物品掉落、实际拾取数量和附近玩家来自原生观测；附近有人不证明谁赠送，物品归属和背包到账须核实。
+ 普通采矿掉落/拾取只更新缓存，不额外唤醒模型；与附近玩家相关的自身拾取在空闲时提供社交信息。
+ 
+diff --git a/plugin/plugins/game_agent_minecraft/observations.py b/plugin/plugins/game_agent_minecraft/observations.py
+index 469b860..bc648a2 100644
+--- a/plugin/plugins/game_agent_minecraft/observations.py
++++ b/plugin/plugins/game_agent_minecraft/observations.py
+@@ -183,8 +183,13 @@ class GameObservations:
+             self.events[ident] = event
+             added.append(event)
+         for ident, event in list(self.events.items()):
+-            if self.clock() - event['observedAt'] / 1000 > 120 or len(self.events) > 128:
++            retention = 300 if event.get('kind') in ('chat', 'whisper') else 120
++            if self.clock() - event['observedAt'] / 1000 > retention:
+                 self.events.pop(ident, None)
++        while len(self.events) > 128:
++            victim = next((ident for ident, event in self.events.items()
++                           if event.get('kind') not in ('chat', 'whisper')), next(iter(self.events)))
++            self.events.pop(victim, None)
+         if any(event.get('kind') not in ('actionbar', 'plugin_message', 'server_record')
+                or (event.get('kind') == 'plugin_message' and isinstance(event.get('data'), dict) and
+                    str(event['data'].get('channel', '')).endswith(':event'))
+@@ -192,10 +197,18 @@ class GameObservations:
+             self.decision_revision += 1
+         return added
+ 
+-    def view(self, sections=None, max_events=20):
++    def view(self, sections=None, max_events=20, include_retained=False):
+         allowed = ('self', 'world', 'inventory', 'nearby', 'window', 'activity', 'server', 'coverage')
+         selected = allowed if sections is None else [key for key in sections if key in allowed]
+-        events = [event for event in self.events.values() if self.clock() - event['observedAt'] / 1000 <= 120]
++        events = [event for event in self.events.values() if self.clock() - event['observedAt'] / 1000 <=
++                  (300 if include_retained and event.get('kind') in ('chat', 'whisper') else 120)]
++        if include_retained and max_events and len(events) > max_events:
++            # A busy actionbar must not hide the full message that a queued
++            # social cue refers to. Keep chronological order after selection.
++            chat = [event for event in events if event.get('kind') in ('chat', 'whisper')][-max_events:]
++            other = [event for event in events if event.get('kind') not in ('chat', 'whisper')]
++            events = sorted(chat + (other[-(max_events - len(chat)):] if len(chat) < max_events else []),
++                            key=lambda event: event['observedAt'])
+         return {'available': self.available, 'fresh': self.fresh, 'online': self.online,
+                 'observedAt': self.observed_at, 'ageSeconds': round(max(0, self.clock() - self.observed_at), 1) if self.observed_at else None,
+                 'state': {key: self.state[key] for key in selected if key in self.state} if self.fresh else None,
+diff --git a/plugin/plugins/game_agent_minecraft/service.py b/plugin/plugins/game_agent_minecraft/service.py
+index 46a0460..9aa73b7 100644
+--- a/plugin/plugins/game_agent_minecraft/service.py
++++ b/plugin/plugins/game_agent_minecraft/service.py
+@@ -1121,7 +1121,7 @@ class GameAgentService:
+                                         coalesce_key=('mc_game_attention:' + hashlib.sha256(
+                                             '|'.join(sorted(attention_ids)).encode()).hexdigest()[:16])
+                                             if attention else 'mc_game_information',
+-                                        metadata={'expires_in_s': 45})
++                                        metadata={'expires_in_s': 300 if attention else 45})
+                 if isinstance(result, dict) and result.get('submitted') is False:
+                     return
+                 self._game_context_push_at = time.time()
+@@ -1161,7 +1161,7 @@ class GameAgentService:
+                              ((own.get('health'), 10), (own.get('food'), 8), (own.get('oxygen'), 8)))
+         focus_mode = 'survival' if needs_survival else 'decision'
+         result = ({'fresh': self._game_observations.fresh}
+-                  if compact else self._game_observations.view(sections, max_events))
++                  if compact else self._game_observations.view(sections, max_events, include_retained=True))
+         result['source'] = 'live' if refreshed else 'cached'
+         result['status'] = 'ok' if result['fresh'] else 'unavailable'
+         result['failureStreak'] = self._task_failure_streak
+diff --git a/plugin/plugins/game_agent_minecraft/test_execution_pacing.py b/plugin/plugins/game_agent_minecraft/test_execution_pacing.py
+index 4e1745b..6b112b6 100644
+--- a/plugin/plugins/game_agent_minecraft/test_execution_pacing.py
++++ b/plugin/plugins/game_agent_minecraft/test_execution_pacing.py
+@@ -45,7 +45,7 @@ class ExecutionPacingTests(unittest.IsolatedAsyncioTestCase):
+         self.assertIn('Social-only turn', text)
+         self.assertIn('do not call minecraft_task', text)
+         self.assertIs(service._pending, pending)
+-        self.assertEqual(responses[0]['metadata']['expires_in_s'], 45)
++        self.assertEqual(responses[0]['metadata']['expires_in_s'], 300)
+         self.assertLessEqual(count_tokens(text), 1000)
+ 
+     async def test_public_chat_waits_for_idle_and_is_not_starved_by_a_long_action(self):
+diff --git a/plugin/plugins/game_agent_minecraft/test_player_perception.py b/plugin/plugins/game_agent_minecraft/test_player_perception.py
+index 637f33f..1bb676e 100644
+--- a/plugin/plugins/game_agent_minecraft/test_player_perception.py
++++ b/plugin/plugins/game_agent_minecraft/test_player_perception.py
+@@ -32,6 +32,8 @@ class PlayerPerceptionTests(unittest.IsolatedAsyncioTestCase):
+         cues = [call for call in calls if call['ai_behavior'] == 'respond']
+         self.assertEqual(len(cues), 2)
+         self.assertNotEqual(cues[0]['coalesce_key'], cues[1]['coalesce_key'])
++        self.assertGreaterEqual(cues[0]['metadata']['expires_in_s'], 300,
++                                'a long native task must not expire a real player cue at 45 seconds')
+         self.assertEqual(len({service._pending.task_id}), 1)
+ 
+     async def test_unsolicited_error_waits_with_full_evidence_until_idle(self):
+@@ -119,3 +121,21 @@ class PlayerPerceptionTests(unittest.IsolatedAsyncioTestCase):
+         cue = next(call for call in calls if call['ai_behavior'] == 'respond')
+         self.assertLessEqual(count_tokens(cue['parts'][0]['text']), 1000)
+         self.assertIn('do not invent who gave an item', cue['parts'][0]['text'])
++
++    async def test_full_directed_message_survives_long_work_and_ambient_event_pressure(self):
++        service, _ = self.service(busy=True)
++        stamp = time.time()
++        message = event('directed', 'whisper', '送你的铁镐放在门口箱子，别误会是地上的矿石。', player='Friend_1')
++        with patch('plugin.plugins.game_agent_minecraft.service.time.time', return_value=stamp):
++            await service._on_game_state(frame(recentEvents=[message]))
++            await service._on_game_events({**frame(), 'events': [
++                event(f'noise-{n}', 'actionbar', f'mana {n}') for n in range(64)]})
++            await service._on_game_events({**frame(), 'events': [
++                event(f'noise2-{n}', 'actionbar', f'mana {n + 64}') for n in range(64)]})
++        with patch('plugin.plugins.game_agent_minecraft.service.time.time', return_value=stamp + 180):
++            await service._on_game_state(frame(seq=2))
++            received = service._game_observations.view(max_events=48, include_retained=True)['recentEvents']
++            self.assertIn(message['text'], [event['text'] for event in received])
++        with patch('plugin.plugins.game_agent_minecraft.service.time.time', return_value=stamp + 301):
++            await service._on_game_state(frame(seq=3))
++            self.assertNotIn('directed', service._game_observations.events)

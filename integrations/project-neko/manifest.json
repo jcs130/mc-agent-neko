@@ -1,9 +1,9 @@
 {
   "upstreamRepository": "https://github.com/Project-N-E-K-O/N.E.K.O",
   "baseCommit": "fb2a2e731a8c954478d08678b0c8cf40e8145a54",
-  "sourceCommit": "c67eba27b7d4689b02975f6eea8a25aed27f6685",
+  "sourceCommit": "38654e3b2c81c54aad85c117f9b821c5d1b23249",
   "scope": "plugin/plugins/game_agent_minecraft",
-  "resultPluginTree": "3beec6a84500aee2ecc7cb7cdeea268d0b16349f",
+  "resultPluginTree": "21691ceb077d3ab3e880dba3b796e978703f8787",
   "patches": [
     {
       "file": "0001-chore-configure-text-only-local-Qwen-Minecraft-trial.patch",
@@ -260,12 +260,16 @@
     {
       "file": "0064-fix-retain-player-attention-and-deferred-game-feedba.patch",
       "sha256": "3b46c4b734b11e88bf4413c9f0607b7038e899894647d1f2fe6fe532b4b5d4f6"
+    },
+    {
+      "file": "0065-fix-retain-queued-player-messages-across-long-game-a.patch",
+      "sha256": "2c3d31cb7cc726b6ee1112430a79f372caf64ee124c82763857b205d51951b35"
     }
   ],
   "verification": {
     "appliedInOrderToBase": true,
     "resultPluginTreeMatchesSource": true,
-    "pluginTestsPassed": 215,
+    "pluginTestsPassed": 216,
     "hostCallbackTestsPassed": 195,
     "hostFileBlobsMatchSource": true,
     "nativeSourceTestsPassed": 598,
@@ -317,6 +321,14 @@
       "sourceCommit": "c67eba27b7d4689b02975f6eea8a25aed27f6685",
       "scopePaths": [
         "static/app/app-buttons.js",
+        "tests/frontend/test_emotion_csrf_retry.mjs"
+      ]
+    },
+    {
+      "file": "host-patches/0005-test-use-the-shared-local-mutation-header-in-emotion.patch",
+      "sha256": "480dc34522e56efc169a2ea82ae3d5f10a63fc43c5882e292f4fed9f3a013fe9",
+      "sourceCommit": "38654e3b2c81c54aad85c117f9b821c5d1b23249",
+      "scopePaths": [
         "tests/frontend/test_emotion_csrf_retry.mjs"
       ]
     }
@@ -673,10 +685,10 @@
   },
   "playerPerceptionVerification": {
     "date": "2026-10-10",
-    "pluginSourceCommit": "6e7d8b3d7de5168028fd6f149b505b7b86e00dd2",
+    "pluginSourceCommit": "2427fbde48761b9c05c263e7d227f8c622476060",
     "nativeSourceCommit": "d2f1187197d7679cf26552b14834646e53629533",
-    "pluginTestsPassed": 215,
-    "perceptionTestsPassed": 8,
+    "pluginTestsPassed": 216,
+    "perceptionTestsPassed": 9,
     "nativeObservationTestsPassed": 24,
     "nativeTestsPassed": 598,
     "contributionTestsPassed": 651,
@@ -685,18 +697,39 @@
     "fullReplayMatchesSource": true,
     "hostFileBlobsMatchSource": true,
     "distinctAttentionKeys": true,
+    "queuedAttentionExpirySeconds": 300,
+    "fullChatRetentionSeconds": 300,
+    "routineDecisionEventSeconds": 120,
     "unknownDonorExplicit": true,
     "ordinaryMiningDoesNotWake": true,
     "realPlayerGiftVerified": false,
-    "publicTestMessagesSent": 0
+    "publicTestMessagesSent": 0,
+    "deployment": {
+      "native": "deployed",
+      "initialAttention": "deployed",
+      "fiveMinuteRetention": "prepared",
+      "reason": "Pending physical tasks did not provide a safe plugin reload boundary; no task was cancelled.",
+      "followupSourceCommit": "2427fbde48761b9c05c263e7d227f8c622476060"
+    }
   },
   "avatarEmotionVerification": {
     "date": "2026-10-10",
-    "sourceCommit": "c67eba27b7d4689b02975f6eea8a25aed27f6685",
+    "sourceCommit": "38654e3b2c81c54aad85c117f9b821c5d1b23249",
     "frontendTestsPassed": 3,
     "refreshRetryLimit": 1,
     "serverValidationUnchanged": true,
     "renderedExpressionVerified": false,
-    "additionalBackendPytestAvailable": false
+    "additionalBackendPytestAvailable": false,
+    "runtimeProbe": {
+      "desktopReloaded": true,
+      "backendReady": true,
+      "classificationSucceeded": true,
+      "emotion": "happy",
+      "confidence": 0.95,
+      "elapsedMs": 1585,
+      "sampleCount": 1,
+      "audibleSpeechVerified": false,
+      "renderedExpressionVerified": false
+    }
   }
 }
