@@ -1,7 +1,7 @@
 {
   "upstreamRepository": "https://github.com/Project-N-E-K-O/N.E.K.O",
   "baseCommit": "fb2a2e731a8c954478d08678b0c8cf40e8145a54",
-  "sourceCommit": "6a5b5d1b5031fb307ce268a3dd760688c7574079",
+  "sourceCommit": "50f1951d3c920f675b6f01172121b0605f7d3c05",
   "scope": "plugin/plugins/game_agent_minecraft",
   "resultPluginTree": "9914ccebd2e24f1ac22324df37430cad2cdde17c",
   "patches": [
@@ -291,6 +291,16 @@
         "utils/llm_client/openai_client.py",
         "utils/llm_client/prefill.py",
         "utils/llm_prompt_audit.py"
+      ]
+    },
+    {
+      "file": "host-patches/0003-feat-add-content-free-local-LLM-client-timings.patch",
+      "sha256": "e4040d25aacf77ca35ce9331b460442e762f2c5e5ce09039b48fd31a700bc198",
+      "sourceCommit": "50f1951d3c920f675b6f01172121b0605f7d3c05",
+      "scopePaths": [
+        "tests/unit/test_llm_client_timing.py",
+        "utils/llm_client/openai_client.py",
+        "utils/llm_client/timing.py"
       ]
     }
   ],
@@ -607,5 +617,25 @@
     "diagnosticGameChatMessages": 0,
     "lanContinuousFramesVerified": true,
     "modelProcessRetained": true
+  },
+  "llmClientTimingVerification": {
+    "date": "2026-10-10",
+    "hostSourceCommit": "50f1951d3c920f675b6f01172121b0605f7d3c05",
+    "nativeTimingCommit": "67e54ebca59f737dc79bf3c926f8694209b2ae75",
+    "nativeSourceCommit": "39e4aa44a1a997e6828876f0bc102c4f376c946d",
+    "nativeTestsPassed": 589,
+    "hostClientSessionTestsPassed": 181,
+    "contributionTestsPassed": 632,
+    "hostRuffPassed": true,
+    "allHostBlobsMatchSource": true,
+    "metadataOnly": true,
+    "rawAuditRequired": false,
+    "modelRestartRequired": false,
+    "newPeriodicInference": false,
+    "goalPositionFlagDefaultOff": true,
+    "goalPositionInferenceOnlyCalls": 8,
+    "goalPositionChangedGoalReuseBefore": 0,
+    "goalPositionChangedGoalReuseAfter": 0,
+    "goalPositionLatencyImprovementProven": false
   }
 }

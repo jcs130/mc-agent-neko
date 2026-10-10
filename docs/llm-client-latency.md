@@ -61,3 +61,35 @@ samples for cold input, continuous same-goal execution, goal changes, history
 growth and natural shared-service traffic. Report sample count, median and a
 clearly defined tail percentile. A faster reply or a syntax-valid stop command
 is not a gameplay quality pass.
+
+## N.E.K.O. host companion
+
+Host companion patch 0003 adds adapter diagnostics with `NEKO_LLM_TIMING=1`
+and the existing `NEKO_LOCAL_STRATA_PREFILL=1` on loopback port 18030. It writes
+only metadata to `$NEKO_RUNTIME_STATE_DIR/llm_timing/host-<pid>.jsonl` using a
+bounded background queue and rotating files. Keep `NEKO_LLM_PROMPT_AUDIT=0`;
+timing does not require raw prompt auditing.
+
+Host measurements start at the ChatOpenAI adapter entry, before the existing
+optional-background admission wait. They do **not** include upstream host prompt
+construction, tool execution, TTS or game action time. Request scope, call type,
+message/tool/image counts, output limit, thinking setting, checkpoint/pin flags
+and provider token usage are included. Values are allowlisted; no model text,
+tool name/arguments, schemas, URLs, character names or credentials are copied.
+
+For streaming, first non-reasoning text or a nonempty tool-function fragment is
+observable. A fragment is not an executable or validated command; the host field
+`command_validated_at` stays null. Native execution supplies the actual command
+validation measurement. Provider terminal usage/finish markers determine the
+observed complete-response time. Stream consumer pauses are counted separately
+because time spent between yields is not necessarily inference. No server queue
+or engine-stage timing is inferred. Host task versions have not been propagated
+to this adapter and are explicitly null, with `task_version_source=not_propagated`;
+request IDs are not claimed to correlate host and native tasks automatically.
+
+The wrappers retain caller overrides, outputs, reasoning and tool fragments.
+Concurrent calls have separate context-local traces; early generator closure
+releases both context and its source. Metadata writer/usage failures cannot fail
+successful inference. Existing background admission and tool/mission guards
+continue unchanged. This patch introduces no model heartbeat, retry, early tool
+execution, cancellation of another client, or GPU/model configuration change.

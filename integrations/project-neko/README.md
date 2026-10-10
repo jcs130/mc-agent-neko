@@ -1,5 +1,11 @@
 # Project N.E.K.O. companion patches
 
+Metadata-only native and host timings distinguish preparation, SDK return,
+stream fragments and validated commands. See [the timing guide](../../docs/llm-client-latency.md)
+and [the natural workload and concurrency observations](../../docs/llm-client-latency-observations-2026-10-10.md).
+The isolated ordinary goal-position experiment did not improve changed-goal
+reuse and remains off; it is documented separately from the earlier prefill work.
+
 The optional local Strata policy now separates stable execution rules from
 changing state, pins only the Minecraft brain's validated prefix, pages complete
 observation references and defers optional background inference. See
@@ -55,7 +61,7 @@ alongside the Minecraft body in this fork. The ordered plugin series includes
 scoped protection receipts, adaptive heartbeat pacing, readable custom items,
 protected operational inventory, storage capacity, matched recovery history,
 compact task authority and conditional post-observation action guidance.
-The manifest lists the exact plugin series and both companion host patches.
+The manifest lists the exact plugin series and three companion host patches.
 
 The series targets [Project-N-E-K-O/N.E.K.O](https://github.com/Project-N-E-K-O/N.E.K.O)
 at commit `fb2a2e731a8c954478d08678b0c8cf40e8145a54`. It changes only
