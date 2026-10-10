@@ -38,6 +38,8 @@ test('a denied building never reaches the underlying dig; caches exact target an
     assert.equal(bot.canDigBlock(target), false);
     assert.equal(guard.snapshot().denied[0].reason, 'original_building');
     assert.equal(events.length, 1, 'identical cached failures do not flood attention');
+    assert.equal(events[0].solicitedCommand, sent[0].command,
+        'preflight feedback belongs to the active task, not another attention decision');
 });
 
 test('allow_likely permits an attempt and keeps the server tentative status', async () => {
@@ -132,11 +134,33 @@ test('server protection advertisement enables checks; forged player advertisemen
 
 test('a real server rejection after allow_likely cancels digging and prevents retries', async () => {
     const bot = fixture();
+    const events = [];
+    bot.on('serverProtection', value => events.push(value));
     bot.dig = async () => { bot.emit('messagestr', '村庄原有建筑受保护，不能破坏。', 'system'); throw new Error('Digging aborted'); };
     const guard = await install(bot, { send: async () => reply() });
     await assert.rejects(bot.dig(target));
     assert.equal(guard.isDenied('break', target.position), true);
     assert.match(guard.snapshot().lastBlocked.reason, /不能破坏/);
+    assert.equal(events.length, 1);
+    assert.equal(events[0].source, 'server_dig_rejection');
+    assert.equal(events[0].solicitedCommand, undefined, 'a new actual rejection must still wake attention');
+});
+
+test('a cached actual rejection is solicited when a later task consults it', async () => {
+    const bot = fixture(), events = []; let clock = 1000, sent = 0;
+    bot.on('serverProtection', value => events.push(value));
+    bot.dig = async () => { bot.emit('messagestr', '村庄原有建筑受保护，不能破坏。', 'system'); };
+    const guard = await install(bot, { now: () => clock, send: async () => { sent++; return reply(); } });
+    await assert.rejects(bot.dig(target), /不能破坏/);
+    assert.equal(events[0].solicitedCommand, undefined);
+    clock += 16000;
+    const check = await guard.check('break', target.position);
+    assert.equal(check.solicitedCommand, '/mycli protect break -574 73 -505');
+    await assert.rejects(bot.dig(target), /不能破坏/);
+    assert.equal(sent, 1, 'cached denials do not need another server query');
+    assert.equal(events.length, 2);
+    assert.equal(events[1].solicitedCommand, check.solicitedCommand,
+        'replaying a known denial must not become another unsolicited alert');
 });
 
 test('permission failure or transport exceptions never silently fall through to digging', async () => {
@@ -192,6 +216,7 @@ test('explicit permission queries update the body cache without starting an acti
     await sendServerCommand(bot, query, { quietMs: 2, timeoutMs: 40 });
     assert.equal(guard.isDenied('break', target.position), true);
     assert.equal(bot.digs.length, 0);
+    assert.equal(guard.snapshot().lastCheck.solicitedCommand, query.command);
     response = reply();
     await sendServerCommand(bot, query, { quietMs: 2, timeoutMs: 40 });
     assert.equal(guard.isDenied('break', target.position), true, 'a tentative reply cannot erase an unexpired known denial');

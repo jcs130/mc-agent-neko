@@ -49,21 +49,25 @@ export function installServerProtection(bot, {
         if (!p || !world || !/^(break|place|container|use)$/.test(action))
             return { status: 'unknown', allowed: null, reason: 'invalid_target', action, world, ...(p || {}), observedAt: now() };
         const key = targetKey(action, world, p);
-        if (cached(key)) return cached(key);
+        const command = `/mycli protect ${action} ${p.x} ${p.y} ${p.z}`;
+        const known = cached(key);
+        // Reading a cached rejection is feedback to this check, even when the
+        // original denial was an unsolicited rejection of a previous dig.
+        if (known) return { ...known, solicitedCommand: command };
         if (pending.has(key)) return pending.get(key);
         const deadline = Date.now() + queryTimeoutMs;
         const work = async () => {
             let reason = 'protection_reply_missing', response;
             while (connected && epoch === generation && world === worldName(bot) && Date.now() < deadline) {
                 try {
-                    response = await send(bot, { command: `/mycli protect ${action} ${p.x} ${p.y} ${p.z}`, readOnly: true },
+                    response = await send(bot, { command, readOnly: true },
                         { timeoutMs: Math.max(1, deadline - Date.now()), quietMs: 60 });
                 } catch (error) { reason = `transport_error: ${String(error?.message || error).slice(0, 160)}`; break; }
                 if (response.reason !== 'busy') break;
                 reason = 'command_bridge_busy';
                 await new Promise(resolve => setTimeout(resolve, 40));
             }
-            const base = { action, world, ...p, observedAt: now(), source: 'server_preflight' };
+            const base = { action, world, ...p, observedAt: now(), source: 'server_preflight', solicitedCommand: command };
             if (!connected || epoch !== generation || world !== worldName(bot))
                 return { ...base, status: 'unknown', allowed: null, reason: 'preflight_canceled' };
             const records = response?.status === 'received' && Array.isArray(response.records) ? response.records : [];
@@ -124,7 +128,8 @@ export function installServerProtection(bot, {
                     value.world === worldName(bot) && /^(break|place|container|use)$/.test(value.action) &&
                     query === `/mycli protect ${value.action} ${p.x} ${p.y} ${p.z}`) {
                     remember({ action: value.action, world: value.world, ...p, status: 'deny', allowed: false,
-                        reason: String(value.reason || 'server_denied').slice(0, 240), source: 'server_query', observedAt: now() });
+                        reason: String(value.reason || 'server_denied').slice(0, 240), source: 'server_query',
+                        solicitedCommand: query, observedAt: now() });
                 }
             } catch { /* only a matching valid server record can add a denial */ }
         }
@@ -139,7 +144,10 @@ export function installServerProtection(bot, {
             } catch { /* malformed text cannot establish a protected target */ }
         } else if (deniedText.test(text)) reason = text;
         if (!reason) return;
-        const value = remember({ ...activeDig, status: 'deny', allowed: false, reason: String(reason).slice(0, 240),
+        // The actual dig was rejected after tentative permission. This is new
+        // server feedback, not a reply to the completed preflight command.
+        const { solicitedCommand: _preflightCommand, ...digTarget } = activeDig;
+        const value = remember({ ...digTarget, status: 'deny', allowed: false, reason: String(reason).slice(0, 240),
             source: 'server_dig_rejection', observedAt: now() });
         blocked(value); bot.stopDigging();
     });
