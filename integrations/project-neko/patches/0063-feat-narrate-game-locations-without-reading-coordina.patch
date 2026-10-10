@@ -1,0 +1,120 @@
+From 941f6ec26c6975707c1e12400fd7b528863b1d97 Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Sat, 10 Oct 2026 20:11:35 +0800
+Subject: [PATCH] feat: narrate game locations without reading coordinates
+
+---
+ plugin/plugins/game_agent_minecraft/README.md | 11 +++++++++
+ .../plugins/game_agent_minecraft/prompts.py   | 24 ++++++++++++++-----
+ .../test_spoken_language.py                   | 21 ++++++++++++----
+ 3 files changed, 46 insertions(+), 10 deletions(-)
+
+diff --git a/plugin/plugins/game_agent_minecraft/README.md b/plugin/plugins/game_agent_minecraft/README.md
+index 6e7e944..afc60ff 100644
+--- a/plugin/plugins/game_agent_minecraft/README.md
++++ b/plugin/plugins/game_agent_minecraft/README.md
+@@ -310,3 +310,14 @@ MC Agent 身体同样有 `!serverQuery("/mycli spells list 1")` 和
+ 原生消息附加的重复命令回执、背包清单不再挤掉前面的结论；没有简短报告时仍保留原文的首尾。
+ `minecraft_observe(detail="full")` 中的完整 `lastTaskOutcome` 和状态分类继续使用原始回执。
+ 这只改变上下文投影，不增加定时推理，不阻止玩家明确重做任务，也不代表任务已经完成。
++
++### 游戏口播与坐标
++
++游戏口播默认用实际已知的地标或相对方位描述位置，不念坐标，也不编造地标。
++只有用户明确索要坐标时才读出数字。规则进入会产生回复的游戏提示；被动观测、
++服务器消息、导航参数、任务回执和本地可视化仍保留原始坐标，物品数量和玩家名也不改写。
++中文口播继续翻译物品、技能和报错，其他语言使用本地化的位置表达规则。
++
++这是已有模型的表达要求，不增加翻译请求或定时推理，也不是删除 TTS 数字的过滤器。
++使用 NEKO Live 的部署可在正规 `update_config` 中将同样的口播偏好加入
++`stream_avoid_topics`，保留已有条目；不要修改导航工具或观测数据来隐藏坐标。
+diff --git a/plugin/plugins/game_agent_minecraft/prompts.py b/plugin/plugins/game_agent_minecraft/prompts.py
+index a98acb2..b72e693 100644
+--- a/plugin/plugins/game_agent_minecraft/prompts.py
++++ b/plugin/plugins/game_agent_minecraft/prompts.py
+@@ -47,13 +47,15 @@ SUPPORTED_LANGS: tuple[str, ...] = ("zh", "zh-TW", "en", "ja", "ko", "ru", "es",
+ 
+ 
+ def spoken_language_policy(lang: str) -> str:
+-    """Separate spoken wording from exact execution IDs and received evidence."""
++    """Guide narration without changing exact execution IDs or received facts."""
++    position_policy = t('SPOKEN_POSITION_POLICY', lang=lang)
+     if not str(lang).startswith('zh'):
+-        return ''
+-    return ('播報全用中文，英文物品、技能、狀態和報錯先翻譯，優先用遊戲或伺服器給的中文名，不念欄位、代碼或命令；'
+-            'raw_iron=粗鐵，hay_block=乾草捆。工具參數與玩家名保留原文，別復述規則。') if lang == 'zh-TW' else (
+-        '播报全用中文，英文物品、技能、状态和报错先翻译，优先用游戏或服务器给的中文名，不念字段、代码或命令；'
+-        'raw_iron=粗铁，hay_block=干草捆。工具参数与玩家名保留原文，别复述规则。')
++        return position_policy
++    language_policy = ('播報用中文，物品、技能、狀態和報錯先翻譯，用伺服器給的中文名；不念代碼、命令。'
++                       '工具參數與玩家名保留原文。') if lang == 'zh-TW' else (
++        '播报用中文，物品、技能、状态和报错先翻译，用服务器给的中文名；不念代码、命令。'
++        '工具参数与玩家名保留原文。')
++    return language_policy + position_policy
+ 
+ 
+ def t(key: str, *, lang: str | None = None, **fmt: Any) -> str:
+@@ -204,6 +206,16 @@ _CUE_PREFIX_STATE: Dict[str, str] = {
+ # ===========================================================================
+ 
+ PROMPTS: Dict[str, Dict[str, str]] = {
++    "SPOKEN_POSITION_POLICY": {
++        "zh": "口播默认不念坐标，用已知地标或方位，不编造方位；用户明确索要坐标才读。",
++        "zh-TW": "口播預設不念座標，用已知地標或方位，不編造方位；使用者明確索要座標才讀。",
++        "en": "In game narration, do not read coordinates, X/Y/Z or numeric position triples by default. Describe locations using observed landmarks or known relative directions; never invent them. Keep exact coordinates in observations and tool arguments. Read position numbers only if the user explicitly asks for them.",
++        "ja": "ゲーム実況では通常、座標、X/Y/Z、三軸の数値を読み上げない。実際に確認した目印や分かっている上下・前後で場所を伝え、方角を作り上げない。正確な座標は観測とツール引数に保持し、ユーザーが数値を明示的に求めた場合だけ読む。",
++        "ko": "게임 중계에서는 기본적으로 좌표, X/Y/Z 또는 세 축의 숫자를 읽지 마세요. 실제로 확인한 지형지물이나 알고 있는 상대 방향으로 위치를 설명하고 지어내지 마세요. 정확한 좌표는 관측과 도구 인수에 유지하고 사용자가 위치 숫자를 명시적으로 요청할 때만 읽으세요.",
++        "ru": "В игровом комментарии по умолчанию не зачитывай координаты, X/Y/Z и тройки чисел положения. Описывай место по наблюдаемым ориентирам или известным относительным направлениям, не выдумывай их. Сохраняй точные координаты в наблюдениях и аргументах инструментов. Читай числа положения только по прямой просьбе пользователя.",
++        "es": "Al narrar el juego, no leas coordenadas, X/Y/Z ni ternas numéricas de posición por defecto. Describe lugares con referencias observadas o direcciones relativas conocidas, sin inventarlas. Conserva las coordenadas exactas en observaciones y argumentos de herramientas. Lee los números de posición solo si el usuario los pide expresamente.",
++        "pt": "Ao narrar o jogo, não leia coordenadas, X/Y/Z ou trios numéricos de posição por padrão. Descreva locais com referências observadas ou direções relativas conhecidas, sem inventá-las. Preserve coordenadas exatas nas observações e nos argumentos das ferramentas. Leia os números de posição somente se o usuário pedir explicitamente.",
++    },
+     "VITALS_BRIEF": {
+         "zh": "最新生存数据：生命 {hp}/20，饥饿 {food}/20，附近敌对生物 {hostiles}。",
+         "zh-TW": "最新生存資料：生命 {hp}/20，飢餓 {food}/20，附近敵對生物 {hostiles}。",
+diff --git a/plugin/plugins/game_agent_minecraft/test_spoken_language.py b/plugin/plugins/game_agent_minecraft/test_spoken_language.py
+index 272ec53..3dbbdbc 100644
+--- a/plugin/plugins/game_agent_minecraft/test_spoken_language.py
++++ b/plugin/plugins/game_agent_minecraft/test_spoken_language.py
+@@ -18,7 +18,7 @@ class SpokenLanguageTests(unittest.IsolatedAsyncioTestCase):
+     async def test_active_cue_requests_chinese_before_raw_evidence_without_mutating_ids(self):
+         service, calls = self.service()
+         data = {'ai_behavior': 'respond', 'priority': 7, 'parts': [
+-            {'type': 'text', 'text': 'raw_iron=14; FREE; balance=0; !equip("iron_pickaxe"); Player_1'}]}
++            {'type': 'text', 'text': 'raw_iron=14; FREE; balance=0; !equip("iron_pickaxe"); Player_1; position=(-547,64,-386); !goToPosition(-547,64,-386)'}]}
+         before = copy.deepcopy(data)
+         service._push_message(**data)
+         text = calls[-1]['parts'][0]['text']
+@@ -27,17 +27,30 @@ class SpokenLanguageTests(unittest.IsolatedAsyncioTestCase):
+         self.assertIn('技能', text)
+         self.assertIn('服务器给的中文名', text)
+         self.assertIn('工具参数与玩家名保留原文', text)
++        self.assertIn('口播默认不念坐标', text)
++        self.assertIn('不编造方位', text)
+         self.assertTrue(text.endswith(data['parts'][0]['text']))
+         self.assertEqual(data, before)
+         self.assertEqual(calls[-1]['priority'], 7)
+ 
+-    async def test_passive_facts_and_non_chinese_locales_are_unmodified(self):
+-        for lang, behavior in [('zh', 'read'), ('en', 'respond'), ('ja', 'respond')]:
++    async def test_passive_facts_keep_coordinates_in_every_supported_locale(self):
++        for lang in prompts.SUPPORTED_LANGS:
+             service, calls = self.service(lang)
+-            data = {'ai_behavior': behavior, 'parts': [{'type': 'text', 'text': 'coal=64; status=FREE'}]}
++            data = {'ai_behavior': 'read', 'parts': [{'type': 'text', 'text': 'coal=64; position=(-547,64,-386); status=FREE'}]}
+             service._push_message(**data)
+             self.assertEqual(calls[-1], data)
+ 
++    async def test_narration_guidance_is_localized_and_leaves_non_chinese_language_choice_alone(self):
++        for lang in prompts.SUPPORTED_LANGS:
++            service, calls = self.service(lang)
++            evidence = 'NPC Farmer_1 at (-547,64,-386); iron_ingot=7'
++            service._push_message(ai_behavior='respond', parts=[{'type': 'text', 'text': evidence}])
++            text = calls[-1]['parts'][0]['text']
++            self.assertTrue(text.startswith(prompts.spoken_language_policy(lang)))
++            self.assertTrue(text.endswith(evidence))
++            if not lang.startswith('zh'):
++                self.assertNotIn('播报用中文', text)
++
+     async def test_active_message_policy_is_added_once_and_language_switch_is_current(self):
+         service, calls = self.service()
+         policy = prompts.spoken_language_policy('zh')

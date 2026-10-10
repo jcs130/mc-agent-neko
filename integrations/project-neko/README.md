@@ -13,6 +13,12 @@ and [the natural workload and concurrency observations](../../docs/llm-client-la
 The isolated ordinary goal-position experiment did not improve changed-goal
 reuse and remains off; it is documented separately from the earlier prefill work.
 
+Game narration now describes positions using observed landmarks or known
+relative directions, leaving exact coordinates in observations and tool
+arguments. The matching NEKO Live preference uses its supported configuration
+entry; no TTS number filter or extra model request is introduced. See
+[the narration verification report](../../docs/neko-live-narration-2026-10-10.md).
+
 The optional local Strata policy now separates stable execution rules from
 changing state, pins only the Minecraft brain's validated prefix, pages complete
 observation references and defers optional background inference. See
@@ -114,7 +120,7 @@ python -m unittest discover -s plugin/plugins/game_agent_minecraft -t .
 git rev-parse HEAD:plugin/plugins/game_agent_minecraft
 ```
 
-The manifest is authoritative for the current bundle: 62 ordered plugin patches
+The manifest is authoritative for the current bundle: 63 ordered plugin patches
 and three host patches reproduce the declared source's plugin tree and all 14
 affected host-file blobs. Test counts are dated delivery evidence, not a claim
 that every later checkout has already been tested. See the

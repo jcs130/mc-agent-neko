@@ -1,9 +1,9 @@
 {
   "upstreamRepository": "https://github.com/Project-N-E-K-O/N.E.K.O",
   "baseCommit": "fb2a2e731a8c954478d08678b0c8cf40e8145a54",
-  "sourceCommit": "50f1951d3c920f675b6f01172121b0605f7d3c05",
+  "sourceCommit": "941f6ec26c6975707c1e12400fd7b528863b1d97",
   "scope": "plugin/plugins/game_agent_minecraft",
-  "resultPluginTree": "9914ccebd2e24f1ac22324df37430cad2cdde17c",
+  "resultPluginTree": "e68cc8d5505f59f54b4945baf4d382d06cf2e0a7",
   "patches": [
     {
       "file": "0001-chore-configure-text-only-local-Qwen-Minecraft-trial.patch",
@@ -252,12 +252,16 @@
     {
       "file": "0062-perf-page-full-Minecraft-references-and-expire-stale.patch",
       "sha256": "3e52978cff8d089304319cf2403afe059ac017a104afc64ff66806ea9a46fed5"
+    },
+    {
+      "file": "0063-feat-narrate-game-locations-without-reading-coordina.patch",
+      "sha256": "feb9637e3b943bccfe01813faf117eafe38a283ba0e32888d16856f346135d3d"
     }
   ],
   "verification": {
     "appliedInOrderToBase": true,
     "resultPluginTreeMatchesSource": true,
-    "pluginTestsPassed": 206,
+    "pluginTestsPassed": 207,
     "hostCallbackTestsPassed": 195,
     "hostFileBlobsMatchSource": true,
     "nativeSourceTestsPassed": 575,
@@ -637,5 +641,21 @@
     "goalPositionChangedGoalReuseBefore": 0,
     "goalPositionChangedGoalReuseAfter": 0,
     "goalPositionLatencyImprovementProven": false
+  },
+  "narrationVerification": {
+    "date": "2026-10-10",
+    "pluginSourceCommit": "941f6ec26c6975707c1e12400fd7b528863b1d97",
+    "pluginTestsPassed": 207,
+    "focusedTestsPassed": 15,
+    "ruffPassed": true,
+    "allPatchChecksumsChecked": true,
+    "resultPluginTreeMatchesSource": true,
+    "hostFileBlobsMatchSource": true,
+    "rawCoordinatesPreserved": true,
+    "passiveFactsUnmodified": true,
+    "supportedLocales": 8,
+    "additionalInferenceCalls": false,
+    "ttsNumberFilterAdded": false,
+    "liveAudienceSpeechVerified": false
   }
 }
