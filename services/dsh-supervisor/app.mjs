@@ -3,7 +3,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { MODEL, MODEL_URL, buildEvidence, parseReport, auditDue, canStartInference, approvedIssues, roleSchema, supervisorRoleOptions, isActivityEvent, readExecutionHistory, writeDiagnosis, migrateLedger, executionRevision } from './core.mjs';
+import { MODEL, MODEL_URL, buildEvidence, parseReport, auditDue, approvedIssues, roleSchema, supervisorRoleOptions, isActivityEvent, readExecutionHistory, writeDiagnosis, migrateLedger, executionRevision } from './core.mjs';
 import { runAuditStages } from './audit.mjs';
 import { buildRepairQueue, loadRepairReceipts } from './repair.mjs';
 
@@ -34,6 +34,7 @@ export function apply(ctx, config) {
     const children = new Map();
     let frame = null, socket = null, stopped = false, parentHandle = null, queryTimer = null, cleanupPromise = null;
     const status = { pid: process.pid, startedAt: Date.now(), state: 'starting', model: MODEL, modelUrl: MODEL_URL,
+        modelProvider: 'neko-deepseek', inferenceQueue: 'cloud',
         mode: 'observe-diagnose-review', reasoningEffort: supervisorRoleOptions('observer').reasoningEffort,
         roleOptions: Object.fromEntries(['observer', 'diagnoser', 'reviewer'].map(role => [role, supervisorRoleOptions(role)])),
         maxConcurrentInference: 1, roleRuns: {}, gameCommandsSent: 0, codeDeployments: 0 };
@@ -121,16 +122,8 @@ export function apply(ctx, config) {
 
     async function runRole(role, prepare) {
         const admissionAt = Date.now();
-        const admissionDeadline = Date.now() + 120000;
-        while (!stopped) {
-            if (fs.existsSync(path.join(runtimeRoot, 'stop'))) throw new Error('Supervisor stopped');
-            const metrics = await api('http://127.0.0.1:18030/metrics');
-            if (canStartInference(metrics)) break;
-            status.state = 'yielding_to_game_model'; save();
-            if (Date.now() > admissionDeadline) throw new Error('Local model remained busy; defer this audit');
-            await delay(2000);
-        }
-        if (stopped) throw new Error('Supervisor stopped');
+        // The cloud route has its own queue. Never poll or fall back to the game model.
+        if (stopped || fs.existsSync(path.join(runtimeRoot, 'stop'))) throw new Error('Supervisor stopped');
         const prompt = prepare();
         const admittedAt = Date.now();
         status.state = 'running_' + role; save();

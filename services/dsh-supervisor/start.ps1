@@ -4,6 +4,9 @@ param(
     [switch]$Once
 )
 $ErrorActionPreference = 'Stop'
+if ([string]::IsNullOrWhiteSpace($env:DEEPSEEK_API_KEY)) {
+    throw 'DEEPSEEK_API_KEY is required for the cloud supervisors; no local fallback is configured.'
+}
 $mutex = [Threading.Mutex]::new($false, 'Local\NekoMcDshSupervisors')
 $owned = $false
 try { $owned = $mutex.WaitOne(0) } catch [Threading.AbandonedMutexException] { $owned = $true }
@@ -19,7 +22,6 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'DSH profile generation failed' }
     # Dedicated process environment and home: never change the user's existing DSH profiles or credentials.
     $env:DSH_HOME = $profileHome
-    $env:NEKO_DSH_LOCAL_KEY = 'local-no-auth'
     $env:NEKO_DSH_ONCE = $(if ($Once) { '1' } else { '0' })
     $stopFile = Join-Path $RuntimeRoot 'stop'
     if (Test-Path -LiteralPath $stopFile) { Remove-Item -LiteralPath $stopFile }

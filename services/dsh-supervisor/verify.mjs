@@ -6,12 +6,14 @@ import { spawn } from 'node:child_process';
 import { Readable } from 'node:stream';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { MODEL, writeProfile, supervisorRoleOptions } from './core.mjs';
+import { MODEL, MODEL_URL, writeProfile, supervisorRoleOptions } from './core.mjs';
 
 const nativeRoot = path.resolve(process.argv[2] ?? '../mc-agent-neko');
 const runtimeRoot = path.resolve(process.argv[3] ?? '../runtime/dsh-verification');
 const home = path.join(runtimeRoot, 'dsh-home');
 const dshBin = process.env.NEKO_DSH_BIN ?? path.join(process.env.APPDATA, 'npm/node_modules/@deepseek-ai/dsh/lib/bin.js');
+const apiKey = process.env.DEEPSEEK_API_KEY;
+if (!apiKey?.trim()) throw new Error('DEEPSEEK_API_KEY is required; no local fallback');
 writeProfile(home, nativeRoot, runtimeRoot);
 const wire = [];
 const proxy = http.createServer(async (req, res) => {
@@ -23,15 +25,16 @@ const proxy = http.createServer(async (req, res) => {
         if (req.method === 'POST') {
             const value = JSON.parse(body);
             row = { at: Date.now(), model: value.model, maxTokens: value.max_tokens,
-                enableThinking: value.chat_template_kwargs?.enable_thinking,
-                reasoningEffort: value.chat_template_kwargs?.reasoning_effort,
+                enableThinking: value.thinking?.type === 'enabled',
+                reasoningEffort: value.reasoning_effort,
                 messageCount: value.messages?.length,
-                upstream: 'http://127.0.0.1:18030/v1/chat/completions', reasoningDeltas: 0 };
+                upstream: MODEL_URL + '/chat/completions', reasoningDeltas: 0 };
             wire.push(row);
             res.once('finish', () => { row.durationMs = Date.now() - row.at; });
         }
-        const response = await fetch('http://127.0.0.1:18030' + req.url, { method: req.method,
-            headers: { 'Content-Type': 'application/json' }, ...(body ? { body } : {}), signal: AbortSignal.timeout(120000) });
+        const response = await fetch(MODEL_URL + req.url.slice('/v1'.length), { method: req.method,
+            headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + apiKey },
+            ...(body ? { body } : {}), redirect: 'error', signal: AbortSignal.timeout(120000) });
         if (row) row.status = response.status;
         res.writeHead(response.status, { 'Content-Type': response.headers.get('Content-Type') ?? 'application/json' });
         // Consume complete SSE records so a delta split across network chunks is still counted.
@@ -44,6 +47,7 @@ const proxy = http.createServer(async (req, res) => {
                 if (!line.startsWith('data: ') || line === 'data: [DONE]') continue;
                 try {
                     const packet = JSON.parse(line.slice(6)), choice = packet.choices?.[0];
+                    if (row && packet.model) row.responseModel = packet.model;
                     if (row && choice?.delta?.reasoning_content) row.reasoningDeltas++;
                     if (row && choice?.finish_reason) row.finishReason = choice.finish_reason;
                     if (row && packet.usage) row.outputTokens = packet.usage.completion_tokens;
@@ -51,17 +55,17 @@ const proxy = http.createServer(async (req, res) => {
             }
         });
         stream.pipe(res);
-    } catch (error) { if (!res.headersSent) res.writeHead(502); res.end(error.message); }
+    } catch { if (!res.headersSent) res.writeHead(502); res.end('Supervisor upstream request failed'); }
 });
 await new Promise(resolve => proxy.listen(0, '127.0.0.1', resolve));
 const configPath = path.join(home, 'profiles/neko-supervisor/cordis.patch.yml');
 const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-config.find(row => row.insert).insert.find(row => row.id === 'llm-pi-ai').config.providers['neko-local'].baseURL =
+config.find(row => row.insert).insert.find(row => row.id === 'llm-pi-ai').config.providers['neko-deepseek'].baseURL =
     `http://127.0.0.1:${proxy.address().port}/v1`;
 fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
 const log = fs.createWriteStream(path.join(runtimeRoot, 'verification.log'));
 const child = spawn(process.execPath, [dshBin, '--profile', 'neko-supervisor'], { cwd: nativeRoot,
-    windowsHide: true, env: { ...process.env, DSH_HOME: home, NEKO_DSH_ONCE: '1', NEKO_DSH_LOCAL_KEY: 'local-no-auth' },
+    windowsHide: true, env: { ...process.env, DSH_HOME: home, NEKO_DSH_ONCE: '1' },
     stdio: ['ignore', 'pipe', 'pipe'] });
 child.stdout.pipe(log); child.stderr.pipe(log);
 const timeout = setTimeout(() => child.kill(), 480000);
@@ -71,7 +75,7 @@ const status = JSON.parse(fs.readFileSync(path.join(runtimeRoot, 'status.json'),
 const appPath = path.join(path.dirname(fileURLToPath(import.meta.url)), 'app.mjs');
 const options = ['observer', 'diagnoser', 'reviewer'].map(supervisorRoleOptions);
 const passed = exitCode === 0 && wire.length >= 2 && wire.every(row => row.enableThinking === true
-    && row.reasoningEffort === 'low' && row.model === MODEL
+    && row.reasoningEffort === 'low' && row.model === MODEL && row.upstream === MODEL_URL + '/chat/completions'
     && options.some(option => option.maxTokens === row.maxTokens) && row.status === 200)
     && options.filter(option => Object.entries(status.roleOptions ?? {}).some(([role, value]) =>
         value.maxTokens === option.maxTokens && status.roleRuns[role] >= 1))

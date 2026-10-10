@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildEvidence, parseReport, validateIssue, auditDue, assertLocalModel, makeProfile, canStartInference, approvedIssues, selectTicket, isActivityEvent, parseExecutionLog, writeDiagnosis, roleSchema, migrateLedger } from '../services/dsh-supervisor/core.mjs';
+import { buildEvidence, parseReport, validateIssue, auditDue, makeProfile, approvedIssues, selectTicket, isActivityEvent, parseExecutionLog, writeDiagnosis, roleSchema, migrateLedger } from '../services/dsh-supervisor/core.mjs';
+import * as supervisor from '../services/dsh-supervisor/core.mjs';
 
 const NOW = 1791562000000;
 const frame = { sessionId: 'live-session', observedAt: NOW, online: true, state: {
@@ -9,9 +10,13 @@ const frame = { sessionId: 'live-session', observedAt: NOW, online: true, state:
     server: { channels: { 'mcagent:market': { text: 'MC_MARKET_CHECK stage=2 ready=false' } } },
 } };
 
-test('model route is restricted to this machine', () => {
-    for (const url of ['http://127.0.0.1:18030/v1', 'http://localhost:18030/v1']) assert.doesNotThrow(() => assertLocalModel(url));
-    for (const url of ['https://api.deepseek.com/v1', 'http://192.168.3.162:18030/v1', 'http://localhost.evil.test/v1']) assert.throws(() => assertLocalModel(url));
+test('supervisor inference is restricted to the approved cloud endpoint, with no local fallback', () => {
+    assert.doesNotThrow(() => supervisor.assertSupervisorModel('https://api.deepseek.com/v1'));
+    for (const url of ['http://127.0.0.1:18030/v1', 'http://localhost:18030/v1', 'http://192.168.3.162:18030/v1',
+        'https://api.deepseek.com.evil.test/v1', 'http://api.deepseek.com/v1', 'https://key@api.deepseek.com/v1',
+        'https://api.deepseek.com/v1?key=secret', 'https://api.deepseek.com:8080/v1', 'https://api.deepseek.com/other']) {
+        assert.throws(() => supervisor.assertSupervisorModel(url));
+    }
 });
 
 test('evidence preserves live activity and server quest while bounding a large payload', () => {
@@ -92,26 +97,20 @@ test('recurring high-priority tickets cannot starve unreviewed work', () => {
     assert.equal(selectTicket(tickets, { reviewed: { 'T-0001': 'recurrence', 'T-0002': 'first' } }).id, 'T-0001');
 });
 
-test('the isolated DSH profile has one local provider and no shell or remote model runner', () => {
+test('the isolated DSH profile has only the selected DeepSeek provider, env credentials, and no shell', () => {
     const rows = makeProfile({ appPath: 'D:/work/app.mjs', runtimeRoot: 'D:/state', nativeRoot: 'D:/mc' }).flatMap(x => x.insert ?? [x]);
     for (const id of ['llm-deepseek', 'sdk-jsonrpc-server', 'persistent-pwsh', 'persistent-bash']) assert.equal(rows.find(x => x.id === id).disabled, true);
     const provider = rows.find(x => x.id === 'llm-pi-ai').config.providers;
-    assert.deepEqual(Object.keys(provider), ['neko-local']);
-    assert.equal(provider['neko-local'].baseURL, 'http://127.0.0.1:18030/v1');
-    assert.equal(provider['neko-local'].models[0].reasoningEfforts.off, null);
-    assert.equal(provider['neko-local'].compat.thinkingFormat, 'chat-template');
-    assert.deepEqual(provider['neko-local'].compat.chatTemplateKwargs, {
-        enable_thinking: { $var: 'thinking.enabled' },
-        reasoning_effort: { $var: 'thinking.effort', omitWhenOff: true },
-    }, 'Qwen needs the actual effort as well as an enabled flag; true alone defaults to xhigh');
+    assert.deepEqual(Object.keys(provider), ['neko-deepseek']);
+    assert.equal(provider['neko-deepseek'].baseURL, 'https://api.deepseek.com/v1');
+    assert.equal(provider['neko-deepseek'].apiKeyEnv, 'DEEPSEEK_API_KEY');
+    assert.equal(Object.hasOwn(provider['neko-deepseek'], 'apiKey'), false);
+    assert.equal(provider['neko-deepseek'].models[0].id, 'deepseek-flash');
+    assert.equal(provider['neko-deepseek'].compat.thinkingFormat, 'deepseek');
+    assert.equal(provider['neko-deepseek'].compat.supportsReasoningEffort, true);
+    assert.equal(provider['neko-deepseek'].compat.requiresReasoningContentOnAssistantMessages, true);
+    assert.equal(provider['neko-deepseek'].compat.supportsStrictMode, false);
     assert.equal(rows.find(x => x.id === 'neko-supervisor').config.runtimeRoot, 'D:/state');
-});
-
-test('monitor inference yields to a running or queued game request and unknown metrics', () => {
-    assert.equal(canStartInference({ live: { state: 'idle', queued: 0 } }), true);
-    for (const metrics of [null, {}, { live: { state: 'generating', queued: 0 } }, { live: { state: 'idle', queued: 1 } }]) {
-        assert.equal(canStartInference(metrics), false);
-    }
 });
 
 test('independent review cannot publish unsupported, expired, or previous-session issues', () => {
@@ -211,15 +210,15 @@ test('legacy review marks without confirmed writeback are reopened for diagnosis
 test('supervisors use low reasoning with bounded room for thinking and Chinese structured reports', async () => {
     const { supervisorRoleOptions } = await import('../services/dsh-supervisor/core.mjs');
     const rows = makeProfile({ appPath: 'app.mjs', runtimeRoot: 'state', nativeRoot: 'mc' }).flatMap(x => x.insert ?? [x]);
-    const provider = rows.find(x => x.id === 'llm-pi-ai').config.providers['neko-local'];
+    const provider = rows.find(x => x.id === 'llm-pi-ai').config.providers['neko-deepseek'];
     // The actual 512-token response ended during the Unicode-escaped summary,
     // before required issues could be serialized; a two-issue report needs headroom.
     assert.ok(provider.models[0].maxTokens >= 2048, 'the provider must not cap the observer at 512');
     for (const [role, minimum] of [['observer', 3072], ['diagnoser', 2048], ['reviewer', 2560]]) {
         const options = supervisorRoleOptions(role);
-        assert.equal(options.provider, 'neko-local');
+        assert.equal(options.provider, 'neko-deepseek');
         assert.equal(options.reasoningEffort, 'low');
-        assert.equal(options.model, 'qwen3.8-flash-next-iq3_xxs');
+        assert.equal(options.model, 'deepseek-flash');
         assert.equal(options.maxTokens, minimum);
         assert.ok(provider.defaultMaxTokens >= options.maxTokens);
         assert.ok(provider.models[0].maxTokens >= options.maxTokens);

@@ -3,15 +3,15 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 
-export const MODEL = 'qwen3.8-flash-next-iq3_xxs';
-export const MODEL_URL = 'http://127.0.0.1:18030/v1';
+export const MODEL = 'deepseek-flash'; // Official API ID for DeepSeek-V4.1-Flash.
+export const MODEL_URL = 'https://api.deepseek.com/v1';
 
 // Thinking and the structured answer share max_tokens. Keep the previous answer
 // headroom plus 1024 tokens, while low effort asks the model to reason briefly.
 const ROLE_TOKEN_BUDGETS = Object.freeze({ observer: 3072, diagnoser: 2048, reviewer: 2560 });
 export function supervisorRoleOptions(role) {
     if (!Object.hasOwn(ROLE_TOKEN_BUDGETS, role)) throw new Error('Unknown supervisor role');
-    return { provider: 'neko-local', model: MODEL, reasoningEffort: 'low', maxTokens: ROLE_TOKEN_BUDGETS[role] };
+    return { provider: 'neko-deepseek', model: MODEL, reasoningEffort: 'low', maxTokens: ROLE_TOKEN_BUDGETS[role] };
 }
 
 export function roleSchema(role, evidenceIds = [], issueKeys = []) {
@@ -29,10 +29,11 @@ export function roleSchema(role, evidenceIds = [], issueKeys = []) {
     throw new Error('Unknown supervisor role');
 }
 
-export function assertLocalModel(value) {
+export function assertSupervisorModel(value) {
     const url = new URL(value);
-    if (url.protocol !== 'http:' || !['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname) || url.username || url.password) {
-        throw new Error('DSH supervisors require a loopback model endpoint');
+    if (url.protocol !== 'https:' || url.hostname !== 'api.deepseek.com' || url.port
+        || url.pathname !== '/v1' || url.username || url.password || url.search || url.hash) {
+        throw new Error('DSH supervisors require the approved DeepSeek HTTPS endpoint');
     }
     return url;
 }
@@ -198,8 +199,6 @@ export function migrateLedger(previous = {}) {
     return { ...previous, schemaVersion: 2, reviewed: {}, reviewedAt: {}, attemptedAt: {}, baselineComplete: false };
 }
 
-export const canStartInference = metrics => metrics?.live?.state === 'idle' && metrics.live.queued === 0;
-
 // Preserve real native task events for botwatch's event-silence detector. Poll replies and
 // periodic telemetry must not make a frozen game loop appear to be making progress.
 export const isActivityEvent = value => ['log', 'task_finished', 'skill_result', 'server_command_result',
@@ -261,7 +260,7 @@ export function approvedIssues(issues, reviewer, evidence, current, now = Date.n
 }
 
 export function makeProfile({ appPath, runtimeRoot, nativeRoot }) {
-    assertLocalModel(MODEL_URL);
+    assertSupervisorModel(MODEL_URL);
     return [
         ...['sdk-app-startup', 'sdk-jsonrpc-server', 'llm-deepseek', 'persistent-bash', 'persistent-pwsh'].map(id => ({ id, disabled: true })),
         { id: 'system-prompt', config: { includeHarnessIdentity: false, includeRuntimeContext: false,
@@ -269,17 +268,13 @@ export function makeProfile({ appPath, runtimeRoot, nativeRoot }) {
         { id: 'sessions', config: { root: path.join(runtimeRoot, 'dsh-home', 'sessions'), compression: 'none' } },
         { insert: [
             { id: 'llm-pi-ai', name: '@deepseek-ai/dsh-llm-pi-ai', config: { providers: {
-                'neko-local': { api: 'openai-completions', apiKeyEnv: 'NEKO_DSH_LOCAL_KEY', baseURL: MODEL_URL,
+                'neko-deepseek': { api: 'openai-completions', apiKeyEnv: 'DEEPSEEK_API_KEY', baseURL: MODEL_URL,
                     defaultContextWindow: 16384, defaultMaxTokens: 3072, retryPolicy: { mode: 'normal', maxRetries: 0 },
-                    compat: { supportsStore: false, supportsDeveloperRole: false, supportsReasoningEffort: false,
-                        maxTokensField: 'max_tokens', thinkingFormat: 'chat-template', chatTemplateKwargs: {
-                            enable_thinking: { $var: 'thinking.enabled' },
-                            reasoning_effort: { $var: 'thinking.effort', omitWhenOff: true },
-                        } },
-                    // qwen-chat-template sends only the boolean; Strata would
-                    // silently use default xhigh. Send the explicit low effort.
-                    models: [{ id: MODEL, name: 'Local Qwen / RTX 3090', contextWindow: 16384, maxTokens: 3072,
-                        reasoningEfforts: { off: null, low: 'low' } }] },
+                    compat: { supportsStore: false, supportsDeveloperRole: false, supportsReasoningEffort: true,
+                        maxTokensField: 'max_tokens', thinkingFormat: 'deepseek', supportsStrictMode: false,
+                        requiresReasoningContentOnAssistantMessages: true },
+                    models: [{ id: MODEL, name: 'DeepSeek-V4.1-Flash / cloud supervisor', contextWindow: 16384, maxTokens: 3072,
+                        reasoningEfforts: { off: 'none', low: 'low' } }] },
             } } },
             { id: 'subagent', name: '@deepseek-ai/dsh-subagent' },
             { id: 'subagent-spawn', name: '@deepseek-ai/dsh-subagent-spawn-in-process' },
