@@ -7,6 +7,12 @@ configuration, one-RTX-3090 measurements, caller/thinking boundaries and feature
 that remain experimental. Private provider configuration and model weights are
 not included.
 
+The [joint reply and emotion companion](../../docs/joint-avatar-local-deployment.md)
+removes the extra offline main-reply emotion classification request. It includes
+ordinary, tool-feedback and proactive delivery coverage, a host Regression
+Report, neutral fallback and turn-scoped frontend animation. Live deployment
+evidence and the separate shared-viewer/YUI skin update are recorded in that guide.
+
 The idle decision recovery companion changes keep query replies from resetting
 progress/backoff, distinguish accepted quest receipts from browsed catalogues,
 and reserve an existing final request for optional execution in confirmed idle
@@ -128,7 +134,7 @@ git rev-parse HEAD:plugin/plugins/game_agent_minecraft
 ```
 
 The manifest is authoritative for the current bundle: 67 ordered plugin patches
-and eight host patches reproduce the declared source's plugin tree and all 26
+and nine host patches reproduce the declared source's plugin tree and all 36
 affected host-file blobs. Test counts are dated delivery evidence, not a claim
 that every later checkout has already been tested. See the
 [prefill verification report](../../docs/neko-llm-prefill-2026-10-10.md) for plugin

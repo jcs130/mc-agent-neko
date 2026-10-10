@@ -96,6 +96,11 @@ quality. Desktop refresh is deployment evidence, not a visual acceptance test.
 
 ## Next independent experiment: one reply with emotion metadata
 
+Update, 2026-10-11: the offline main-brain experiment described below is now
+implemented and deployed as a companion patch. See the [joint reply guide](joint-avatar-local-deployment.md)
+for the verified boundaries, tests and live metadata evidence. The original
+audit and its historical separate-classifier measurements remain unchanged.
+
 For speech-producing main replies, emit a small emotion field alongside the
 reply in the same generation. Keep streamed speech available immediately and
 strip metadata before TTS, subtitles, game chat and history. Consume that field

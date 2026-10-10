@@ -1,7 +1,7 @@
 {
   "upstreamRepository": "https://github.com/Project-N-E-K-O/N.E.K.O",
   "baseCommit": "fb2a2e731a8c954478d08678b0c8cf40e8145a54",
-  "sourceCommit": "3d449a7e382a2d2cc8bb9a1a05f57a6ef69b6e76",
+  "sourceCommit": "67b5b85130b61e692f02f161694bfad8c0075c7e",
   "scope": "plugin/plugins/game_agent_minecraft",
   "resultPluginTree": "64e86f90898b728c71bc50c9d84ea078b1b979e3",
   "patches": [
@@ -372,6 +372,28 @@
         "tests/unit/test_tool_calling.py",
         "tests/unit/test_tool_call_thought_signature.py",
         "docs/2026-10-11-minecraft-execution-budget.md"
+      ]
+    },
+    {
+      "file": "host-patches/0009-perf-avatar-emit-reply-and-emotion-in-one-main-brain.patch",
+      "sha256": "6d524ac0f7709b9f470e6104cb5a7ba87a0c6c9862a9e3a7f949ff39ddee86aa",
+      "sourceCommit": "67b5b85130b61e692f02f161694bfad8c0075c7e",
+      "scopePaths": [
+        "docs/regression-reports/2026-10-11-joint-reply-emotion.md",
+        "main_logic/core/lifecycle.py",
+        "main_logic/core/turn.py",
+        "main_logic/omni_offline_client/_client.py",
+        "main_logic/omni_offline_client/_lifecycle.py",
+        "main_logic/omni_offline_client/_streaming.py",
+        "main_logic/omni_offline_client/_tools.py",
+        "main_logic/proactive_chat/delivery.py",
+        "main_logic/proactive_chat/generation.py",
+        "main_logic/proactive_chat/service.py",
+        "static/app/app-websocket.js",
+        "tests/frontend/test_avatar_turn_coalescing.mjs",
+        "tests/unit/test_joint_reply_emotion.py",
+        "tests/unit/test_proactive_phase2_generation.py",
+        "utils/joint_reply_emotion.py"
       ]
     }
   ],
@@ -844,5 +866,23 @@
     "nativeTestsPassed": 616,
     "dshTestsPassed": 44,
     "productionOutcomeVerified": false
+  },
+  "jointReplyEmotionVerification": {
+    "date": "2026-10-11",
+    "sourceCommit": "67b5b85130b61e692f02f161694bfad8c0075c7e",
+    "targetedPythonCasesPassed": 395,
+    "coreMemoryAndProtocolCasesPassed": 207,
+    "frontendCasesPassed": 19,
+    "ordinaryReplayProviderRequests": 1,
+    "jointFrontendClassifierRequests": 0,
+    "fullReplayMatchesSource": true,
+    "hostFilesMatched": 36,
+    "deploymentPhase": "deployed",
+    "renderedDesktopExpressionVerified": false,
+    "aggregateLatencyImprovementMeasured": false,
+    "hostAndDesktopReady": true,
+    "nativeGameAndLocalModelPreserved": true,
+    "servedFrontendMatchesSource": true,
+    "naturalReplyMetadataTurnsObserved": 2
   }
 }
