@@ -36,5 +36,21 @@ social chat, genuine sealed-night waiting, or server protection rules.
 Validation before deployment: the new production-handler tests first had 5
 passes and 2 failures. Related combat/ownership/filler tests now pass 60/60 in
 both contribution and native checkouts. The complete contribution suite passes
-725/725 with no skips; these counts overlap. Runtime state is prepared until an
-actual safe owned-child reload is documented.
+725/725 with no skips; these counts overlap.
+
+Deployment and limits (06:27 Beijing): source fix `44a120f391eb3622376a03471400b0097ed73a0f`
+was pushed to the user fork and loaded through the existing MindServer
+`restart-agent` flow at a full-health daytime idle boundary. Only the owned
+native child changed (PID 1748 to 19880); main brain, MindServer, local model and
+VoxCPM2 remained continuous. The official unattended flow restored the guardian.
+Local evidence is in `runtime/hourly-20261011-0618/native-deployment.json` under
+the trial root; the T-0040 receipt retains its original occurrence baseline 20
+and records `deployed`, with API writeback confirmed.
+
+The bot was already back on the surface before deployment, so that escape is
+not attributed to this patch. A subsequent passive 90-second window observed
+76 fresh frames, full health and food, a free body and a small position change.
+It did not exercise another qualifying failed-seal retreat or prove production,
+tool replenishment or trade. Runtime acceptance remains unverified; leave the
+ticket open for evidence rather than treating movement or passing tests as
+completion.
