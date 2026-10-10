@@ -6,9 +6,11 @@ import { createHash } from 'node:crypto';
 export const MODEL = 'deepseek-flash'; // Official API ID for DeepSeek-V4.1-Flash.
 export const MODEL_URL = 'https://api.deepseek.com/v1';
 
-// Thinking and the structured answer share max_tokens. Keep the previous answer
-// headroom plus 1024 tokens, while low effort asks the model to reason briefly.
-const ROLE_TOKEN_BUDGETS = Object.freeze({ observer: 3072, diagnoser: 2048, reviewer: 2560 });
+// Thinking and the structured answer share max_tokens. Actual low-effort cloud
+// runs exhausted 3072 (observer) / 2560 (reviewer) entirely during reasoning.
+// Leave bounded answer headroom without changing admission or audit frequency.
+const ROLE_TOKEN_BUDGETS = Object.freeze({ observer: 6144, diagnoser: 4096, reviewer: 6144 });
+const PROVIDER_TOKEN_BUDGET = Math.max(...Object.values(ROLE_TOKEN_BUDGETS));
 export function supervisorRoleOptions(role) {
     if (!Object.hasOwn(ROLE_TOKEN_BUDGETS, role)) throw new Error('Unknown supervisor role');
     return { provider: 'neko-deepseek', model: MODEL, reasoningEffort: 'low', maxTokens: ROLE_TOKEN_BUDGETS[role] };
@@ -269,11 +271,11 @@ export function makeProfile({ appPath, runtimeRoot, nativeRoot }) {
         { insert: [
             { id: 'llm-pi-ai', name: '@deepseek-ai/dsh-llm-pi-ai', config: { providers: {
                 'neko-deepseek': { api: 'openai-completions', apiKeyEnv: 'DEEPSEEK_API_KEY', baseURL: MODEL_URL,
-                    defaultContextWindow: 16384, defaultMaxTokens: 3072, retryPolicy: { mode: 'normal', maxRetries: 0 },
+                    defaultContextWindow: 16384, defaultMaxTokens: PROVIDER_TOKEN_BUDGET, retryPolicy: { mode: 'normal', maxRetries: 0 },
                     compat: { supportsStore: false, supportsDeveloperRole: false, supportsReasoningEffort: true,
                         maxTokensField: 'max_tokens', thinkingFormat: 'deepseek', supportsStrictMode: false,
                         requiresReasoningContentOnAssistantMessages: true },
-                    models: [{ id: MODEL, name: 'DeepSeek-V4.1-Flash / cloud supervisor', contextWindow: 16384, maxTokens: 3072,
+                    models: [{ id: MODEL, name: 'DeepSeek-V4.1-Flash / cloud supervisor', contextWindow: 16384, maxTokens: PROVIDER_TOKEN_BUDGET,
                         reasoningEfforts: { off: 'none', low: 'low' } }] },
             } } },
             { id: 'subagent', name: '@deepseek-ai/dsh-subagent' },

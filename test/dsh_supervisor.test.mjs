@@ -214,12 +214,15 @@ test('supervisors use low reasoning with bounded room for thinking and Chinese s
     // The actual 512-token response ended during the Unicode-escaped summary,
     // before required issues could be serialized; a two-issue report needs headroom.
     assert.ok(provider.models[0].maxTokens >= 2048, 'the provider must not cap the observer at 512');
-    for (const [role, minimum] of [['observer', 3072], ['diagnoser', 2048], ['reviewer', 2560]]) {
+    // Real cloud sessions exhausted 3072/2560 tokens entirely in reasoning.
+    // Leave room for their structured result, with a finite per-request cap.
+    for (const [role, minimum] of [['observer', 6144], ['diagnoser', 4096], ['reviewer', 6144]]) {
         const options = supervisorRoleOptions(role);
         assert.equal(options.provider, 'neko-deepseek');
         assert.equal(options.reasoningEffort, 'low');
         assert.equal(options.model, 'deepseek-flash');
         assert.equal(options.maxTokens, minimum);
+        assert.ok(options.maxTokens <= 8192);
         assert.ok(provider.defaultMaxTokens >= options.maxTokens);
         assert.ok(provider.models[0].maxTokens >= options.maxTokens);
     }
