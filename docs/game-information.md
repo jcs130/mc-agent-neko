@@ -32,12 +32,26 @@ commands keep their original validation and command route; observations never
 create admin missions. A monitoring query does not claim conversation ownership.
 Observation frames are excluded from the game's debug-chat mirror.
 
-The Neko plugin retains these facts, injects passive context at most every 10
-seconds, and includes current state/recent events in autonomous decisions.
+The Neko plugin retains these facts, provides an initial passive reference per
+connection, and includes current state/recent events in autonomous decisions.
 Incoming conversation and relevant server feedback can request judgment, paced
 at one cue per 5 seconds with duplicate suppression. State updates and changing
 actionbar counters alone do not request speech. Pending attention events are
 carried into the next cue rather than dropped by the cooldown.
+
+Raw signed chat resolves a sender using the received UUID. Decorated server
+channels may additionally resolve a leading delimited online account; other
+formats remain raw received text. Such fallback parsing never creates admin
+commands. Nearby players/equipment and decoded dropped-item identities are
+available in observations. Item collection includes the actual packet count,
+collector and nearby accounts; the donor is unknown and inventory must be
+verified. Ambient drops and ordinary mining pickups do not wake another model
+turn. Independent attention batches cannot replace each other in the host queue.
+Ordinary chat and nonurgent independent system feedback defer during actions,
+bounded to 32 events/5 minutes; full deferred evidence is queryable.
+
+See [the player perception audit](neko-player-perception-2026-10-10.md) for replay
+evidence, service routes, the independent desktop token fix and live limits.
 
 `minecraft_observe(sections, max_events)` requests a fresh snapshot without
 interrupting the action. It exposes bounded details for `self`, `world`,

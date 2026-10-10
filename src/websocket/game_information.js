@@ -137,6 +137,34 @@ function distance(a, b) {
     return a && b ? Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z) : Infinity;
 }
 
+function droppedItem(entity) {
+    try {
+        const item = entity?.getDroppedItem?.();
+        if (!item) return null;
+        const state = itemState(item);
+        return Object.fromEntries(['name', 'count', 'displayName', 'customName', 'lore', 'durabilityUsed', 'maxDurability']
+            .filter(key => state[key] != null).map(key => [key, state[key]]));
+    } catch { return null; }
+}
+
+function nearbyPlayers(bot, position) {
+    return Object.values(bot.entities ?? {}).filter(entity => entity.id !== bot.entity?.id &&
+        entity.username && bot.players?.[entity.username] && distance(position, entity.position) <= 6)
+        .sort((a, b) => distance(position, a.position) - distance(position, b.position))
+        .slice(0, 4).map(entity => entity.username);
+}
+
+function receivedPlayer(bot, sender, text) {
+    const byUuid = sender && Object.entries(bot.players ?? {}).find(([, player]) => player.uuid === sender);
+    if (byUuid) return { player: byUuid[0], senderResolvedBy: 'uuid' };
+    // Decorated server channels often arrive as system text. Only accept an
+    // explicit leading sender delimiter and a currently known account; never
+    // turn an inferred name or @neko text into an admin command.
+    const prefix = /^(?:\s*[\[【][^\]】\r\n]{1,40}[\]】]\s*){0,3}(?:<([A-Za-z0-9_]{1,16})>|([A-Za-z0-9_]{1,16})\s*[:：»])/u.exec(text);
+    const player = prefix?.[1] ?? prefix?.[2];
+    return player && bot.players?.[player] ? { player, senderResolvedBy: 'online_name_prefix' } : null;
+}
+
 export function collectGameState(agent, presentation = {}) {
     const bot = agent.bot, pos = bot.entity?.position;
     const slots = playerInventorySlots(bot), counts = {};
@@ -190,6 +218,7 @@ export function collectGameState(agent, presentation = {}) {
             type: entity.type, username: entity.username, displayName: gameText(entity.displayName),
             customName: plainText(entity.metadata?.[2]).replace(/§[0-9a-fk-or]/gi, '').slice(0, 160),
             position: point(entity.position), distance: Math.round(distance(pos, entity.position) * 10) / 10,
+            droppedItem: droppedItem(entity),
             health: finite(entity.health), equipment: entity.equipment?.map(item => itemState(item)),
             metadata: entity.metadata })), entitiesOmitted: Math.max(0, entities.length - 32),
             sampledBlocks: [...blocks.values()], sampleRadius: 4,
@@ -263,8 +292,14 @@ export class GameInformation {
                     return;
                 } catch { /* malformed JSON remains observable text */ }
             }
-            this.event(position === 'game_info' ? 'actionbar' : position === 'chat' ? 'chat' : 'system',
-                { text, source: position === 'chat' ? 'received_chat' : 'server', data: { sender, verified, translation: json?.translate, ...(solicitedCommand ? { solicitedCommand } : {}) } });
+            const contact = position !== 'game_info' ? receivedPlayer(this.bot, sender, text) : null;
+            if (contact && own(contact.player)) return;
+            this.event(contact ? 'chat' : position === 'game_info' ? 'actionbar' : position === 'chat' ? 'chat' : 'system',
+                { ...(contact ? { player: contact.player } : {}), text,
+                    source: contact || position === 'chat' ? 'received_chat' : 'server',
+                    data: { sender, verified, translation: json?.translate, position,
+                        ...(contact ? { senderResolvedBy: contact.senderResolvedBy } : {}),
+                        ...(!contact && solicitedCommand ? { solicitedCommand } : {}) } });
         } catch { /* malformed text is not a game failure */ } });
         });
         this.on(this.bot, 'actionBar', value => this.actionBar(gameText(value)));
@@ -293,6 +328,31 @@ export class GameInformation {
         });
         this.on(this.bot, 'entityHurt', entity => {
             if (entity.id === this.bot.entity?.id) this.event('damage', { source: 'game', data: { health: finite(this.bot.health) } });
+        });
+        this.on(this.bot, 'itemDrop', entity => {
+            if (distance(this.bot.entity?.position, entity?.position) > 32) return;
+            const item = droppedItem(entity);
+            this.event('item_drop', { source: 'game', text: `Nearby dropped item: ${item?.customName || item?.name || 'identity unavailable'}. Donor unknown.`,
+                data: { entityId: entity.id, position: point(entity.position), donor: null,
+                    nearbyPlayers: nearbyPlayers(this.bot, entity.position), item } });
+        });
+        // Mineflayer's playerCollect event omits pickupItemCount. The actual
+        // packet distinguishes a partial pickup from the original stack size.
+        this.on(this.bot._client, 'collect', packet => {
+            const selfCollected = packet.collectorEntityId === this.bot.entity?.id;
+            const collector = selfCollected ? this.bot.entity : this.bot.entities?.[packet.collectorEntityId];
+            const collected = this.bot.entities?.[packet.collectedEntityId];
+            if (!selfCollected && (!collector?.username || !this.bot.players?.[collector.username] ||
+                    distance(this.bot.entity?.position, collected?.position) > 32)) return;
+            if (collected?.name && !['item', 'Item', 'item_stack'].includes(collected.name)) return;
+            const player = selfCollected ? this.bot.username : collector.username;
+            const item = droppedItem(collected);
+            const count = Number.isInteger(packet.pickupItemCount) && packet.pickupItemCount >= 0 ? packet.pickupItemCount : null;
+            this.event('item_pickup', { player, source: 'game',
+                text: `${player} collected ${count ?? '?'} ${item?.customName || item?.name || 'unknown item'}. Donor unknown; verify inventory.`,
+                data: { entityId: packet.collectedEntityId, collectorId: packet.collectorEntityId,
+                    selfCollected, collectedCount: count, donor: null,
+                    nearbyPlayers: nearbyPlayers(this.bot, collected?.position ?? this.bot.entity?.position), item } });
         });
         this.on(this.bot, 'windowOpen', window => {
             if (this.presentation.trades?.windowId !== window.id) this.presentation.trades = null;

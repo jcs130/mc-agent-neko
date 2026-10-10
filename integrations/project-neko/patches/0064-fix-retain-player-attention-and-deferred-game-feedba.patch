@@ -1,0 +1,323 @@
+From 6e7d8b3d7de5168028fd6f149b505b7b86e00dd2 Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Sat, 10 Oct 2026 20:51:18 +0800
+Subject: [PATCH] fix: retain player attention and deferred game feedback
+
+---
+ plugin/plugins/game_agent_minecraft/README.md |   9 +-
+ .../game_agent_minecraft/decision_context.py  |  13 +-
+ .../plugins/game_agent_minecraft/service.py   |  33 +++--
+ .../test_adaptive_heartbeat.py                |   2 +-
+ .../test_player_perception.py                 | 121 ++++++++++++++++++
+ 5 files changed, 165 insertions(+), 13 deletions(-)
+ create mode 100644 plugin/plugins/game_agent_minecraft/test_player_perception.py
+
+diff --git a/plugin/plugins/game_agent_minecraft/README.md b/plugin/plugins/game_agent_minecraft/README.md
+index afc60ff..9f9d824 100644
+--- a/plugin/plugins/game_agent_minecraft/README.md
++++ b/plugin/plugins/game_agent_minecraft/README.md
+@@ -219,12 +219,19 @@ mc-agent 需要启用 `render_bot_view`、`viewer_type="modern"`，并配置
+ - 公共/自定义/NPC 聊天、私聊、系统和命令回执，以及服务器已发送的命令目录、
+   进度/配方反馈和插件频道中的 JSON/文本。
+ 
+-普通状态每 10 秒最多静默写入一次上下文；每次自主决策还直接附带当前状态和近期事件。
++每次连接先静默提供一次状态参考；后续普通状态更新观测缓存，每次自主决策再附带当前状态和近期事件。
+ 玩家聊天、求助和相关服务器反馈触发判断，至少间隔 5 秒，相同内容 15 秒内不重复提醒。
+ 事件 ID 跨事件帧和快照去重，冷却期间的待处理消息保留。新插件声明会话所有权后，
+ 身体不再同时回复私聊；既有 `@neko`/`!` 指令继续走原来的校验和执行通路。
+ 游戏内回复须调用 `minecraft_chat`，桌面说话或网页回复本身不会发送游戏聊天。
+ 
++玩家点名（账号、角色名或 neko）与私聊可请求一次社交判断，不能借此替换身体正在执行的目标。
++普通玩家聊天和非紧急的独立系统报错在长动作期间保存，空闲后再处理；最多保留 32 条、5 分钟，
++完整的有界待处理内容可通过 `minecraft_observe(detail="full",sections=[],max_events=48)` 查询。
++不同注意力批次使用事件 ID 派生的独立队列键，主脑忙时不会被后一批消息合并覆盖；普通状态仍可合并。
++物品掉落、实际拾取数量和附近玩家来自原生观测；附近有人不证明谁赠送，物品归属和背包到账须核实。
++普通采矿掉落/拾取只更新缓存，不额外唤醒模型；与附近玩家相关的自身拾取在空闲时提供社交信息。
++
+ MC 侧设置 `chat_ingame=false` 后，身体的工具调用和行动解说仅留在本地控制台/网页；
+ 本插件接管会话时也会自动关闭身体的聊天播报。明确的 `minecraft_chat` 仍可使用。
+ 公屏仅用于真实回应、必要求助或协作，单独找人聊天可主动调用
+diff --git a/plugin/plugins/game_agent_minecraft/decision_context.py b/plugin/plugins/game_agent_minecraft/decision_context.py
+index 03f4521..8b9b208 100644
+--- a/plugin/plugins/game_agent_minecraft/decision_context.py
++++ b/plugin/plugins/game_agent_minecraft/decision_context.py
+@@ -28,7 +28,7 @@ def _select(value, keys):
+     return {key: value[key] for key in keys if key in value} if isinstance(value, dict) else {}
+ 
+ 
+-def _entity_summary(entity):
++def _entity_summary(entity, social=False):
+     fact = {key: _short(entity[key], 48) if isinstance(entity[key], str) else entity[key]
+             for key in ('name', 'type', 'username', 'customName', 'distance') if key in entity}
+     # A profession or remembered coordinate is not this received NPC's identity.
+@@ -40,6 +40,11 @@ def _entity_summary(entity):
+                  if type(position.get(key)) in (int, float) and math.isfinite(position[key])}
+         if point:
+             fact['position'] = point
++    if isinstance(entity.get('droppedItem'), dict):
++        fact['droppedItem'] = _select(entity['droppedItem'], ('name', 'customName', 'count'))
++    if social and isinstance(entity.get('equipment'), list):
++        fact['equipment'] = [_select(item, ('name', 'customName', 'count'))
++                             for item in entity['equipment'][:6] if isinstance(item, dict)]
+     return fact
+ 
+ 
+@@ -216,9 +221,11 @@ def build_focused_view(info, *, mode='decision', max_events=6, max_tokens=1600,
+             players = [_short(player, 32) if not isinstance(player, dict) else _select(player, ('username', 'name'))
+                        for player in (nearby.get('onlinePlayers') or [])[:6]]
+             entities = sorted((entity for entity in nearby.get('entities') or [] if isinstance(entity, dict)),
+-                key=lambda item: item.get('distance') if type(item.get('distance')) in (int, float) else float('inf'))
++                key=lambda item: (0 if mode == 'social' and item.get('username') else
++                                  1 if mode == 'social' and item.get('droppedItem') else 2,
++                                  item.get('distance') if type(item.get('distance')) in (int, float) else float('inf')))
+             compact['nearby'] = {'players': players,
+-                'entities': [_entity_summary(entity) for entity in entities[:4]]}
++                'entities': [_entity_summary(entity, social=mode == 'social') for entity in entities[:4]]}
+             if len(entities) > 4 or any(path in ('$.nearby', '$.nearby.entities') or
+                     path.startswith('$.nearby.entities.') for path in info.truncated):
+                 compact['nearby'].update(entitiesReceived=len(entities), entitiesPartial=True,
+diff --git a/plugin/plugins/game_agent_minecraft/service.py b/plugin/plugins/game_agent_minecraft/service.py
+index e6385aa..46a0460 100644
+--- a/plugin/plugins/game_agent_minecraft/service.py
++++ b/plugin/plugins/game_agent_minecraft/service.py
+@@ -34,6 +34,7 @@ from __future__ import annotations
+ import asyncio
+ import base64
+ import collections
++import hashlib
+ import json
+ import re
+ import time
+@@ -976,6 +977,13 @@ class GameAgentService:
+             self._game_attention_ids.update(self._deferred_game_chat)
+             self._game_attention_pending = bool(self._game_attention_ids)
+ 
++    def _defer_game_event(self, event) -> None:
++        saved, clipped = bounded_value(event, 8000)
++        if clipped:
++            saved['truncated'] = True
++        self._deferred_game_chat[event['id']] = saved
++        self._deferred_game_chat = dict(list(self._deferred_game_chat.items())[-32:])
++
+     async def _handle_game_events(self, events) -> None:
+         now = time.time()
+         busy = self._game_execution_busy()
+@@ -990,31 +998,34 @@ class GameAgentService:
+             if is_chat and busy and not self._directed_game_chat(event):
+                 # Keep ordinary conversation for the next idle/social turn;
+                 # it must not invite another physical goal over ongoing work.
+-                self._deferred_game_chat[event['id']] = {
+-                    **{key: event.get(key) for key in ('id', 'kind', 'player', 'observedAt')},
+-                    'text': text[:2000], 'textTruncated': len(text) > 2000}
+-                self._deferred_game_chat = dict(list(self._deferred_game_chat.items())[-8:])
++                self._defer_game_event(event)
+                 continue
+             # A tool already returns its own reply to the active model turn.
+             # Re-waking Neko for an explanation containing "cooldown" creates
+             # a query -> reply -> new proactive turn -> query feedback loop.
+             # Retain those events for observations, without another wake-up.
+             is_feedback = kind in ('system', 'title', 'subtitle') and not details.get('solicitedCommand') and bool(re.search(
+-                r'失败|拒绝|不能|无法|没有权限|保护|领地|不允许|冷却|需要|完成|奖励|求助|救命|试炼|委托|failed|denied|cannot|protected|permission|cooldown|completed|reward|help', text, re.I))
++                r'失败|拒绝|不能|无法|错误|报错|异常|未知子命令|背包已满|没有权限|保护|领地|不允许|冷却|需要|完成|奖励|求助|救命|试炼|委托|failed|error|denied|cannot|protected|permission|cooldown|completed|reward|help', text, re.I))
+             is_protection = kind == 'protection' and not details.get('solicitedCommand') and details.get('status') in ('deny', 'unknown')
+             if kind == 'server_record' and details.get('kind') == 'MC_PROTECTION' and not details.get('solicitedCommand'):
+                 value = details.get('value') or {}
+                 is_protection = isinstance(value, dict) and value.get('status') in ('deny', 'unknown')
+             is_plugin_feedback = kind == 'plugin_message' and str(details.get('channel', '')).endswith(':event')
++            # Collection near a player may be a gift, but the protocol does
++            # not identify a donor. Ordinary mining pickups stay passive.
++            social_pickup = (kind == 'item_pickup' and details.get('selfCollected') is True
++                             and bool(details.get('nearbyPlayers')))
+             # Routine gameplay/progress feedback can be read by the native
+             # executor and the next decision. Independent denials and distress
+             # still wake judgment while an action owns the body.
+             urgent_feedback = bool(re.search(r'保护|领地|不允许|没有权限|救命|permission|protected|denied|help!', text, re.I))
+             if busy and not is_chat and not is_protection and not urgent_feedback:
++                if is_feedback or is_plugin_feedback or social_pickup:
++                    self._defer_game_event(event)
+                 continue
+             signature = json.dumps([kind, event.get('player'), text, details.get('sha256')], ensure_ascii=False)
+             previous = self._recent_game_attention.get(signature, 0)
+-            if (is_chat or is_feedback or is_plugin_feedback or is_protection) and now - previous >= 15:
++            if (is_chat or is_feedback or is_plugin_feedback or is_protection or social_pickup) and now - previous >= 15:
+                 self._recent_game_attention[signature] = now
+                 self._game_attention_ids.add(event['id'])
+         self._recent_game_attention = dict(list((key, stamp) for key, stamp in self._recent_game_attention.items()
+@@ -1052,7 +1063,7 @@ class GameAgentService:
+                         return
+                 event_map = self._attention_events()
+                 events = [event_map[ident] for ident in self._game_attention_ids if ident in event_map] if attention else []
+-                social = bool(events) and all(event.get('kind') in ('chat', 'whisper') for event in events)
++                social = bool(events) and all(event.get('kind') in ('chat', 'whisper', 'item_pickup') for event in events)
+                 mode = 'social' if social else 'running' if self._game_execution_busy() else 'decision'
+                 context = self._game_observations.focused_context(max_tokens=350 if attention else 700, mode=mode, max_events=0)
+                 if not context:
+@@ -1095,6 +1106,8 @@ class GameAgentService:
+                     context += '\nPlugin execution state: ' + json.dumps(execution, ensure_ascii=False, separators=(',', ':'))
+                     if social:
+                         context += '\nSocial-only turn: reply via minecraft_chat if helpful; do not call minecraft_task from this callback or replace a running goal. The next idle decision owns physical planning.'
++                        if any(event.get('kind') == 'item_pickup' for event in events):
++                            context += '\nNearby players are not proven donors. Verify inventory before claiming receipt or equipping; do not invent who gave an item.'
+                     # Bound the whole callback, including policy/events/owned
+                     # execution state, rather than just its state JSON.
+                     speech_prefix = prompts.spoken_language_policy(self._lang) + '\n'
+@@ -1105,7 +1118,9 @@ class GameAgentService:
+                 result = await asyncio.to_thread(self._push_message, source='game_agent_minecraft', visibility=[],
+                                         ai_behavior='respond' if attention else 'read',
+                                         parts=[{'type': 'text', 'text': context}], priority=5 if attention else 4,
+-                                        coalesce_key='mc_game_attention' if attention else 'mc_game_information',
++                                        coalesce_key=('mc_game_attention:' + hashlib.sha256(
++                                            '|'.join(sorted(attention_ids)).encode()).hexdigest()[:16])
++                                            if attention else 'mc_game_information',
+                                         metadata={'expires_in_s': 45})
+                 if isinstance(result, dict) and result.get('submitted') is False:
+                     return
+@@ -1151,6 +1166,8 @@ class GameAgentService:
+         result['status'] = 'ok' if result['fresh'] else 'unavailable'
+         result['failureStreak'] = self._task_failure_streak
+         if not compact:
++            if max_events and self._deferred_game_chat:
++                result['deferredEvents'] = list(self._deferred_game_chat.values())[-max_events:]
+             result['lastTaskOutcome'] = self._last_task_outcome
+             result['recentTaskOutcomes'] = list(self._recent_task_outcomes)
+             result['lastServerCommands'] = list(self._server_command_history) if self._game_observations.fresh else []
+diff --git a/plugin/plugins/game_agent_minecraft/test_adaptive_heartbeat.py b/plugin/plugins/game_agent_minecraft/test_adaptive_heartbeat.py
+index 8888c2e..a1496ea 100644
+--- a/plugin/plugins/game_agent_minecraft/test_adaptive_heartbeat.py
++++ b/plugin/plugins/game_agent_minecraft/test_adaptive_heartbeat.py
+@@ -188,7 +188,7 @@ class AdaptiveHeartbeatTests(unittest.IsolatedAsyncioTestCase):
+             service._idle_decision_lease_until = 1030.0
+             await service._on_game_state(data)
+             await service._on_vitals({'hp': 6, 'food': 7, 'hostiles': 1})
+-        self.assertEqual({call['coalesce_key'] for _, call in calls if call['ai_behavior'] == 'respond'},
++        self.assertEqual({call['coalesce_key'].split(':', 1)[0] for _, call in calls if call['ai_behavior'] == 'respond'},
+                          {'mc_game_attention', 'mc_survival'})
+         self.assertEqual(service._idle_decision_lease_until, 1030.0)
+ 
+diff --git a/plugin/plugins/game_agent_minecraft/test_player_perception.py b/plugin/plugins/game_agent_minecraft/test_player_perception.py
+new file mode 100644
+index 0000000..637f33f
+--- /dev/null
++++ b/plugin/plugins/game_agent_minecraft/test_player_perception.py
+@@ -0,0 +1,121 @@
++import time
++import unittest
++from unittest.mock import AsyncMock
++from unittest.mock import patch
++
++from utils.tokenize import count_tokens
++from .decision_context import build_focused_view
++from . import test_execution_pacing
++from .test_observations import event, frame
++
++
++class PlayerPerceptionTests(unittest.IsolatedAsyncioTestCase):
++    def service(self, busy=False):
++        return test_execution_pacing.ExecutionPacingTests().service(busy=busy)
++
++    async def test_greeting_mention_and_whisper_reach_social_judgment_during_work(self):
++        for kind, text in (('chat', 'ag_NEKO 你好！'), ('chat', '[世界] YUI 在吗？'), ('whisper', '给你东西')):
++            service, calls = self.service(busy=True)
++            pending = service._pending
++            await service._on_game_state(frame(recentEvents=[event('greeting', kind, text, player='Friend_1')]))
++            cue = next(call for call in calls if call['ai_behavior'] == 'respond')
++            self.assertIn(text, cue['parts'][0]['text'])
++            self.assertIn('Friend_1', cue['parts'][0]['text'])
++            self.assertIn('Social-only turn', cue['parts'][0]['text'])
++            self.assertIs(service._pending, pending)
++
++    async def test_distinct_attention_batches_cannot_replace_each_other_in_the_host_queue(self):
++        service, calls = self.service(busy=True)
++        await service._on_game_state(frame(recentEvents=[event('one', 'whisper', '你好', player='Friend_1')]))
++        service._game_attention_at = 0
++        await service._on_game_events({**frame(), 'events': [event('two', 'whisper', '送你铁镐', player='Friend_2')]})
++        cues = [call for call in calls if call['ai_behavior'] == 'respond']
++        self.assertEqual(len(cues), 2)
++        self.assertNotEqual(cues[0]['coalesce_key'], cues[1]['coalesce_key'])
++        self.assertEqual(len({service._pending.task_id}), 1)
++
++    async def test_unsolicited_error_waits_with_full_evidence_until_idle(self):
++        service, calls = self.service(busy=True)
++        stamp = time.time()
++        feedback = event('error', 'system', '服务器报错：背包已满，物品未发放。', data={'operation': 'reward'})
++        with patch('plugin.plugins.game_agent_minecraft.service.time.time', return_value=stamp):
++            await service._on_game_state(frame(recentEvents=[feedback]))
++        self.assertFalse(any(call['ai_behavior'] == 'respond' for call in calls))
++        with patch('plugin.plugins.game_agent_minecraft.service.time.time', return_value=stamp + 180):
++            service._pending = None
++            service._task_finished = True
++            await service._on_game_state(frame(seq=2))
++            service._queue_deferred_chat_when_idle()
++            await service._push_game_context(attention=True)
++        cue = next(call for call in calls if call['ai_behavior'] == 'respond')
++        self.assertIn(feedback['text'], cue['parts'][0]['text'])
++        self.assertIn('reward', cue['parts'][0]['text'])
++
++    async def test_pickup_near_player_is_deferred_social_information_with_unknown_donor(self):
++        service, calls = self.service(busy=True)
++        pickup = event('pickup', 'item_pickup', 'ag_NEKO collected 1 iron_pickaxe. Donor unknown; verify inventory.',
++            player='ag_NEKO', data={'selfCollected': True, 'collectedCount': 1, 'donor': None,
++                'nearbyPlayers': ['Friend_1'], 'item': {'name': 'iron_pickaxe', 'count': 3}})
++        await service._on_game_state(frame(recentEvents=[pickup]))
++        self.assertFalse(any(call['ai_behavior'] == 'respond' for call in calls))
++        service._pending = None
++        service._task_finished = True
++        service._queue_deferred_chat_when_idle()
++        await service._push_game_context(attention=True)
++        cue = next(call for call in calls if call['ai_behavior'] == 'respond')
++        text = cue['parts'][0]['text']
++        for fact in ('iron_pickaxe', 'Friend_1', 'Donor unknown', 'Social-only turn'):
++            self.assertIn(fact, text)
++        self.assertLessEqual(count_tokens(text), 1000)
++
++    async def test_mining_pickups_and_ambient_drops_do_not_create_model_call_spam(self):
++        service, calls = self.service()
++        await service._on_game_state(frame(recentEvents=[
++            event('drop', 'item_drop', 'Nearby dropped item: cobblestone', data={'donor': None}),
++            event('pickup', 'item_pickup', 'collected cobblestone', data={'selfCollected': True, 'nearbyPlayers': []}),
++            event('other', 'item_pickup', 'Friend_1 collected iron_pickaxe', player='Friend_1',
++                data={'selfCollected': False, 'nearbyPlayers': ['Friend_1']})]))
++        self.assertFalse(any(call['ai_behavior'] == 'respond' for call in calls))
++        self.assertEqual(len(service._game_observations.view()['recentEvents']), 3)
++
++    async def test_social_view_keeps_player_equipment_and_identified_drop_ahead_of_ambient_mobs(self):
++        service, _ = self.service()
++        data = frame()
++        data['state']['nearby'] = {'entities': [
++            *[{'id': n, 'name': 'salmon', 'type': 'water_creature', 'distance': n} for n in range(1, 6)],
++            {'id': 20, 'name': 'player', 'type': 'player', 'username': 'Friend_1', 'distance': 6,
++             'equipment': [{'name': 'iron_helmet', 'count': 1}]},
++            {'id': 21, 'name': 'item', 'distance': 6, 'droppedItem': {'name': 'iron_pickaxe', 'count': 1}}]}
++        await service._on_game_state(data)
++        view = build_focused_view(service._game_observations, mode='social', max_tokens=700)
++        entities = view['state']['nearby']['entities']
++        self.assertEqual(entities[0]['username'], 'Friend_1')
++        self.assertEqual(entities[0]['equipment'][0]['name'], 'iron_helmet')
++        self.assertEqual(entities[1]['droppedItem']['name'], 'iron_pickaxe')
++
++    async def test_deferred_full_text_remains_observable_after_the_recent_event_window(self):
++        service, _ = self.service(busy=True)
++        service._client.request_game_state = AsyncMock(return_value=False)
++        stamp = time.time()
++        text = '玩家说明' * 200 + '重要尾句：这些物品放在公共箱里。'
++        with patch('plugin.plugins.game_agent_minecraft.service.time.time', return_value=stamp):
++            await service._on_game_state(frame(recentEvents=[event('long-chat', 'chat', text, player='Friend_1')]))
++        with patch('plugin.plugins.game_agent_minecraft.service.time.time', return_value=stamp + 180):
++            await service._on_game_state(frame(seq=2))
++            result = await service.observe_game([], 48)
++        self.assertEqual(result['deferredEvents'][0]['text'], text)
++        self.assertEqual(result['deferredEvents'][0]['player'], 'Friend_1')
++
++    async def test_two_verbose_pickups_stay_within_host_callback_budget(self):
++        service, calls = self.service(busy=True)
++        events = [event(f'gift-{n}', 'item_pickup', '收到铁镐，需核对背包。' * 60, player='ag_NEKO',
++            data={'selfCollected': True, 'nearbyPlayers': ['Friend_1'], 'donor': None,
++                  'item': {'name': 'iron_pickaxe', 'customName': '特殊装备' * 400}}) for n in range(2)]
++        await service._on_game_state(frame(recentEvents=events))
++        service._pending = None
++        service._task_finished = True
++        service._queue_deferred_chat_when_idle()
++        await service._push_game_context(attention=True)
++        cue = next(call for call in calls if call['ai_behavior'] == 'respond')
++        self.assertLessEqual(count_tokens(cue['parts'][0]['text']), 1000)
++        self.assertIn('do not invent who gave an item', cue['parts'][0]['text'])

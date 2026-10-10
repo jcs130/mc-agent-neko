@@ -1,0 +1,111 @@
+From c67eba27b7d4689b02975f6eea8a25aed27f6685 Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Sat, 10 Oct 2026 20:51:19 +0800
+Subject: [PATCH] fix: refresh stale desktop emotion request tokens once
+
+---
+ static/app/app-buttons.js                  | 19 ++++++-
+ tests/frontend/test_emotion_csrf_retry.mjs | 58 ++++++++++++++++++++++
+ 2 files changed, 75 insertions(+), 2 deletions(-)
+ create mode 100644 tests/frontend/test_emotion_csrf_retry.mjs
+
+diff --git a/static/app/app-buttons.js b/static/app/app-buttons.js
+index 4bcfcd2..0e59346 100644
+--- a/static/app/app-buttons.js
++++ b/static/app/app-buttons.js
+@@ -1160,14 +1160,29 @@
+             if (sec && typeof sec.getMutationHeaders === 'function') {
+                 try { Object.assign(emotionHeaders, await sec.getMutationHeaders()); } catch (_) { }
+             }
+-            var response = await fetch('/api/emotion/analysis', {
++            var emotionRequest = {
+                 method: 'POST',
+                 headers: emotionHeaders,
+                 body: JSON.stringify({
+                     text: text,
+                     lanlan_name: window.lanlan_config.lanlan_name
+                 })
+-            });
++            };
++            var response = await fetch('/api/emotion/analysis', emotionRequest);
++            // The desktop can outlive a main-service restart. Refresh its
++            // stale local token once; never retry provider failures or weaken
++            // the server's CSRF/Origin validation.
++            if (response.status === 403 && sec && typeof sec.refreshToken === 'function'
++                    && typeof sec.getMutationHeaders === 'function') {
++                var failure = await response.json().catch(function () { return null; });
++                if (failure && failure.error_code === 'csrf_validation_failed') {
++                    await sec.refreshToken();
++                    emotionRequest.headers = Object.assign(
++                        { 'Content-Type': 'application/json' }, await sec.getMutationHeaders()
++                    );
++                    response = await fetch('/api/emotion/analysis', emotionRequest);
++                }
++            }
+ 
+             if (!response.ok) {
+                 console.warn(window.t('console.emotionAnalysisRequestFailed'), response.status);
+diff --git a/tests/frontend/test_emotion_csrf_retry.mjs b/tests/frontend/test_emotion_csrf_retry.mjs
+new file mode 100644
+index 0000000..5fec203
+--- /dev/null
++++ b/tests/frontend/test_emotion_csrf_retry.mjs
+@@ -0,0 +1,58 @@
++import test from 'node:test';
++import assert from 'node:assert/strict';
++import vm from 'node:vm';
++import { readFileSync } from 'node:fs';
++
++const source = readFileSync(new URL('../../static/app/app-buttons.js', import.meta.url), 'utf8');
++const begin = source.indexOf('mod.analyzeEmotion = async function');
++const end = source.indexOf('window.analyzeEmotion = mod.analyzeEmotion', begin);
++assert.ok(begin >= 0 && end > begin);
++
++async function scenario(replies, { security = true } = {}) {
++    const requests = [];
++    let refreshes = 0;
++    const sec = { getMutationHeaders: async () => ({ 'X-Autostart-CSRF-Token': refreshes ? 'new-token' : 'old-token' }),
++        refreshToken: async () => { refreshes++; } };
++    const context = { mod: {}, console: { log() {}, warn() {}, error() {} },
++        window: { t: key => key, lanlan_config: { lanlan_name: 'YUI' }, nekoLocalMutationSecurity: security ? sec : null },
++        fetch: async (url, options) => {
++            requests.push({ url, headers: { ...options.headers }, body: options.body });
++            const reply = replies.shift();
++            assert.ok(reply, 'unexpected extra request');
++            return { status: reply.status, ok: reply.status === 200, json: async () => reply.body };
++        } };
++    vm.runInNewContext(source.slice(begin, end), context);
++    const result = await context.mod.analyzeEmotion('发现铁矿真开心');
++    return { result, requests, refreshes };
++}
++
++test('expired local token refreshes and retries the same emotion request once', async () => {
++    const run = await scenario([{ status: 403, body: { error_code: 'csrf_validation_failed' } },
++        { status: 200, body: { emotion: 'happy', confidence: 0.9 } }]);
++    assert.equal(run.result.emotion, 'happy');
++    assert.equal(run.refreshes, 1);
++    assert.equal(run.requests.length, 2);
++    assert.equal(run.requests[0].headers['X-Autostart-CSRF-Token'], 'old-token');
++    assert.equal(run.requests[1].headers['X-Autostart-CSRF-Token'], 'new-token');
++    assert.equal(run.requests[0].body, run.requests[1].body);
++});
++
++test('repeated validation rejection stops after one retry', async () => {
++    const run = await scenario(Array.from({ length: 2 }, () => ({ status: 403, body: { error_code: 'csrf_validation_failed' } })));
++    assert.equal(run.result, null);
++    assert.equal(run.refreshes, 1);
++    assert.equal(run.requests.length, 2);
++});
++
++test('provider failures, missing helper and successful requests do not retry', async () => {
++    for (const [reply, options] of [
++        [{ status: 403, body: { error_code: 'provider_denied' } }, {}],
++        [{ status: 500, body: {} }, {}],
++        [{ status: 403, body: { error_code: 'csrf_validation_failed' } }, { security: false }],
++        [{ status: 200, body: { emotion: 'neutral' } }, {}],
++    ]) {
++        const run = await scenario([reply], options);
++        assert.equal(run.refreshes, 0);
++        assert.equal(run.requests.length, 1);
++    }
++});

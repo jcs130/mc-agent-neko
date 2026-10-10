@@ -1,9 +1,9 @@
 {
   "upstreamRepository": "https://github.com/Project-N-E-K-O/N.E.K.O",
   "baseCommit": "fb2a2e731a8c954478d08678b0c8cf40e8145a54",
-  "sourceCommit": "941f6ec26c6975707c1e12400fd7b528863b1d97",
+  "sourceCommit": "c67eba27b7d4689b02975f6eea8a25aed27f6685",
   "scope": "plugin/plugins/game_agent_minecraft",
-  "resultPluginTree": "e68cc8d5505f59f54b4945baf4d382d06cf2e0a7",
+  "resultPluginTree": "3beec6a84500aee2ecc7cb7cdeea268d0b16349f",
   "patches": [
     {
       "file": "0001-chore-configure-text-only-local-Qwen-Minecraft-trial.patch",
@@ -256,16 +256,20 @@
     {
       "file": "0063-feat-narrate-game-locations-without-reading-coordina.patch",
       "sha256": "feb9637e3b943bccfe01813faf117eafe38a283ba0e32888d16856f346135d3d"
+    },
+    {
+      "file": "0064-fix-retain-player-attention-and-deferred-game-feedba.patch",
+      "sha256": "3b46c4b734b11e88bf4413c9f0607b7038e899894647d1f2fe6fe532b4b5d4f6"
     }
   ],
   "verification": {
     "appliedInOrderToBase": true,
     "resultPluginTreeMatchesSource": true,
-    "pluginTestsPassed": 207,
+    "pluginTestsPassed": 215,
     "hostCallbackTestsPassed": 195,
     "hostFileBlobsMatchSource": true,
-    "nativeSourceTestsPassed": 575,
-    "contributionTestsPassed": 618,
+    "nativeSourceTestsPassed": 598,
+    "contributionTestsPassed": 651,
     "existingMineDownContractTestsPassed": 1
   },
   "hostPatches": [
@@ -305,6 +309,15 @@
         "tests/unit/test_llm_client_timing.py",
         "utils/llm_client/openai_client.py",
         "utils/llm_client/timing.py"
+      ]
+    },
+    {
+      "file": "host-patches/0004-fix-refresh-stale-desktop-emotion-request-tokens-onc.patch",
+      "sha256": "8ebe37784af7222de85a9b0228b5bee9385dfb0377512d2566a928dc11179327",
+      "sourceCommit": "c67eba27b7d4689b02975f6eea8a25aed27f6685",
+      "scopePaths": [
+        "static/app/app-buttons.js",
+        "tests/frontend/test_emotion_csrf_retry.mjs"
       ]
     }
   ],
@@ -657,5 +670,33 @@
     "additionalInferenceCalls": false,
     "ttsNumberFilterAdded": false,
     "liveAudienceSpeechVerified": false
+  },
+  "playerPerceptionVerification": {
+    "date": "2026-10-10",
+    "pluginSourceCommit": "6e7d8b3d7de5168028fd6f149b505b7b86e00dd2",
+    "nativeSourceCommit": "d2f1187197d7679cf26552b14834646e53629533",
+    "pluginTestsPassed": 215,
+    "perceptionTestsPassed": 8,
+    "nativeObservationTestsPassed": 24,
+    "nativeTestsPassed": 598,
+    "contributionTestsPassed": 651,
+    "ruffPassed": true,
+    "allPatchChecksumsChecked": true,
+    "fullReplayMatchesSource": true,
+    "hostFileBlobsMatchSource": true,
+    "distinctAttentionKeys": true,
+    "unknownDonorExplicit": true,
+    "ordinaryMiningDoesNotWake": true,
+    "realPlayerGiftVerified": false,
+    "publicTestMessagesSent": 0
+  },
+  "avatarEmotionVerification": {
+    "date": "2026-10-10",
+    "sourceCommit": "c67eba27b7d4689b02975f6eea8a25aed27f6685",
+    "frontendTestsPassed": 3,
+    "refreshRetryLimit": 1,
+    "serverValidationUnchanged": true,
+    "renderedExpressionVerified": false,
+    "additionalBackendPytestAvailable": false
   }
 }

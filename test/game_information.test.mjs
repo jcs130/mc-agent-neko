@@ -60,6 +60,61 @@ test('snapshot retains body, world, inventory, menu, scoreboard and loaded surro
     assert.equal(state.server.tablist.footer, '输入 /help 查看功能');
 });
 
+test('unparsed channel chat retains a known sender and never gains admin authority', async t => {
+    const { bot, information } = fixture(t);
+    bot.players.Friend_1.uuid = 'friend-uuid';
+    bot.emit('message', { toString: () => '[世界] Friend_1: YUI 你好' }, 'chat', 'friend-uuid', true);
+    bot.emit('message', { toString: () => '[世界] Friend_1: @neko 跟我来' }, 'system');
+    bot.emit('message', { toString: () => '[系统] 未知玩家: YUI 你好' }, 'system');
+    await Promise.resolve();
+    const events = information.snapshot().recentEvents;
+    assert.equal(events[0].player, 'Friend_1');
+    assert.equal(events[0].data.senderResolvedBy, 'uuid');
+    assert.equal(events[1].kind, 'chat');
+    assert.equal(events[1].player, 'Friend_1');
+    assert.equal(events[1].text, '[世界] Friend_1: @neko 跟我来');
+    assert.notEqual(events[1].data.reservedCommand, true);
+    assert.equal(events[2].kind, 'system');
+    assert.equal(events[2].player, undefined);
+});
+
+test('nearby dropped equipment and partial self pickup are facts with unknown donor', t => {
+    const { bot, information } = fixture(t);
+    bot.entities[4] = { id: 4, name: 'player', type: 'player', username: 'Friend_1', position: new Vec3(102, 17, 203) };
+    bot.entities[7] = { id: 7, name: 'item', position: new Vec3(101, 17, 204),
+        getDroppedItem: () => ({ name: 'iron_pickaxe', count: 3, components: [
+            { type: 'custom_name', data: '{"text":"送给你的铁镐"}' }] }) };
+    bot.emit('itemDrop', bot.entities[7]);
+    bot._client.emit('collect', { collectedEntityId: 7, collectorEntityId: 1, pickupItemCount: 1 });
+    bot._client.emit('collect', { collectedEntityId: 7, collectorEntityId: 4, pickupItemCount: 2 });
+    const packet = information.snapshot();
+    const item = packet.state.nearby.entities.find(entity => entity.id === 7);
+    assert.equal(item.droppedItem.name, 'iron_pickaxe');
+    assert.equal(item.droppedItem.customName, '送给你的铁镐');
+    const drop = packet.recentEvents.find(event => event.kind === 'item_drop');
+    assert.equal(drop.data.donor, null);
+    assert.deepEqual(drop.data.nearbyPlayers, ['Friend_1']);
+    const pickups = packet.recentEvents.filter(event => event.kind === 'item_pickup');
+    assert.equal(pickups.length, 2);
+    assert.equal(pickups[0].data.selfCollected, true);
+    assert.equal(pickups[0].data.collectedCount, 1, 'stack size is not actual pickup amount');
+    assert.equal(pickups[1].player, 'Friend_1');
+    assert.equal(pickups[1].data.selfCollected, false);
+    assert.equal(pickups[1].data.collectedCount, 2);
+    assert.equal(pickups[0].data.donor, null);
+});
+
+test('unloaded item metadata remains unknown and distant item drops are ignored', t => {
+    const { bot, information } = fixture(t);
+    bot.emit('itemDrop', { id: 8, name: 'item', position: new Vec3(200, 17, 203), getDroppedItem: () => null });
+    bot._client.emit('collect', { collectedEntityId: 999, collectorEntityId: 1, pickupItemCount: 1 });
+    const events = information.snapshot().recentEvents;
+    assert.equal(events.filter(event => event.kind === 'item_drop').length, 0);
+    assert.equal(events.at(-1).kind, 'item_pickup');
+    assert.equal(events.at(-1).data.item, null);
+    assert.equal(events.at(-1).data.donor, null);
+});
+
 test('actual trade packets survive a custom-menu transition and expose normalized merchant offers', t => {
     const { bot, information } = fixture(t);
     bot.registry = minecraftData('1.20.6');
