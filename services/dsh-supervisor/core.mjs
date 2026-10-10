@@ -6,10 +6,12 @@ import { createHash } from 'node:crypto';
 export const MODEL = 'qwen3.8-flash-next-iq3_xxs';
 export const MODEL_URL = 'http://127.0.0.1:18030/v1';
 
-const ROLE_TOKEN_BUDGETS = Object.freeze({ observer: 2048, diagnoser: 1024, reviewer: 1536 });
+// Thinking and the structured answer share max_tokens. Keep the previous answer
+// headroom plus 1024 tokens, while low effort asks the model to reason briefly.
+const ROLE_TOKEN_BUDGETS = Object.freeze({ observer: 3072, diagnoser: 2048, reviewer: 2560 });
 export function supervisorRoleOptions(role) {
     if (!Object.hasOwn(ROLE_TOKEN_BUDGETS, role)) throw new Error('Unknown supervisor role');
-    return { provider: 'neko-local', model: MODEL, reasoningEffort: 'off', maxTokens: ROLE_TOKEN_BUDGETS[role] };
+    return { provider: 'neko-local', model: MODEL, reasoningEffort: 'low', maxTokens: ROLE_TOKEN_BUDGETS[role] };
 }
 
 export function roleSchema(role, evidenceIds = [], issueKeys = []) {
@@ -268,12 +270,15 @@ export function makeProfile({ appPath, runtimeRoot, nativeRoot }) {
         { insert: [
             { id: 'llm-pi-ai', name: '@deepseek-ai/dsh-llm-pi-ai', config: { providers: {
                 'neko-local': { api: 'openai-completions', apiKeyEnv: 'NEKO_DSH_LOCAL_KEY', baseURL: MODEL_URL,
-                    defaultContextWindow: 16384, defaultMaxTokens: 2048, retryPolicy: { mode: 'normal', maxRetries: 0 },
+                    defaultContextWindow: 16384, defaultMaxTokens: 3072, retryPolicy: { mode: 'normal', maxRetries: 0 },
                     compat: { supportsStore: false, supportsDeveloperRole: false, supportsReasoningEffort: false,
-                        maxTokensField: 'max_tokens', thinkingFormat: 'qwen-chat-template' },
-                    // pi-ai emits Qwen's explicit false only for a reasoning-capable model.
-                    // Declaring reasoningEfforts:false omits the switch and Strata defaults to thinking.
-                    models: [{ id: MODEL, name: 'Local Qwen / RTX 3090', contextWindow: 16384, maxTokens: 2048,
+                        maxTokensField: 'max_tokens', thinkingFormat: 'chat-template', chatTemplateKwargs: {
+                            enable_thinking: { $var: 'thinking.enabled' },
+                            reasoning_effort: { $var: 'thinking.effort', omitWhenOff: true },
+                        } },
+                    // qwen-chat-template sends only the boolean; Strata would
+                    // silently use default xhigh. Send the explicit low effort.
+                    models: [{ id: MODEL, name: 'Local Qwen / RTX 3090', contextWindow: 16384, maxTokens: 3072,
                         reasoningEfforts: { off: null, low: 'low' } }] },
             } } },
             { id: 'subagent', name: '@deepseek-ai/dsh-subagent' },

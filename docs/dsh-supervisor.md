@@ -45,17 +45,19 @@ New-Item -ItemType File -Path D:\neko-mc-trial\runtime\dsh-supervisor\stop -Forc
 所有监工共用 `http://127.0.0.1:18030/v1` 的 `qwen3.8-flash-next-iq3_xxs`，模型调用串行。
 每个角色启动前检查 Strata `/metrics`，有运行/排队请求时让路；这不是服务器的硬优先级，检查后的竞争仍可能发生。
 拿到模型之后才采集该角色的证据。每条观测含原始时间、来源和不可变 ID；后续角色只保留此前引用的事实，并重新计算其年龄，不用新快照的时间替旧内容续期。每个阶段的采样时间、排队和推理耗时写入报告。跨登录会话立即中止本轮。
-监工上下文单独限制为 16K 容量；实际证据通常约数千字，不复制整个游戏聊天历史。中文在工具调用中可能被 Unicode 转义，512 tokens 曾在摘要未写完时耗尽，因此输出上限按角色分配：观察员 2048、诊断员 1024、复核员 1536 tokens，provider 上限同步为 2048。摘要最多40字、detail最多60字、候选最多2项，每项只引最多3条证据；预算是上限，不要求填满，不启用思考或增加巡检频率。哨兵告警和旧工单结论均须独立验证，不能相互背书。
+监工上下文单独限制为 16K 容量；实际证据通常约数千字，不复制整个游戏聊天历史。中文在工具调用中可能被 Unicode 转义，512 tokens 曾在摘要未写完时耗尽。三个监工角色开启低档思考，思考与结构化结论共用生成额度：观察员 3072、诊断员 2048、复核员 2560 tokens，provider 上限同步为 3072，比原先各自增加1024余量。摘要最多40字、detail最多60字、候选最多2项，每项只引最多3条证据；不要求填满，也不提高巡检频率。哨兵告警和旧工单结论均须独立验证，不能相互背书。
 
 候选问题区分 `scope=current` 和 `scope=execution`：前者只用 90 秒内的观测证明当前异常；后者可检查 30 分钟内的真实失败回执，但只能陈述过去发生的执行异常，不能推断现在卡死。任务失败不自动等于代码有 bug。重复失败按原始时间、错误摘要和不同任务数汇总；异常栈不会被长背包段挤出。事件 ID 稳定，不随本轮选择顺序变化。
 审核员的 `acceptedKeys` 只枚举候选问题的 key，`evidenceIds` 只枚举实际事实 ID，两者分开验证。未发布的候选及原因也写入报告。
 `acceptedKeys` 只表示事实成立；还必须进入 `actionableKeys` 才能建故障单。缺材料、没有相应商人报价或工程待验收等正常状态不因“确实发生过”就变成待修复问题；重复失败也须证明盲目重试或持续打断等实际损害。
 
-### Qwen 不思考参数
+### Qwen 监工思考参数
 
-pi-ai 的 `reasoningEfforts:false` **会省略** Qwen 的开关，Strata 随后默认开启思考。
-因此模型能力保留 `{off:null, low:'low'}`，实际每个 Agent 固定 `reasoningEffort:'off'`，兼容格式使用 `qwen-chat-template`。
-这会发送 `chat_template_kwargs.enable_thinking:false`，而不是依赖“模型不支持思考”的声明。
+仅 DSH 的 observer/diagnoser/reviewer 使用 `reasoningEffort:'low'`。游戏驾驶员、聊天和视觉的非思考配置不变；本机服务全局默认也不改。三个监工串行运行、模型忙碌时让路，原有冷却与证据时效门仍生效。
+
+pi-ai 的 `qwen-chat-template` 只发送布尔开关，不能把 `low` 透传给 Strata；只发 `true` 会落到模型默认的 xhigh。改用受支持的 `chat-template` 映射，同时发送 `chat_template_kwargs.enable_thinking:true` 和 `reasoning_effort:'low'`。能力表仍保留 `{off:null, low:'low'}`，未来显式关闭时会发送 false。
+
+生成额度是思考加结论的总上限，并非独立的硬思考 token 上限。当前 DSH 的预算字段与 Strata 的 `reasoning_budget_tokens` 不同，不声称已经设置独立思考上限。每角色仍有90秒超时；开启思考可能增加其他客户端的排队时间，入场让路并非硬抢占优先级。是否提高诊断质量需要后续实证比较，不能只凭开启开关认定。
 
 ## 证据与运行状态
 
@@ -108,11 +110,13 @@ CLI 验证提交确实存在、证据文件存在且非空，计算 SHA-256。�
 node --test test/dsh_supervisor.test.mjs
 node --test test/dsh_audit.test.mjs test/dsh_repair.test.mjs test/dsh_schema_compat.test.mjs
 node --check services/dsh-supervisor/app.mjs
-# 实际模型验收，透明转发本机请求并只记录模型名、思考开关等元数据。
+# 实际模型验收，透明转发本机请求，只记录模型名、思考开关、强度及耗时等元数据。
 node services/dsh-supervisor/verify.mjs D:\neko-mc-trial\mc-agent-neko D:\neko-mc-trial\runtime\dsh-verification
 ```
 
 单元回归覆盖本机路由、模型忙碌让路、证据预算、任务指引保留、过期/跨会话拒绝、复核引用和事件冷却。
 本机已安装 DSH 时，兼容回归直接调用其实际 schema 校验器；未安装时只跳过该集成项。该版本不支持 `maxItems` 或数组 `const`，候选数量和引用预算由提示及协调器校验控制，不能随意增加标准 JSON Schema 关键字。
 `-Once` 的真实模型验收必须同时检查两个或三个独立子会话均 `completed`、报告中的证据来自当前游戏、游戏没有被派发诊断任务。
-只有角色真实执行过才能计入 `roleRuns`；未触发诊断员时不冒称诊断员已经实测。
+只有角色真实执行过才能计入 `roleRuns`；未触发诊断员时不冒称诊断员已经实测。验收同时要求线上参数为 true/low，并收到真实 `reasoning_content` 流，不能只看配置文件。思考正文不写入验收证据或工单。
+
+2026-10-10 本机验收中，三个角色均独立完成：观察员约38.9秒、诊断员26.8秒、复核员27.2秒，全部收到真实思考流并返回结构化结论。这些耗时不含入场等待，也不是质量提升的对照实验。持续监工已按相同配置运行，模型、主服务、游戏和桌面进程保持原实例。

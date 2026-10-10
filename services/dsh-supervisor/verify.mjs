@@ -6,7 +6,7 @@ import { spawn } from 'node:child_process';
 import { Readable } from 'node:stream';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { MODEL, writeProfile } from './core.mjs';
+import { MODEL, writeProfile, supervisorRoleOptions } from './core.mjs';
 
 const nativeRoot = path.resolve(process.argv[2] ?? '../mc-agent-neko');
 const runtimeRoot = path.resolve(process.argv[3] ?? '../runtime/dsh-verification');
@@ -19,13 +19,17 @@ const proxy = http.createServer(async (req, res) => {
         if (!['/v1/chat/completions', '/v1/models'].includes(req.url)) { res.writeHead(404); res.end(); return; }
         let body = '';
         for await (const chunk of req) { body += chunk; if (body.length > 1000000) throw new Error('Oversized request'); }
+        let row;
         if (req.method === 'POST') {
             const value = JSON.parse(body);
-            wire.push({ at: Date.now(), model: value.model, maxTokens: value.max_tokens,
-                enableThinking: value.chat_template_kwargs?.enable_thinking, messageCount: value.messages?.length,
-                upstream: 'http://127.0.0.1:18030/v1/chat/completions', reasoningDeltas: 0 });
+            row = { at: Date.now(), model: value.model, maxTokens: value.max_tokens,
+                enableThinking: value.chat_template_kwargs?.enable_thinking,
+                reasoningEffort: value.chat_template_kwargs?.reasoning_effort,
+                messageCount: value.messages?.length,
+                upstream: 'http://127.0.0.1:18030/v1/chat/completions', reasoningDeltas: 0 };
+            wire.push(row);
+            res.once('finish', () => { row.durationMs = Date.now() - row.at; });
         }
-        const row = wire.at(-1);
         const response = await fetch('http://127.0.0.1:18030' + req.url, { method: req.method,
             headers: { 'Content-Type': 'application/json' }, ...(body ? { body } : {}), signal: AbortSignal.timeout(120000) });
         if (row) row.status = response.status;
@@ -38,8 +42,12 @@ const proxy = http.createServer(async (req, res) => {
             const lines = pending.split('\n'); pending = lines.pop();
             for (const line of lines) {
                 if (!line.startsWith('data: ') || line === 'data: [DONE]') continue;
-                try { const delta = JSON.parse(line.slice(6)).choices?.[0]?.delta;
-                    if (row && delta?.reasoning_content) row.reasoningDeltas++; } catch { /* non-JSON SSE */ }
+                try {
+                    const packet = JSON.parse(line.slice(6)), choice = packet.choices?.[0];
+                    if (row && choice?.delta?.reasoning_content) row.reasoningDeltas++;
+                    if (row && choice?.finish_reason) row.finishReason = choice.finish_reason;
+                    if (row && packet.usage) row.outputTokens = packet.usage.completion_tokens;
+                } catch { /* non-JSON SSE */ }
             }
         });
         stream.pipe(res);
@@ -56,16 +64,24 @@ const child = spawn(process.execPath, [dshBin, '--profile', 'neko-supervisor'], 
     windowsHide: true, env: { ...process.env, DSH_HOME: home, NEKO_DSH_ONCE: '1', NEKO_DSH_LOCAL_KEY: 'local-no-auth' },
     stdio: ['ignore', 'pipe', 'pipe'] });
 child.stdout.pipe(log); child.stderr.pipe(log);
-const timeout = setTimeout(() => child.kill(), 180000);
+const timeout = setTimeout(() => child.kill(), 480000);
 const exitCode = await new Promise((resolve, reject) => { child.on('exit', resolve); child.on('error', reject); });
 clearTimeout(timeout); log.end(); await new Promise(resolve => proxy.close(resolve));
 const status = JSON.parse(fs.readFileSync(path.join(runtimeRoot, 'status.json'), 'utf8'));
 const appPath = path.join(path.dirname(fileURLToPath(import.meta.url)), 'app.mjs');
-const passed = exitCode === 0 && wire.length >= 2 && wire.every(row => row.enableThinking === false
-    && row.model === MODEL && row.maxTokens <= 512 && row.status === 200 && row.reasoningDeltas === 0)
-    && status.roleRuns.observer >= 1 && status.roleRuns.reviewer >= 1 && status.gameCommandsSent === 0;
+const options = ['observer', 'diagnoser', 'reviewer'].map(supervisorRoleOptions);
+const passed = exitCode === 0 && wire.length >= 2 && wire.every(row => row.enableThinking === true
+    && row.reasoningEffort === 'low' && row.model === MODEL
+    && options.some(option => option.maxTokens === row.maxTokens) && row.status === 200)
+    && options.filter(option => Object.entries(status.roleOptions ?? {}).some(([role, value]) =>
+        value.maxTokens === option.maxTokens && status.roleRuns[role] >= 1))
+        .every(option => wire.some(row => row.maxTokens === option.maxTokens && row.reasoningDeltas > 0))
+    && wire.some(row => row.reasoningDeltas > 0)
+    && status.roleRuns.observer >= 1 && status.roleRuns.reviewer >= 1
+    && status.gameCommandsSent === 0 && status.codeDeployments === 0;
 const proof = { passed, exitCode, at: Date.now(), appSha256: createHash('sha256').update(fs.readFileSync(appPath)).digest('hex'), wire, status };
 fs.writeFileSync(path.join(runtimeRoot, 'e2e-proof.json'), JSON.stringify(proof, null, 2));
 console.log(JSON.stringify({ passed, exitCode, calls: wire.length, roleRuns: status.roleRuns,
-    noThinking: wire.every(row => row.enableThinking === false && row.reasoningDeltas === 0), proof: path.join(runtimeRoot, 'e2e-proof.json') }));
+    thinking: wire.some(row => row.reasoningDeltas > 0), reasoningEffort: 'low',
+    proof: path.join(runtimeRoot, 'e2e-proof.json') }));
 process.exitCode = passed ? 0 : 1;

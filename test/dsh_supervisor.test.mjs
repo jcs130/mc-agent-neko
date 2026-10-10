@@ -99,7 +99,11 @@ test('the isolated DSH profile has one local provider and no shell or remote mod
     assert.deepEqual(Object.keys(provider), ['neko-local']);
     assert.equal(provider['neko-local'].baseURL, 'http://127.0.0.1:18030/v1');
     assert.equal(provider['neko-local'].models[0].reasoningEfforts.off, null);
-    assert.equal(provider['neko-local'].compat.thinkingFormat, 'qwen-chat-template');
+    assert.equal(provider['neko-local'].compat.thinkingFormat, 'chat-template');
+    assert.deepEqual(provider['neko-local'].compat.chatTemplateKwargs, {
+        enable_thinking: { $var: 'thinking.enabled' },
+        reasoning_effort: { $var: 'thinking.effort', omitWhenOff: true },
+    }, 'Qwen needs the actual effort as well as an enabled flag; true alone defaults to xhigh');
     assert.equal(rows.find(x => x.id === 'neko-supervisor').config.runtimeRoot, 'D:/state');
 });
 
@@ -204,19 +208,19 @@ test('legacy review marks without confirmed writeback are reopened for diagnosis
     assert.equal(migrateLedger(migrated), migrated);
 });
 
-test('Chinese structured reports have a bounded per-role budget with no provider cap below it', async () => {
+test('supervisors use low reasoning with bounded room for thinking and Chinese structured reports', async () => {
     const { supervisorRoleOptions } = await import('../services/dsh-supervisor/core.mjs');
     const rows = makeProfile({ appPath: 'app.mjs', runtimeRoot: 'state', nativeRoot: 'mc' }).flatMap(x => x.insert ?? [x]);
     const provider = rows.find(x => x.id === 'llm-pi-ai').config.providers['neko-local'];
     // The actual 512-token response ended during the Unicode-escaped summary,
     // before required issues could be serialized; a two-issue report needs headroom.
     assert.ok(provider.models[0].maxTokens >= 2048, 'the provider must not cap the observer at 512');
-    for (const [role, minimum] of [['observer', 2048], ['diagnoser', 1024], ['reviewer', 1536]]) {
+    for (const [role, minimum] of [['observer', 3072], ['diagnoser', 2048], ['reviewer', 2560]]) {
         const options = supervisorRoleOptions(role);
         assert.equal(options.provider, 'neko-local');
-        assert.equal(options.reasoningEffort, 'off');
+        assert.equal(options.reasoningEffort, 'low');
         assert.equal(options.model, 'qwen3.8-flash-next-iq3_xxs');
-        assert.ok(options.maxTokens >= minimum && options.maxTokens <= 2048);
+        assert.equal(options.maxTokens, minimum);
         assert.ok(provider.defaultMaxTokens >= options.maxTokens);
         assert.ok(provider.models[0].maxTokens >= options.maxTokens);
     }
