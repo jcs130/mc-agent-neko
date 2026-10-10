@@ -144,6 +144,20 @@ test('DSH role schemas limit citations to actual supplied facts', () => {
     assert.deepEqual(schema.properties.evidenceIds.items.enum, ['game.activity', 'ticket:T-0003']);
 });
 
+test('reviewer accepts issue keys, not evidence IDs, and cannot invent candidates', () => {
+    const schema = roleSchema('reviewer', ['native.execution.123'], ['pinned-forced-kick']);
+    assert.deepEqual(schema.properties.acceptedKeys.items.enum, ['pinned-forced-kick']);
+    assert.deepEqual(schema.properties.evidenceIds.items.enum, ['native.execution.123']);
+    assert.equal(roleSchema('reviewer', ['game.self'], []).properties.acceptedKeys.maxItems, 0);
+});
+
+test('reviewed tickets rotate instead of revisiting the first ticket forever', () => {
+    const tickets = [{ id: 'T-0001', updatedAt: 'a' }, { id: 'T-0002', updatedAt: 'b' }];
+    const ledger = { reviewed: { 'T-0001': 'a', 'T-0002': 'b' },
+        reviewedAt: { 'T-0001': NOW, 'T-0002': NOW - 600000 } };
+    assert.equal(selectTicket(tickets, ledger).id, 'T-0002');
+});
+
 test('historical diagnosis can be written with its age; unknown references stay pending', async () => {
     const ticket = { id: 'T-0003', updatedAt: 'revision-1' };
     const evidence = { fresh: true, facts: [{ id: 'native.failure', stale: true }, { id: 'game.activity', stale: false }] };
