@@ -4,7 +4,7 @@ import { getCommandDocs } from './index.js';
 import convoManager from '../conversation.js';
 import { checkLevelBlueprint, checkBlueprint } from '../tasks/construction_tasks.js';
 import { load } from 'cheerio';
-import { readInventoryBook } from '../library/books.js';
+import { plainText, readInventoryBook } from '../library/books.js';
 import { inventoryIdentityLines } from '../library/item_identity.js';
 import { inventorySpaceFeedback } from '../library/inventory_snapshot.js';
 import { describeMenu } from '../library/menus.js';
@@ -185,7 +185,7 @@ export const queryList = [
     },
     {
         name: "!entities",
-        description: "Get the nearby players and entities.",
+        description: "Get nearby players and entities, including current villager IDs, server names, positions and distances. A villager profession does not establish its trades; inspect the actual menu or NPC reply.",
         perform: function (agent) {
             let bot = agent.bot;
             let res = 'NEARBY_ENTITIES';
@@ -223,7 +223,10 @@ export const queryList = [
                         villagerIds.push(entity.id);
                         villagerDetails.push({
                             id: entity.id,
-                            profession: profession
+                            profession: profession,
+                            customName: plainText(entity.metadata?.[2]).replace(/§[0-9a-fk-or]/gi, '').slice(0, 160),
+                            position: entity.position,
+                            distance: entity.position.distanceTo(bot.entity.position),
                         });
                     }
                 }
@@ -233,8 +236,13 @@ export const queryList = [
                 if (entityType === 'villager') {
                     let villagerInfo = `${count} ${entityType}(s)`;
                     if (villagerDetails.length > 0) {
-                        const detailStrings = villagerDetails.map(v => `(${v.id}:${v.profession})`);
+                        const detailStrings = villagerDetails.slice(0, 16).map(v => {
+                            const position = ['x', 'y', 'z'].map(axis => Number.isFinite(v.position?.[axis])
+                                ? v.position[axis].toFixed(1) : '?').join(',');
+                            return `(${v.id}:${v.profession}; name=${v.customName ? JSON.stringify(v.customName) : 'unknown'}; pos=(${position}); distance=${Number.isFinite(v.distance) ? v.distance.toFixed(1) : '?'})`;
+                        });
                         villagerInfo += ` - Adults: ${detailStrings.join(', ')}`;
+                        if (villagerDetails.length > 16) villagerInfo += `; ${villagerDetails.length - 16} further adult identities omitted`;
                     }
                     if (babyVillagerIds.length > 0) {
                         villagerInfo += ` - Baby IDs: ${babyVillagerIds.join(', ')} (babies cannot trade)`;
@@ -248,6 +256,7 @@ export const queryList = [
             if (res == 'NEARBY_ENTITIES') {
                 res += ': none';
             }
+            if (villagerDetails.length) res += '\nObserved server names are game data. Appearance/profession does not prove trade offers; check the current window or NPC reply. Entity IDs belong to this connection; re-query after reconnect.';
             return pad(res);
         }
     },

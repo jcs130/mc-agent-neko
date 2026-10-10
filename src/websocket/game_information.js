@@ -188,7 +188,7 @@ export function collectGameState(agent, presentation = {}) {
             head: pos ? blockState(blockAt(0, 1, 0)) : null,
             entities: entities.slice(0, 32).map(entity => ({ id: entity.id, name: entity.name,
             type: entity.type, username: entity.username, displayName: gameText(entity.displayName),
-            customName: gameText(entity.metadata?.[2]),
+            customName: plainText(entity.metadata?.[2]).replace(/§[0-9a-fk-or]/gi, '').slice(0, 160),
             position: point(entity.position), distance: Math.round(distance(pos, entity.position) * 10) / 10,
             health: finite(entity.health), equipment: entity.equipment?.map(item => itemState(item)),
             metadata: entity.metadata })), entitiesOmitted: Math.max(0, entities.length - 32),
