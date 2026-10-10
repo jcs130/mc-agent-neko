@@ -1,0 +1,318 @@
+From cdca4e34c5605e8f0cd93b5174f0d519973f7167 Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Sat, 10 Oct 2026 15:25:00 +0800
+Subject: [PATCH] perf: page full Minecraft references and expire stale state
+ cues
+
+---
+ .../plugins/game_agent_minecraft/__init__.py  |  33 +++++-
+ .../plugins/game_agent_minecraft/plugin.toml  |   3 +
+ .../game_agent_minecraft/reference_pages.py   | 110 ++++++++++++++++++
+ .../plugins/game_agent_minecraft/service.py   |   5 +-
+ .../test_reference_pages.py                   |  66 +++++++++++
+ 5 files changed, 213 insertions(+), 4 deletions(-)
+ create mode 100644 plugin/plugins/game_agent_minecraft/reference_pages.py
+ create mode 100644 plugin/plugins/game_agent_minecraft/test_reference_pages.py
+
+diff --git a/plugin/plugins/game_agent_minecraft/__init__.py b/plugin/plugins/game_agent_minecraft/__init__.py
+index 4aee85a..ca2939a 100644
+--- a/plugin/plugins/game_agent_minecraft/__init__.py
++++ b/plugin/plugins/game_agent_minecraft/__init__.py
+@@ -455,20 +455,28 @@ class GameAgentMinecraftPlugin(NekoPluginBase):
+ 
+     @llm_tool(
+         name='minecraft_observe',
+-        description='Read fresh Minecraft facts without changing the action. Default detail=summary selects bounded facts for the current situation, even if sections are supplied. Only when a specific essential fact is missing, use detail=full with ONE relevant section: inventory for books/items, server for welcome/skills/quests/protection, nearby or window for surroundings/menu. Avoid collecting every section; raw books/components are large. max_events up to 48 retrieves messages with detail=full. Reserve a round for minecraft_task or a documented minecraft_server gameplay action when idle and authorized.',
++        description='Read fresh Minecraft facts without changing the action. Default detail=summary selects bounded facts for the current situation, even if sections are supplied. Only when a specific essential fact is missing, use detail=full with ONE relevant section: inventory for books/items, server for welcome/skills/quests/protection, nearby or window for surroundings/menu. Avoid collecting every section; raw books/components are large. Use max_events=0 unless reading messages. With reference paging enabled, full returns bounded JSON-pointer entries and availablePaths: use reference_cursor and optional reference_path to read ONLY the needed exact snapshot fields/pages. Unread pages are unknown, never absent. Reserve a round for minecraft_task or a documented minecraft_server gameplay action when idle and authorized.',
+         parameters={
+             'type': 'object',
+             'properties': {
+                 'sections': {'type': 'array', 'description': 'Sections to read with detail=full; summary automatically selects current decision facts.', 'items': {'type': 'string', 'enum': ['self', 'world', 'inventory', 'nearby', 'window', 'activity', 'server', 'coverage']}},
+                 'detail': {'type': 'string', 'enum': ['summary', 'full'], 'default': 'summary'},
+                 'max_events': {'type': 'integer', 'minimum': 0, 'maximum': 48, 'default': 20},
++                'reference_cursor': {'type': 'string', 'description': 'Returned rootCursor/nextCursor. Reads an existing immutable snapshot without refreshing the game.'},
++                'reference_path': {'type': 'string', 'description': 'Optional JSON pointer from availablePaths; use rootCursor to start reading that field, nextCursor with the same path for its subsequent pages.'},
+             },
+         },
+         timeout=6.0,
+     )
+-    async def minecraft_observe(self, *, sections=None, max_events=20, detail='summary', **_):
++    async def minecraft_observe(self, *, sections=None, max_events=20, detail='summary', reference_cursor=None, reference_path=None, **_):
+         if not await self._ensure_service_started():
+             return {'status': 'unavailable', 'reason': 'disconnected'}
++        from .reference_pages import ObservationReferences
++        references = getattr(self, '_observation_references', None)
++        if references is None:
++            references = self._observation_references = ObservationReferences()
++        if reference_cursor is not None:
++            return references.read(reference_cursor, reference_path)
+         if detail not in ('summary', 'full'):
+             return {'status': 'failed', 'reason': 'detail must be summary or full'}
+         if detail == 'full' and sections is None:
+@@ -476,7 +484,26 @@ class GameAgentMinecraftPlugin(NekoPluginBase):
+         # Section selection alone must not accidentally bypass the decision
+         # budget. Internal server-skill verification still uses observe_game
+         # directly and retains its full received protocol fields.
+-        return await self._service.observe_game(sections if detail == 'full' else None, max_events)
++        result = await self._service.observe_game(sections if detail == 'full' else None, max_events)
++        if detail == 'full' and getattr(self._service, '_reference_paging_enabled', False):
++            page = references.create(result)
++            # Safety/current decision facts stay present even if the requested
++            # reference starts with a large attribute table or a long book.
++            own = self._service._game_observations.state.get('self') or {}
++            danger = any(type(value) in (int, float) and value <= threshold for value, threshold in
++                         ((own.get('health'), 10), (own.get('food'), 8), (own.get('oxygen'), 8)))
++            page['currentContext'] = self._service._game_observations.focused_context(max_tokens=650, mode='survival' if danger else 'decision')
++            page['decision'] = result.get('decision')
++            page['llm_instruction'] = result.get('llm_instruction')
++            outcome = result.get('lastTaskOutcome')
++            if isinstance(outcome, dict):
++                page['lastTaskOutcome'] = {
++                    'taskId': outcome.get('taskId'), 'status': outcome.get('status'),
++                    'task': str(outcome.get('task') or '')[:160],
++                    'text': task_feedback_excerpt(str(outcome.get('text') or ''), 110),
++                }
++            return page
++        return result
+ 
+     def _on_detached_task_done(self, task: asyncio.Task) -> None:
+         """Push a short [character status] cue when a detached
+diff --git a/plugin/plugins/game_agent_minecraft/plugin.toml b/plugin/plugins/game_agent_minecraft/plugin.toml
+index 17bb162..578064f 100644
+--- a/plugin/plugins/game_agent_minecraft/plugin.toml
++++ b/plugin/plugins/game_agent_minecraft/plugin.toml
+@@ -27,6 +27,9 @@ auto_start = false
+ enabled = true
+ 
+ [game_agent]
++# Opt in to bounded, lossless JSON-pointer pages for explicit full LLM reads.
++# Internal/native observations and archived evidence retain the complete data.
++reference_paging_enabled = false
+ # Keep the official main text runtime active after its web page closes.
+ # Opt-in: requires an explicit character and an existing autonomous-play grant.
+ unattended_enabled = false
+diff --git a/plugin/plugins/game_agent_minecraft/reference_pages.py b/plugin/plugins/game_agent_minecraft/reference_pages.py
+new file mode 100644
+index 0000000..47f7305
+--- /dev/null
++++ b/plugin/plugins/game_agent_minecraft/reference_pages.py
+@@ -0,0 +1,110 @@
++"""Bounded, lossless pages of full observations; saved snapshots never mutate."""
++from collections import OrderedDict
++import copy
++import json
++import secrets
++import time
++
++from utils.tokenize import count_tokens
++
++
++def _pointer(key):
++    return str(key).replace('~', '~0').replace('/', '~1')
++
++
++def reference_entries(value, path=''):
++    encoded = json.dumps(value, ensure_ascii=False, separators=(',', ':'))
++    if count_tokens(encoded) <= 450:
++        yield {'path': path or '/', 'value': value}
++    elif isinstance(value, dict):
++        for key, item in value.items():
++            yield from reference_entries(item, path + '/' + _pointer(key))
++    elif isinstance(value, list):
++        for index, item in enumerate(value):
++            yield from reference_entries(item, path + '/' + str(index))
++    elif isinstance(value, str):
++        for offset in range(0, len(value), 400):
++            yield {'path': path or '/', 'text': value[offset:offset + 400],
++                   'offset': offset, 'totalChars': len(value)}
++    else:
++        yield {'path': path or '/', 'value': value}
++
++
++class ObservationReferences:
++    def __init__(self, *, budget=1800, ttl=180, capacity=3, clock=time.monotonic):
++        self.budget, self.ttl, self.capacity, self.clock = budget, ttl, capacity, clock
++        self.snapshots = OrderedDict()
++
++    def create(self, result):
++        now = self.clock()
++        self.snapshots = OrderedDict((key, item) for key, item in self.snapshots.items()
++                                     if now - item['created'] <= self.ttl)
++        pages, current = [], []
++        for entry in reference_entries(copy.deepcopy(result)):
++            candidate = current + [entry]
++            if current and count_tokens(json.dumps(candidate, ensure_ascii=False)) > self.budget:
++                pages.append(current)
++                current = []
++            current.append(entry)
++        pages.append(current)
++        key = secrets.token_hex(8)
++        self.snapshots[key] = {'created': now, 'pages': pages,
++                               'observedAt': result.get('observedAt'),
++                               'status': result.get('status'), 'fresh': result.get('fresh'),
++                               'sourceTruncated': result.get('responseTruncated') or result.get('truncated')}
++        while len(self.snapshots) > self.capacity:
++            self.snapshots.popitem(last=False)
++        return self.read(key + ':0')
++
++    def read(self, cursor, path=None):
++        try:
++            key, number = str(cursor).rsplit(':', 1)
++            index = int(number)
++            item = self.snapshots[key]
++            if index < 0 or self.clock() - item['created'] > self.ttl:
++                raise ValueError('expired')
++            pages = item['pages']
++            if path:
++                if not isinstance(path, str) or not path.startswith('/'):
++                    raise ValueError('path must be a JSON pointer')
++                entries = [entry for page in pages for entry in page
++                           if entry['path'] == path or entry['path'].startswith(path.rstrip('/') + '/')]
++                # A small object may have been kept whole at an ancestor path.
++                if not entries:
++                    for page in pages:
++                        for entry in page:
++                            prefix = '' if entry['path'] == '/' else entry['path']
++                            if 'value' in entry and path.startswith(prefix + '/'):
++                                value = entry['value']
++                                try:
++                                    for part in path[len(prefix) + 1:].split('/'):
++                                        part = part.replace('~1', '/').replace('~0', '~')
++                                        value = value[int(part)] if isinstance(value, list) else value[part]
++                                except (KeyError, TypeError, ValueError, IndexError):
++                                    continue
++                                entries = list(reference_entries(value, path))
++                                break
++                selected, current = [], []
++                for entry in entries:
++                    if current and count_tokens(json.dumps(current + [entry], ensure_ascii=False)) > self.budget:
++                        selected.append(current)
++                        current = []
++                    current.append(entry)
++                selected.append(current)
++                pages = selected
++            entries = copy.deepcopy(pages[index])
++        except (KeyError, ValueError, TypeError, IndexError):
++            return {'status': 'unavailable', 'reason': 'Reference cursor/path expired or invalid; request a fresh summary/full observation.'}
++        # Advertise field roots, not dozens of attribute UUIDs or event indices.
++        # Every root is readable by the same JSON-pointer selector.
++        all_paths = list(dict.fromkeys('/'.join(entry['path'].split('/')[:4])
++                                       for page in item['pages'] for entry in page))
++        age = self.clock() - item['created']
++        return {'status': item['status'], 'fresh': bool(item['fresh'] and index == 0 and age <= 5),
++                'observedAt': item['observedAt'], 'snapshotAgeSeconds': round(self.clock() - item['created'], 2),
++                'sourceTruncated': item['sourceTruncated'],
++                'reference': {'cursor': cursor, 'rootCursor': key + ':0', 'path': path, 'page': index, 'totalPages': len(pages),
++                              'nextCursor': key + ':' + str(index + 1) if index + 1 < len(pages) else None,
++                              'availablePaths': all_paths[:60], 'pathIndexPartial': len(all_paths) > 60, 'pathIndexDepth': 3,
++                              'partial': len(pages) > 1, 'instruction': 'Read-only historical snapshot. Omitted paths are unknown. Use minecraft_observe(reference_cursor=nextCursor, reference_path=path) for needed pages/JSON pointers. Text chunks carry exact character offsets; no text was discarded. Query a fresh summary for current vitals before acting.'},
++                'entries': entries}
+diff --git a/plugin/plugins/game_agent_minecraft/service.py b/plugin/plugins/game_agent_minecraft/service.py
+index 604c974..e6385aa 100644
+--- a/plugin/plugins/game_agent_minecraft/service.py
++++ b/plugin/plugins/game_agent_minecraft/service.py
+@@ -300,6 +300,7 @@ class GameAgentService:
+         self._game_state_waiters: list[asyncio.Future] = []
+         self._game_context_push_at = 0.0
+         self._game_context_revision = None
++        self._reference_paging_enabled = False
+         self._server_welcome_session: Optional[str] = None
+         self._server_welcome_seen: set[str] = set()
+         self._server_command_history: list[dict[str, Any]] = []
+@@ -480,6 +481,7 @@ class GameAgentService:
+             return bool(v) if isinstance(v, (bool, int)) else default
+ 
+         self._unattended.configure(cfg)
++        self._reference_paging_enabled = _b('reference_paging_enabled', False)
+         url = cfg.get("ws_url")
+         if isinstance(url, str) and url:
+             self._ws_url = url
+@@ -2733,7 +2735,7 @@ class GameAgentService:
+             try:
+                 result = self._push_message(source='game_agent_minecraft', visibility=[], ai_behavior='respond',
+                                    parts=[{'type': 'text', 'text': body_text}], priority=3, coalesce_key='mc_keep_going',
+-                                   metadata={'expires_in_s': 60})
++                                   metadata={'expires_in_s': 20})
+                 if isinstance(result, dict) and result.get('submitted') is False:
+                     return False
+                 self._idle_decision_lease_until = time.time() + 30.0
+@@ -2916,6 +2918,7 @@ class GameAgentService:
+                 parts=parts,
+                 priority=4,
+                 coalesce_key="mc_state",
++                metadata={'expires_in_s': 30},
+             )
+         except Exception as exc:
+             self._log_error(
+diff --git a/plugin/plugins/game_agent_minecraft/test_reference_pages.py b/plugin/plugins/game_agent_minecraft/test_reference_pages.py
+new file mode 100644
+index 0000000..5a930a2
+--- /dev/null
++++ b/plugin/plugins/game_agent_minecraft/test_reference_pages.py
+@@ -0,0 +1,66 @@
++import copy
++import json
++import unittest
++from types import SimpleNamespace
++from unittest.mock import AsyncMock, Mock
++
++from plugin.plugins.game_agent_minecraft.reference_pages import ObservationReferences
++from utils.tokenize import count_tokens
++
++
++class ReferencePagesTests(unittest.TestCase):
++    def test_pages_preserve_every_character_and_do_not_mutate_the_observation(self):
++        text = '服务器欢迎与保护信息。' * 2400
++        original = {'status': 'ok', 'fresh': True, 'observedAt': 123, 'state': {'server': {'welcome': text}, 'self': {'health': 20}}}
++        before = copy.deepcopy(original)
++        store = ObservationReferences()
++        page = store.create(original)
++        collected = []
++        while True:
++            self.assertLessEqual(count_tokens(json.dumps(page['entries'], ensure_ascii=False)), 1800)
++            collected.extend(page['entries'])
++            cursor = page['reference']['nextCursor']
++            if not cursor:
++                break
++            page = store.read(cursor)
++        chunks = sorted((item for item in collected if item['path'] == '/state/server/welcome'), key=lambda item: item['offset'])
++        self.assertEqual(''.join(item['text'] for item in chunks), text)
++        self.assertEqual(original, before)
++        self.assertTrue(any(item.get('value') == {'health': 20} for item in collected))
++
++    def test_targeted_path_and_cursor_expiry_are_explicit(self):
++        clock = [0]
++        store = ObservationReferences(clock=lambda: clock[0])
++        page = store.create({'status': 'ok', 'state': {'self': {'health': 20}, 'server': {'command': '/help'}}})
++        cursor = page['reference']['cursor']
++        focused = store.read(cursor, '/state/server')
++        self.assertEqual(focused['entries'], [{'path': '/state/server', 'value': {'command': '/help'}}])
++        clock[0] = 181
++        self.assertEqual(store.read(cursor)['status'], 'unavailable')
++
++    def test_missing_path_is_unknown_and_does_not_fall_back_to_unrelated_data(self):
++        store = ObservationReferences()
++        page = store.create({'status': 'ok', 'state': {'self': {'health': 20}}})
++        self.assertEqual(store.read(page['reference']['cursor'], '/state/server')['entries'], [])
++
++
++class FullToolPagingTests(unittest.IsolatedAsyncioTestCase):
++    async def test_full_reference_keeps_safety_and_does_not_refresh_on_continuation(self):
++        from . import GameAgentMinecraftPlugin
++        plugin = object.__new__(GameAgentMinecraftPlugin)
++        plugin._ensure_service_started = AsyncMock(return_value=True)
++        observation = {'status': 'ok', 'fresh': True, 'observedAt': 123,
++                       'state': {'server': {'welcome': '服务器玩法原文。' * 3000}},
++                       'responseTruncated': ['upstream-original-limit'],
++                       'decision': {'bodyBusy': True}, 'llm_instruction': 'Do not interrupt the current action'}
++        facts = SimpleNamespace(state={'self': {'health': 4}}, focused_context=Mock(return_value='HP4 nearby zombie; current task in progress'))
++        plugin._service = SimpleNamespace(_reference_paging_enabled=True, _game_observations=facts,
++                                           observe_game=AsyncMock(return_value=observation))
++        result = await plugin.minecraft_observe(detail='full', sections=['server'], max_events=0)
++        self.assertIn('HP4', result['currentContext'])
++        self.assertEqual(result['decision'], {'bodyBusy': True})
++        self.assertEqual(result['sourceTruncated'], ['upstream-original-limit'])
++        self.assertEqual(facts.focused_context.call_args.kwargs['mode'], 'survival')
++        next_page = await plugin.minecraft_observe(reference_cursor=result['reference']['nextCursor'])
++        self.assertEqual(plugin._service.observe_game.await_count, 1)
++        self.assertFalse(next_page['fresh'])

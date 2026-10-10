@@ -1,9 +1,9 @@
 {
   "upstreamRepository": "https://github.com/Project-N-E-K-O/N.E.K.O",
   "baseCommit": "fb2a2e731a8c954478d08678b0c8cf40e8145a54",
-  "sourceCommit": "4ab000b96518d9fe65a43f28f94344cc4a1a9abc",
+  "sourceCommit": "6a5b5d1b5031fb307ce268a3dd760688c7574079",
   "scope": "plugin/plugins/game_agent_minecraft",
-  "resultPluginTree": "1f2f3fb1a5f5d7fda943fe2f4e3f253a485bb220",
+  "resultPluginTree": "9914ccebd2e24f1ac22324df37430cad2cdde17c",
   "patches": [
     {
       "file": "0001-chore-configure-text-only-local-Qwen-Minecraft-trial.patch",
@@ -248,16 +248,20 @@
     {
       "file": "0061-fix-preserve-received-NPC-identity-in-bounded-decisi.patch",
       "sha256": "3e0952cd071b3b579fcbbfda8066f14d8156989938bf521182fb6d5c17ebfc8e"
+    },
+    {
+      "file": "0062-perf-page-full-Minecraft-references-and-expire-stale.patch",
+      "sha256": "3e52978cff8d089304319cf2403afe059ac017a104afc64ff66806ea9a46fed5"
     }
   ],
   "verification": {
     "appliedInOrderToBase": true,
     "resultPluginTreeMatchesSource": true,
-    "pluginTestsPassed": 202,
+    "pluginTestsPassed": 206,
     "hostCallbackTestsPassed": 195,
     "hostFileBlobsMatchSource": true,
-    "nativeSourceTestsPassed": 450,
-    "contributionTestsPassed": 476,
+    "nativeSourceTestsPassed": 575,
+    "contributionTestsPassed": 618,
     "existingMineDownContractTestsPassed": 1
   },
   "hostPatches": [
@@ -271,6 +275,23 @@
       ],
       "status": "approved-applied-live",
       "appliesAfterPluginSeries": true
+    },
+    {
+      "file": "host-patches/0002-perf-pin-local-Minecraft-instructions-and-defer-opti.patch",
+      "sha256": "2c7537a189fae428911fd6389b4850618fd91e02c555715cbf781faaf435d94f",
+      "sourceCommit": "6a5b5d1b5031fb307ce268a3dd760688c7574079",
+      "scopePaths": [
+        "main_logic/core/lifecycle.py",
+        "main_logic/core/notify.py",
+        "main_logic/core/proactive.py",
+        "main_logic/omni_offline_client/_lifecycle.py",
+        "main_logic/omni_offline_client/_tools.py",
+        "tests/unit/test_llm_prompt_audit_wire.py",
+        "tests/unit/test_local_strata_prefill.py",
+        "utils/llm_client/openai_client.py",
+        "utils/llm_client/prefill.py",
+        "utils/llm_prompt_audit.py"
+      ]
     }
   ],
   "liveBridgeVerification": {
@@ -550,5 +571,41 @@
     "noProfessionOrOfferInferred": true,
     "periodicInferenceAdded": false,
     "liveTradingSuccessProven": false
+  },
+  "llmPrefillVerification": {
+    "date": "2026-10-10",
+    "pluginSourceCommit": "cdca4e34c5605e8f0cd93b5174f0d519973f7167",
+    "hostSourceCommit": "6a5b5d1b5031fb307ce268a3dd760688c7574079",
+    "nativeSourceCommit": "604efbfba4fa12f444527276c133d809551ded8f",
+    "pluginTestsPassed": 206,
+    "hostSessionTestsPassed": 88,
+    "hostClientTestsPassed": 40,
+    "nativeTestsPassed": 575,
+    "allHostBlobsMatchSource": true,
+    "optInLocalStrataOnly": true,
+    "modelRestartRequired": false,
+    "periodicInferenceAdded": false,
+    "contributionTestsPassed": 618,
+    "nativeFormatterRegressionFailedBefore": true,
+    "sameStateReplayRequests": 12,
+    "sameStateMeanInputReductionPercent": 56.0,
+    "sameStateFirstBeforeTokens": 27856,
+    "sameStateFirstAfterTokens": 11521,
+    "actualHostPrefixChars": 2872,
+    "actualHostPrefixTokens": 2934,
+    "liveNativeRootReusedTokens": 7725,
+    "liveNativeFollowupTotalTokens": 10370,
+    "liveNativeFollowupReusedTokens": 10342,
+    "controlledLegacyRecomputedTokens": 6108,
+    "controlledOptimizedRecomputedTokens": 148,
+    "controlledLegacyPromptMs": 5991.8,
+    "controlledOptimizedPromptMs": 853.2,
+    "controlledLegacyDurationSeconds": 6.0,
+    "controlledOptimizedDurationSeconds": 0.9,
+    "controlledOutputTokensPerRequest": 1,
+    "diagnosticGameActions": 0,
+    "diagnosticGameChatMessages": 0,
+    "lanContinuousFramesVerified": true,
+    "modelProcessRetained": true
   }
 }

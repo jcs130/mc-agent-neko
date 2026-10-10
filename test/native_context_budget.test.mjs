@@ -78,3 +78,17 @@ test('state is moved once, all command docs remain available, and goals keep con
     assert.match(template, /\$COMMAND_DOCS/);
     assert.match(template, /do not break buildings; stop on danger/);
 });
+
+test('changing memory, selected code docs and goals follow every fixed execution rule', () => {
+    const f = fixture();
+    const template = 'PERSONA $MEMORY\n$CODE_DOCS\nFIXED_END\n$STATS\n$INVENTORY';
+    const first = executionPromptTemplate(template, f.agent, 'FIXED_CONTRACT');
+    f.agent.adminMission.mission.text = 'Another goal';
+    const second = executionPromptTemplate(template, f.agent, 'FIXED_CONTRACT');
+    assert.equal(first.split('DYNAMIC EXECUTION CONTEXT')[0], second.split('DYNAMIC EXECUTION CONTEXT')[0]);
+    for (const marker of ['$MEMORY', '$CODE_DOCS', 'CURRENT TASK', '$STATS', '$INVENTORY']) {
+        assert(first.indexOf('FIXED_CONTRACT') < first.indexOf(marker), marker);
+    }
+    assert.match(first, /Collect four logs/);
+    assert.match(second, /Another goal/);
+});

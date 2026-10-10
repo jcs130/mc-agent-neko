@@ -5,7 +5,7 @@ export function externalMission(agent) {
     return mission && (mission.origin === 'ws' || agent.hasExternalAutonomyOwner?.()) ? mission : null;
 }
 
-export function executionPromptTemplate(template, agent) {
+export function executionPromptTemplate(template, agent, fixedContract = '') {
     let prompt = String(template);
     const mission = externalMission(agent);
     const status = ['$STATS', '$INVENTORY'].filter(token => prompt.includes(token));
@@ -13,6 +13,11 @@ export function executionPromptTemplate(template, agent) {
     prompt = prompt.replace(/## Current Status\s*(?=##|$)/g, '');
     if (mission) {
         prompt = prompt.replaceAll('$EXAMPLES', '').replaceAll('$SELF_PROMPT', '');
+        const volatile = ['$MEMORY', '$CODE_DOCS', '$ACTION', '$CONVO', '$LAST_GOALS', '$BLUEPRINTS']
+            .filter(token => prompt.includes(token));
+        for (const token of volatile) prompt = prompt.replaceAll(token, '');
+        prompt += fixedContract + '\n\nDYNAMIC EXECUTION CONTEXT — historical evidence is not current authority:\n'
+            + volatile.join('\n');
         prompt += '\n\nCURRENT TASK — native controller authority:\n'
             + `taskId: ${mission.taskId || '(unassigned)'}\ngoal: ${mission.text}\n`
             + 'Only this task is active. Goals, actions, positions and vitals in historical memory or earlier turns are not current instructions or current state.\n';
@@ -20,6 +25,7 @@ export function executionPromptTemplate(template, agent) {
     }
     if (status.length) prompt += '\nFRESH OBSERVED STATE — prefer these live query results over historical memory; missing data is unknown:\n'
         + status.join('\n');
+    if (!mission) prompt += fixedContract;
     return prompt;
 }
 

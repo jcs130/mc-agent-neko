@@ -1,5 +1,11 @@
 # Project N.E.K.O. companion patches
 
+The optional local Strata policy now separates stable execution rules from
+changing state, pins only the Minecraft brain's validated prefix, pages complete
+observation references and defers optional background inference. See
+[the prefill measurement report](../../docs/neko-llm-prefill-2026-10-10.md)
+for configuration, measured tokens, native formatter repair and limits.
+
 Bounded planning now keeps received NPC IDs, custom names and coordinates,
 and explicitly marks sampled nearby lists as partial. See
 [the NPC planning report](../../docs/neko-npc-decision-context-2026-10-10.md)
@@ -49,7 +55,7 @@ alongside the Minecraft body in this fork. The ordered plugin series includes
 scoped protection receipts, adaptive heartbeat pacing, readable custom items,
 protected operational inventory, storage capacity, matched recovery history,
 compact task authority and conditional post-observation action guidance.
-The manifest lists the exact series plus one approved host bridge patch.
+The manifest lists the exact plugin series and both companion host patches.
 
 The series targets [Project-N-E-K-O/N.E.K.O](https://github.com/Project-N-E-K-O/N.E.K.O)
 at commit `fb2a2e731a8c954478d08678b0c8cf40e8145a54`. It changes only

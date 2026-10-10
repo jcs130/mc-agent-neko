@@ -1,0 +1,473 @@
+From 6a5b5d1b5031fb307ce268a3dd760688c7574079 Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Sat, 10 Oct 2026 15:25:00 +0800
+Subject: [PATCH] perf: pin local Minecraft instructions and defer optional
+ inference
+
+---
+ main_logic/core/lifecycle.py                 |  2 +
+ main_logic/core/notify.py                    |  1 +
+ main_logic/core/proactive.py                 |  7 ++
+ main_logic/omni_offline_client/_lifecycle.py |  7 ++
+ main_logic/omni_offline_client/_tools.py     |  3 +
+ tests/unit/test_llm_prompt_audit_wire.py     | 25 ++++++
+ tests/unit/test_local_strata_prefill.py      | 90 +++++++++++++++++++
+ utils/llm_client/openai_client.py            | 10 +++
+ utils/llm_client/prefill.py                  | 93 ++++++++++++++++++++
+ utils/llm_prompt_audit.py                    | 44 ++++++++-
+ 10 files changed, 279 insertions(+), 3 deletions(-)
+ create mode 100644 tests/unit/test_llm_prompt_audit_wire.py
+ create mode 100644 tests/unit/test_local_strata_prefill.py
+ create mode 100644 utils/llm_client/prefill.py
+
+diff --git a/main_logic/core/lifecycle.py b/main_logic/core/lifecycle.py
+index 531bcfc..f226a0a 100644
+--- a/main_logic/core/lifecycle.py
++++ b/main_logic/core/lifecycle.py
+@@ -1644,6 +1644,7 @@ class LifecycleMixin:
+             tool_definitions=tool_definitions,
+             enable_long_response_summary=external_tts_enabled,
+         )
++        session._stable_instruction_prefix = getattr(self, '_stable_instruction_prefix', None)
+         session.on_proactive_done = self.handle_proactive_complete
+         # A reply whose completion is skipped is closed by whoever took it
+         # over: a displacing user reply reports it here; the owed wrap-up is
+@@ -2707,6 +2708,7 @@ class LifecycleMixin:
+ 
+             initial_prompt = await self._build_initial_prompt()
+             next_session_context_messages = list(getattr(self, "next_session_context_messages", []) or [])
++            self.pending_session._stable_instruction_prefix = getattr(self, '_stable_instruction_prefix', None)
+             self.initial_next_session_context_snapshot_len = len(next_session_context_messages)
+             self.initial_cache_snapshot_len = len(self.message_cache_for_new_session)
+             # Snapshot the cache the same way as next_session_context_messages
+diff --git a/main_logic/core/notify.py b/main_logic/core/notify.py
+index fd74797..107c569 100644
+--- a/main_logic/core/notify.py
++++ b/main_logic/core/notify.py
+@@ -227,6 +227,7 @@ class NotifyMixin:
+             #     self._fetch_active_agent_tasks_prompt(),
+             # )
+             # prompt += plugin_prompt
++            self._stable_instruction_prefix = prompt
+             active_tasks_prompt = await self._fetch_active_agent_tasks_prompt()
+             prompt += active_tasks_prompt
+ 
+diff --git a/main_logic/core/proactive.py b/main_logic/core/proactive.py
+index 88520a2..ea3da32 100644
+--- a/main_logic/core/proactive.py
++++ b/main_logic/core/proactive.py
+@@ -1848,10 +1848,17 @@ class ProactiveMixin:
+                 logger.debug("[%s] lifecycle_bus emit(text_start) failed", self.lanlan_name)
+             try:
+                 try:
++                    request_options = {}
++                    if isinstance(self.session, OmniOfflineClient) and all(
++                        cb.get('source_kind') == 'plugin' and cb.get('source_name') == 'game_agent_minecraft'
++                        for cb in active_callbacks
++                    ):
++                        request_options['request_scope'] = 'minecraft'
+                     delivered = await self.session.prompt_ephemeral(
+                         instruction,
+                         images=_proactive_images or None,
+                         on_committed=lambda: _resolve_text_delivery_ack(True),
++                        **request_options,
+                     )
+                 except Exception as exc:
+                     if ack_resolved:
+diff --git a/main_logic/omni_offline_client/_lifecycle.py b/main_logic/omni_offline_client/_lifecycle.py
+index f480c84..400acb5 100644
+--- a/main_logic/omni_offline_client/_lifecycle.py
++++ b/main_logic/omni_offline_client/_lifecycle.py
+@@ -152,10 +152,16 @@ def _tracked_reply_call(method):
+     """
+     @functools.wraps(method)
+     async def _wrapper(self, *args, **kwargs):
++        from utils.llm_client.prefill import game_scope
++        scope_token = None
++        if kwargs.get('request_scope') == 'minecraft':
++            scope_token = game_scope.set(getattr(self, '_stable_instruction_prefix', None))
+         self._reply_calls_in_flight = int(getattr(self, "_reply_calls_in_flight", 0)) + 1
+         try:
+             return await method(self, *args, **kwargs)
+         finally:
++            if scope_token is not None:
++                game_scope.reset(scope_token)
+             self._reply_calls_in_flight = max(0, self._reply_calls_in_flight - 1)
+             if not self._reply_calls_in_flight:
+                 self._notify_idle()
+@@ -582,6 +588,7 @@ class _LifecycleMixin:
+         on_committed_text: Optional[Callable[[str], None]] = None,
+         response_done_callback: Optional[Callable[[], Awaitable[None]]] = None,
+         reply_owner: Any = None,
++        request_scope: Optional[str] = None,
+     ) -> bool:
+         """Send a fire-and-forget instruction to the LLM and stream the response.
+ 
+diff --git a/main_logic/omni_offline_client/_tools.py b/main_logic/omni_offline_client/_tools.py
+index a8903ca..ef8041d 100644
+--- a/main_logic/omni_offline_client/_tools.py
++++ b/main_logic/omni_offline_client/_tools.py
+@@ -90,6 +90,9 @@ class _ToolingMixin:
+         every comment it really said and does not repeat one; only the source
+         labels are removed from it. A retry re-sends those messages too.
+         """
++        from utils.llm_client import prefill
++        if prefill.game_scope.get() and prefill.enabled(getattr(self, 'base_url', None)):
++            messages = prefill.project_game_history(messages)
+         paired = self._paired_tool_rounds(messages)
+         turn_start = next(
+             (index + 1 for index in range(len(paired) - 1, -1, -1)
+diff --git a/tests/unit/test_llm_prompt_audit_wire.py b/tests/unit/test_llm_prompt_audit_wire.py
+new file mode 100644
+index 0000000..0c3b6aa
+--- /dev/null
++++ b/tests/unit/test_llm_prompt_audit_wire.py
+@@ -0,0 +1,25 @@
++import json
++
++from utils import llm_prompt_audit as audit
++
++
++def test_audit_captures_tools_and_wire_without_media_or_transport_secrets(tmp_path, monkeypatch):
++    monkeypatch.setattr(audit, "_ENABLED", True)
++    monkeypatch.setattr(audit, "_LOG_DIR", tmp_path)
++    params = {
++        "model": "local-model", "stream": True,
++        "messages": [{"role": "system", "content": "stable"},
++                     {"role": "user", "content": [{"type": "text", "text": "fresh"},
++                      {"type": "image_url", "image_url": {"url": "data:image/png;base64,PRIVATE"}}]}],
++        "tools": [{"type": "function", "function": {"name": "game", "description": "game tools"}}],
++        "extra_body": {"reasoning_effort": "none"}, "api_key": "SECRET", "extra_headers": {"Authorization": "SECRET"},
++    }
++    audit.record_llm_request(model="local-model", base_url="http://127.0.0.1:18030/v1",
++                             params=params, field_name=None, field_value=None)
++    raw = next(tmp_path.glob("*.jsonl")).read_text(encoding="utf8")
++    row = json.loads(raw)
++    assert row["wire_request"]["tools"] == params["tools"]
++    assert row["tokens_tools_estimate"] > 0
++    assert row["wire_request"]["messages"][0]["content"] == "stable"
++    assert "SECRET" not in raw and "PRIVATE" not in raw
++    assert params["messages"][1]["content"][1]["image_url"]["url"].endswith("PRIVATE")
+diff --git a/tests/unit/test_local_strata_prefill.py b/tests/unit/test_local_strata_prefill.py
+new file mode 100644
+index 0000000..18711d3
+--- /dev/null
++++ b/tests/unit/test_local_strata_prefill.py
+@@ -0,0 +1,90 @@
++import copy
++import asyncio
++from types import SimpleNamespace
++
++from utils.llm_client import prefill
++
++
++def test_only_opted_in_local_game_scope_can_pin_the_validated_prefix(monkeypatch):
++    monkeypatch.setenv('NEKO_LOCAL_STRATA_PREFILL', '1')
++    original = {'messages': [{'role': 'system', 'content': 'fixed rules\nchanging memory'},
++                             {'role': 'user', 'content': 'fresh game state'}],
++                'tools': [{'type': 'function', 'function': {'name': 'minecraft_chat'}}]}
++    before = copy.deepcopy(original)
++    token = prefill.game_scope.set('fixed rules')
++    try:
++        actual = prefill.request_policy(original, 'http://127.0.0.1:18030/v1', 'proactive')
++        assert actual['extra_body']['strata_prefix'] == {'message': 0, 'chars': len('fixed rules')}
++        assert original == before
++        assert prefill.request_policy(original, 'https://api.example.com/v1', 'proactive') is original
++        changed = copy.deepcopy(original)
++        changed['messages'][0]['content'] = 'different persona'
++        assert 'strata_prefix' not in prefill.request_policy(changed, 'http://127.0.0.1:18030/v1', 'proactive').get('extra_body', {})
++    finally:
++        prefill.game_scope.reset(token)
++
++
++def test_background_and_toolless_final_calls_do_not_replace_the_game_pin(monkeypatch):
++    monkeypatch.setenv('NEKO_LOCAL_STRATA_PREFILL', '1')
++    body = {'messages': [{'role': 'system', 'content': 'stable'}]}
++    for kind in ('emotion', 'long_response_summary', 'galgame_options'):
++        result = prefill.request_policy(body, 'http://127.0.0.1:18030/v1', kind)
++        assert result['extra_body']['strata_checkpoint'] is False
++        assert 'strata_prefix' not in result['extra_body']
++    token = prefill.game_scope.set('stable')
++    try:
++        assert prefill.request_policy(body, 'http://127.0.0.1:18030/v1', 'proactive')['extra_body']['strata_checkpoint'] is False
++        image = {**body, 'tools': [{'type': 'function', 'function': {'name': 'game'}}],
++                 'messages': body['messages'] + [{'role': 'user', 'content': [{'type': 'image_url', 'image_url': {'url': 'data:test'}}]}]}
++        assert 'strata_prefix' not in prefill.request_policy(image, 'http://127.0.0.1:18030/v1', 'proactive').get('extra_body', {})
++    finally:
++        prefill.game_scope.reset(token)
++
++
++def test_default_policy_is_byte_identical(monkeypatch):
++    monkeypatch.delenv('NEKO_LOCAL_STRATA_PREFILL', raising=False)
++    body = {'messages': [{'role': 'user', 'content': 'text'}]}
++    assert prefill.request_policy(body, 'http://127.0.0.1:18030/v1', 'emotion') is body
++
++
++def test_history_projection_retains_users_tools_and_recent_narration():
++    history = [SimpleNamespace(type='ai', content=str(i), additional_kwargs={'dialog_source': 'proactive'}) for i in range(20)]
++    user = SimpleNamespace(type='human', content='停止、规则、玩家的原话', additional_kwargs={})
++    tool = {'role': 'tool', 'tool_call_id': 'actual', 'content': 'protection denied'}
++    original = [user, *history, tool]
++    actual = prefill.project_game_history(original)
++    assert actual == [user, *history[-6:], tool]
++    assert len(original) == 22
++
++
++def test_optional_background_is_coalesced_while_game_requests_bypass_it(monkeypatch):
++    monkeypatch.setenv('NEKO_LOCAL_STRATA_PREFILL', '1')
++    async def run():
++        ready = False
++        async def probe():
++            return ready
++        old = asyncio.create_task(prefill.background_admission('http://127.0.0.1:18030/v1', 'emotion', probe=probe, interval=0.001))
++        await asyncio.sleep(0.005)
++        new = asyncio.create_task(prefill.background_admission('http://127.0.0.1:18030/v1', 'emotion', probe=probe, interval=0.001))
++        await prefill.background_admission('http://127.0.0.1:18030/v1', 'proactive', probe=probe)
++        await asyncio.sleep(0.005)
++        ready = True
++        results = await asyncio.gather(old, new, return_exceptions=True)
++        assert isinstance(results[0], prefill.BackgroundSuperseded)
++        assert results[1] is None
++    asyncio.run(run())
++
++
++def test_optional_dialogue_choices_expire_without_waiting_game_work(monkeypatch):
++    monkeypatch.setenv('NEKO_LOCAL_STRATA_PREFILL', '1')
++    async def run():
++        async def busy():
++            return False
++        try:
++            await prefill.background_admission('http://127.0.0.1:18030/v1', 'galgame_options',
++                                               probe=busy, max_wait=0.002, interval=0.001)
++            assert False, 'Obsolete optional work must not reach inference'
++        except prefill.BackgroundSuperseded:
++            pass
++        await prefill.background_admission('http://127.0.0.1:18030/v1', 'proactive', probe=busy)
++    asyncio.run(run())
+diff --git a/utils/llm_client/openai_client.py b/utils/llm_client/openai_client.py
+index fc03b31..b0b8bdc 100644
+--- a/utils/llm_client/openai_client.py
++++ b/utils/llm_client/openai_client.py
+@@ -22,6 +22,7 @@ if TYPE_CHECKING:
+     pass
+ 
+ from .cache_control import _inject_cache_control
++from . import prefill
+ from .lifecycle import (
+     _active_character, _dialog_slop_lang, _close_async_openai_client_from_sync_best_effort,
+     _close_chat_openai_clients_best_effort, _get_default_ssl_context,
+@@ -247,6 +248,9 @@ class ChatOpenAI:
+         if self.enable_cache_control:
+             p["messages"] = _inject_cache_control(p["messages"])
+ 
++        from utils.token_tracker import _current_call_type
++        p = prefill.request_policy(p, self.base_url, _current_call_type.get() or 'unknown')
++
+         # Catch prompt-template leaks: literal {placeholder} that should have
+         # been .format()-ed before reaching the wire. See
+         # utils/llm_prompt_leak_check.py for the rationale and severity
+@@ -288,6 +292,8 @@ class ChatOpenAI:
+         """``overrides`` (e.g. ``max_completion_tokens=1100``) flow through
+         ``_params()`` so concurrent callers on the same client don't
+         clobber each other's budgets. See ``ainvoke_raw`` for details."""
++        from utils.token_tracker import _current_call_type
++        await prefill.background_admission(self.base_url, _current_call_type.get())
+         resp = await self._aclient.chat.completions.create(**self._params(messages, **overrides))
+         # 防御性读取：部分上游（如 free-agent-model）会返回 choices 非空但
+         # message=None 的合法响应，直接 .message.content 会 NoneType 崩溃。
+@@ -331,6 +337,8 @@ class ChatOpenAI:
+         ``max_completion_tokens`` / ``max_tokens`` / ``extra_body`` / SDK
+         kwargs like ``timeout`` without touching ``self.*`` — required when
+         a single client is shared across concurrent code paths."""
++        from utils.token_tracker import _current_call_type
++        await prefill.background_admission(self.base_url, _current_call_type.get())
+         return await self._aclient.chat.completions.create(
+             **self._params(messages, **overrides)
+         )
+@@ -354,6 +362,8 @@ class ChatOpenAI:
+           calling ``astream`` again.
+         - terminal usage chunk
+         """
++        from utils.token_tracker import _current_call_type
++        await prefill.background_admission(self.base_url, _current_call_type.get())
+         stream = await self._aclient.chat.completions.create(
+             **self._params(messages, stream=True, **overrides)
+         )
+diff --git a/utils/llm_client/prefill.py b/utils/llm_client/prefill.py
+new file mode 100644
+index 0000000..9c6ca59
+--- /dev/null
++++ b/utils/llm_client/prefill.py
+@@ -0,0 +1,93 @@
++"""Opt-in policy for the local Strata engine. Only Minecraft owns its pin."""
++from contextvars import ContextVar
++import asyncio
++import os
++from urllib.parse import urlsplit
++import weakref
++
++game_scope: ContextVar[str | None] = ContextVar('minecraft_stable_prefix', default=None)
++_ONE_SHOT = frozenset({'emotion', 'long_response_summary', 'galgame_options', 'agent_cua'})
++_BACKGROUND = frozenset({'emotion', 'long_response_summary', 'galgame_options'})
++_LOOPS = weakref.WeakKeyDictionary()
++
++
++class BackgroundSuperseded(RuntimeError):
++    """An optional background request became obsolete before model dispatch."""
++
++
++def enabled(base_url) -> bool:
++    if os.environ.get('NEKO_LOCAL_STRATA_PREFILL') != '1':
++        return False
++    try:
++        url = urlsplit(str(base_url or ''))
++        return url.scheme == 'http' and url.hostname in {'127.0.0.1', 'localhost', '::1'} and url.port == 18030
++    except ValueError:
++        return False
++
++
++def request_policy(body: dict, base_url, call_type: str) -> dict:
++    if not enabled(base_url):
++        return body
++    prefix = game_scope.get()
++    extra = dict(body.get('extra_body') or {})
++    if call_type in _ONE_SHOT or (prefix is not None and not body.get('tools')):
++        extra.setdefault('strata_checkpoint', False)
++    messages = body.get('messages') or []
++    has_images = any(isinstance(m.get('content'), list) and any(
++        isinstance(p, dict) and p.get('type') in {'image', 'image_url', 'input_image'}
++        for p in m['content']) for m in messages)
++    first = messages[0] if messages else {}
++    content = first.get('content')
++    if prefix and body.get('tools') and not has_images and first.get('role') == 'system' and isinstance(content, str) and content.startswith(prefix):
++        extra.setdefault('strata_prefix', {'message': 0, 'chars': len(prefix)})
++    if not extra:
++        return body
++    return {**body, 'extra_body': extra}
++
++
++def project_game_history(messages):
++    """Keep all user wording and tool receipts; bound only old tagged narration."""
++    def narration(message):
++        meta = getattr(message, 'additional_kwargs', None) or getattr(message, 'metadata', None) or {}
++        return getattr(message, 'type', None) == 'ai' and meta.get('dialog_source') == 'proactive'
++    indexes = [index for index, message in enumerate(messages) if narration(message)]
++    discard = set(indexes[:-6])
++    return [message for index, message in enumerate(messages) if index not in discard] if discard else messages
++
++
++async def background_admission(base_url, call_type, *, probe=None, max_wait=10.0, interval=0.25):
++    """Keep optional local work out of a busy game inference queue.
++
++    Pending requests of the same background category use latest-wins. Running
++    inference is never cancelled; a game request never waits on this lock.
++    """
++    if not enabled(base_url) or call_type not in _BACKGROUND:
++        return
++    loop = asyncio.get_running_loop()
++    state = _LOOPS.setdefault(loop, {'lock': asyncio.Lock(), 'versions': {}})
++    versions = state['versions']
++    ticket = versions[call_type] = versions.get(call_type, 0) + 1
++    deadline = loop.time() + max_wait
++    if probe is None:
++        async def probe():
++            from utils.internal_http_client import get_internal_http_client
++            url = urlsplit(str(base_url))
++            try:
++                response = await get_internal_http_client().get(f'{url.scheme}://{url.netloc}/metrics', timeout=1.0)
++                live = response.json().get('live') or {}
++                return live.get('state') == 'idle' and not live.get('queued')
++            except Exception:
++                # Let the normal provider error handling report an unavailable
++                # endpoint; a diagnostic probe must not replace that behavior.
++                return True
++    async with state['lock']:
++        while True:
++            if versions.get(call_type) != ticket:
++                raise BackgroundSuperseded('A newer optional background request replaced this one')
++            if loop.time() > deadline:
++                raise BackgroundSuperseded('Optional background request expired while game inference was busy')
++            if await probe():
++                if versions.get(call_type) != ticket:
++                    raise BackgroundSuperseded('A newer optional background request replaced this one')
++                return
++            await asyncio.sleep(interval)
+diff --git a/utils/llm_prompt_audit.py b/utils/llm_prompt_audit.py
+index 34fc92d..113cf59 100644
+--- a/utils/llm_prompt_audit.py
++++ b/utils/llm_prompt_audit.py
+@@ -49,12 +49,43 @@ _ENABLED = (
+     LLM_PROMPT_AUDIT_ENABLED
+     or os.environ.get("NEKO_LLM_PROMPT_AUDIT", "").lower() in ("1", "true", "yes")
+ )
+-_LOG_DIR = Path("logs/llm_prompt_audit")
++_LOG_DIR = Path(os.environ.get("NEKO_LLM_PROMPT_AUDIT_DIR") or "logs/llm_prompt_audit")
+ _LOCK = threading.Lock()
++_RECORDS_WRITTEN = 0
++
++
++def _record_limit() -> int:
++    try:
++        return max(0, int(os.environ.get("NEKO_LLM_PROMPT_AUDIT_MAX_REQUESTS", "0")))
++    except ValueError:
++        return 0
+ 
+ 
+ def is_enabled() -> bool:
+-    return _ENABLED
++    limit = _record_limit()
++    return _ENABLED and (not limit or _RECORDS_WRITTEN < limit)
++
++
++def _wire_projection(params: dict[str, Any]) -> dict:
++    """Replayable text/tool body only. Never copy transport credentials or media.
++
++    This remains behind the existing explicit full-prompt audit switch. Counts
++    in this module are estimates; replay this body through the target model's
++    tokenizer/template to measure exact input tokens.
++    """
++    result = {key: params[key] for key in (
++        "model", "tools", "tool_choice", "reasoning_effort", "chat_template_kwargs",
++    ) if key in params}
++    extra = params.get("extra_body") or {}
++    for key in ("reasoning_effort", "chat_template_kwargs", "strata_prefix", "strata_checkpoint"):
++        if key in extra:
++            result[key] = extra[key]
++    result["messages"] = []
++    for message in params.get("messages") or []:
++        item = {key: message[key] for key in ("role", "name", "tool_calls", "tool_call_id") if key in message}
++        item["content"] = _content_to_text(message.get("content"))
++        result["messages"].append(item)
++    return result
+ 
+ 
+ def _ensure_dir() -> Path:
+@@ -179,7 +210,8 @@ def record_llm_request(
+     field_name/field_value: the token-limit field actually written into the request
+     body (max_tokens vs max_completion_tokens) and its value.
+     """
+-    if not _ENABLED:
++    global _RECORDS_WRITTEN
++    if not is_enabled():
+         return
+ 
+     _print_banner_once()
+@@ -217,12 +249,18 @@ def record_llm_request(
+             "tokens_total": total,
+             "tokens_by_role": by_role,
+             "messages": per_message,
++            "tokens_tools_estimate": _safe_count_tokens(json.dumps(params.get("tools") or [], ensure_ascii=False)),
++            "wire_request": _wire_projection(params),
+         }
+         line = json.dumps(record, ensure_ascii=False)
+         with _LOCK:
++            limit = _record_limit()
++            if limit and _RECORDS_WRITTEN >= limit:
++                return
+             with _today_path().open("a", encoding="utf-8") as f:
+                 f.write(line)
+                 f.write("\n")
++            _RECORDS_WRITTEN += 1
+     except Exception as e:
+         # 审计永远不能影响主流程：jsonl 写盘 / token 计数 / encoding
+         # 任意一步失败都吞掉，main LLM call 必须能继续。

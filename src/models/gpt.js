@@ -21,7 +21,17 @@ export class GPT {
         this.openai = new OpenAIApi(config);
     }
 
+    isLocalStrata() {
+        if (process.env.NEKO_LOCAL_STRATA_PREFILL !== '1') return false;
+        try {
+            const url = new URL(this.url);
+            return url.protocol === 'http:' && ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)
+                && url.port === '18030';
+        } catch { return false; }
+    }
+
     async sendRequest(turns, systemMessage, stop_seq='***', options = {}) {
+        const { strataCheckpoint, ...sdkOptions } = options;
         let messages = strictFormat(turns);
         messages = messages.map(message => {
             message.content += stop_seq;
@@ -36,18 +46,28 @@ export class GPT {
             // if a custom URL is set, use chat.completions
             // because custom "OpenAI-compatible" endpoints likely do not have responses endpoint
             if (this.url) {
-                let messages = [{'role': 'system', 'content': systemMessage}].concat(turns);
-                messages = strictFormat(messages);
+                const marker = '\n\nDYNAMIC EXECUTION CONTEXT — historical evidence is not current authority:\n';
+                const boundary = this.isLocalStrata() ? systemMessage.indexOf(marker) : -1;
+                // The legacy cross-provider formatter demotes and merges system
+                // text into the first user turn. A changing snapshot then has no
+                // stable system-root checkpoint, even with fixed rules first.
+                // Keep the controller-created boundary independent on this local
+                // endpoint; only the game brain owns the engine's explicit pin.
+                let messages = boundary >= 0
+                    ? [{role: 'system', content: systemMessage.slice(0, boundary)},
+                       ...strictFormat([{role: 'user', content: systemMessage.slice(boundary)}, ...turns])]
+                    : strictFormat([{role: 'system', content: systemMessage}, ...turns]);
                 const pack = {
                     model: model,
                     messages,
                     stop: stop_seq,
                     ...(this.params || {})
                 };
+                if (this.isLocalStrata() && strataCheckpoint === false) pack.strata_checkpoint = false;
                 if (model.includes('o1') || model.includes('o3') || model.includes('5')) {
                     delete pack.stop;
                 }
-                let completion = await this.openai.chat.completions.create(pack, options);
+                let completion = await this.openai.chat.completions.create(pack, sdkOptions);
                 if (completion.choices[0].finish_reason == 'length')
                     throw new Error('Context length exceeded'); 
                 console.log('Received.');
@@ -65,7 +85,7 @@ export class GPT {
                     instructions: systemMessage,
                     input: messages,
                     ...(this.params || {})
-                }, options);
+                }, sdkOptions);
                 console.log('Received.');
                 res = response.output_text;
                 let stop_seq_index = res.indexOf(stop_seq);

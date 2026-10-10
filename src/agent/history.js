@@ -103,7 +103,7 @@ export class History {
         }
         // Native action inference has priority. Do not queue a competing memory
         // request on the same local GPU while it is deciding the next action.
-        if (this.agent.prompter._activeConversationRequests) {
+        if (this.agent.prompter._activeConversationRequests || this.agent.prompter.awaiting_coding) {
             this._scheduleMemoryFlush(1000);
             return Promise.resolve();
         }
