@@ -13,4 +13,4 @@
 - [x] Extend the role/provider budget regression to require structured-answer headroom above these observed cutoffs and retain a finite ceiling. Red: 19 passed / 1 failed on the observed too-small budget.
 - [x] Set observer/reviewer budgets to 6144 and diagnoser to 4096; derive the shared provider ceiling from the role budgets, document the observed reason.
 - [x] Run focused DSH tests and complete contribution test discovery, commit and push only these files. Focused: 36 passed; full: 634 passed.
-- [ ] Restart only the verified monitor process through its existing launcher and verify a real low-effort cloud audit. Record actual occurrences, deployment, metadata-only proof and truthful repair receipt.
+- [x] Restart only the verified monitor process through its existing launcher and verify a real low-effort cloud audit. T-0015 actual occurrences=1; commit c303d2c. One-shot observer/diagnoser/reviewer all completed; after the 13:19:54 monitor deployment, two independent continuous audits completed without max-token truncation. T-0015 verified receipt API-confirmed; ticket not automatically closed. Game, model and desktop were retained.

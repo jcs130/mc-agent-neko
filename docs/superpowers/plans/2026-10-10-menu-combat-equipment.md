@@ -15,5 +15,7 @@
 - [x] Add a regression using the installed Mineflayer equipment implementation and real prismarine windows; reproduce the invalid slot with a full hotbar and merchant open.
 - [x] Guard `src/agent/library/tick_confirm.js` against cursor/uninitialized/racing windows and refresh inventory before weapon selection in `src/agent/library/skills.js`; abort combat on failure.
 - [x] Run the focused tests and complete native/fork discovery suites; record real exit codes and logs. Red 0/7; focused 31/31; native 591/591; fork 634/634.
-- [ ] Commit the specific files in both repositories and push the user's existing contribution branch. Save a repair receipt with the actual occurrence baseline.
+- [x] Commit the specific files in both repositories and push the user's existing contribution branch. Native adb3323 / contribution bf8b59b; T-0014 actual occurrences=1, prepared receipt API-confirmed.
 - [ ] Reload only the owned native component at a safe idle boundary, observe natural action, record deployment/runtime evidence, and update the hourly baseline. Leave verification pending when actual recovery has not been observed.
+
+The first four-minute passive boundary observation found ongoing missions throughout. No processes were restarted and no active action was canceled. A follow-up observation also checks the native executor's END record and actual nearby threats rather than relying on the cached body_busy flag alone. Deployment remains conditional on a real safe idle boundary; unit tests do not count as runtime recovery.
