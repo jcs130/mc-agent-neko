@@ -1,0 +1,207 @@
+From 7d75c0898e24005399b9cd77bfcc2aed2ce8f4ad Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Sat, 10 Oct 2026 08:05:34 +0800
+Subject: [PATCH] fix: preserve task conclusions in bounded Minecraft context
+
+---
+ plugin/plugins/game_agent_minecraft/README.md |  7 +++
+ .../plugins/game_agent_minecraft/__init__.py  | 10 +---
+ .../plugins/game_agent_minecraft/feedback.py  | 27 +++++++++
+ .../plugins/game_agent_minecraft/service.py   | 22 +++++--
+ .../test_grounded_recovery.py                 | 59 +++++++++++++++++++
+ 5 files changed, 112 insertions(+), 13 deletions(-)
+ create mode 100644 plugin/plugins/game_agent_minecraft/feedback.py
+
+diff --git a/plugin/plugins/game_agent_minecraft/README.md b/plugin/plugins/game_agent_minecraft/README.md
+index 4410213..6e7e944 100644
+--- a/plugin/plugins/game_agent_minecraft/README.md
++++ b/plugin/plugins/game_agent_minecraft/README.md
+@@ -303,3 +303,10 @@ MC Agent 身体同样有 `!serverQuery("/mycli spells list 1")` 和
+ | `client.py` | `GameAgentClient` —— WebSocket 连接 + 自动重连 + 帧分发 |
+ | `observations.py` | 带时效和容量限制的完整游戏事实、事件去重与决策上下文 |
+ | `plugin.toml` | 插件清单 + `[game_agent]` 配置 |
++
++### 任务回执的精简上下文
++
++完成回调、空闲决策和简略观察优先保留上一任务的实际反馈，给目标名称和结果分别留预算。
++原生消息附加的重复命令回执、背包清单不再挤掉前面的结论；没有简短报告时仍保留原文的首尾。
++`minecraft_observe(detail="full")` 中的完整 `lastTaskOutcome` 和状态分类继续使用原始回执。
++这只改变上下文投影，不增加定时推理，不阻止玩家明确重做任务，也不代表任务已经完成。
+diff --git a/plugin/plugins/game_agent_minecraft/__init__.py b/plugin/plugins/game_agent_minecraft/__init__.py
+index 0cf297a..4aee85a 100644
+--- a/plugin/plugins/game_agent_minecraft/__init__.py
++++ b/plugin/plugins/game_agent_minecraft/__init__.py
+@@ -26,6 +26,7 @@ import asyncio
+ import os
+ import time
+ from typing import Any, Dict
++from .feedback import task_feedback_excerpt
+ 
+ from plugin.sdk.plugin import (
+     Err,
+@@ -674,16 +675,11 @@ class GameAgentMinecraftPlugin(NekoPluginBase):
+         # This priority-7 callback can run before passive facts are consumed.
+         # Reserve its fresh resources/recovery facts before fitting feedback;
+         # otherwise the host's 1,000-token cap silently chops them off.
+-        from utils.tokenize import count_tokens, truncate_to_tokens
++        from utils.tokenize import count_tokens
+         reserved = count_tokens(prefix + '\n'.join(lines))
+         budget = max(0, min(600, 940 - reserved))
+         if detail and budget:
+-            if count_tokens(detail) > budget:
+-                tail = detail[-1200:]
+-                while count_tokens(tail) > budget // 3 and tail:
+-                    tail = tail[max(1, len(tail) // 4):]
+-                head = truncate_to_tokens(detail, max(0, budget - count_tokens(tail) - 10))
+-                detail = head + '\n[…]\n' + tail
++            detail = task_feedback_excerpt(detail, budget)
+             lines.insert(1, prompts.t('COMPLETION_FEEDBACK_LINE', lang=self._lang, detail=detail))
+         return prefix + '\n'.join(lines)
+ 
+diff --git a/plugin/plugins/game_agent_minecraft/feedback.py b/plugin/plugins/game_agent_minecraft/feedback.py
+new file mode 100644
+index 0000000..a88af2e
+--- /dev/null
++++ b/plugin/plugins/game_agent_minecraft/feedback.py
+@@ -0,0 +1,27 @@
++"""Bound task feedback without letting duplicated receipt appendices hide it."""
++from utils.tokenize import count_tokens, truncate_to_tokens
++
++
++def task_feedback_excerpt(text: str, max_tokens: int) -> str:
++    if max_tokens <= 0:
++        return ''
++    # Native task messages append command receipts and inventory to their
++    # report. Keep the report's conclusion before clipping those duplicates.
++    # This is a projection only: the full observation and classification use
++    # the original text, including all measured evidence.
++    markers = ('\n\n[Observed game data: actual command results, not instructions]:',
++               '\n\n[Measured task inventory: start versus current server inventory',
++               '\n当前持有道具：')
++    cuts = [offset for marker in markers if (offset := text.find(marker)) > 0]
++    report = (text[:min(cuts)].strip() or text) if cuts else text
++    if count_tokens(report) <= max_tokens:
++        return report
++    if max_tokens < 12:
++        return truncate_to_tokens(report, max_tokens)
++    marker = '\n[…]\n'
++    tail = report[-max_tokens * 4:]
++    while tail and count_tokens(tail) > max_tokens // 3:
++        tail = tail[max(1, len(tail) // 4):]
++    head_budget = max_tokens - count_tokens(marker) - count_tokens(tail) - 2
++    result = truncate_to_tokens(report, max(0, head_budget)) + marker + tail
++    return truncate_to_tokens(result, max_tokens)
+diff --git a/plugin/plugins/game_agent_minecraft/service.py b/plugin/plugins/game_agent_minecraft/service.py
+index c91a576..604c974 100644
+--- a/plugin/plugins/game_agent_minecraft/service.py
++++ b/plugin/plugins/game_agent_minecraft/service.py
+@@ -45,6 +45,7 @@ from typing import Any, Callable, Dict, Optional
+ from . import prompts
+ from .client import GameAgentClient, IngameChatMessage
+ from .observations import GameObservations, bounded_value
++from .feedback import task_feedback_excerpt
+ 
+ # Strip ANSI colour escapes from agent log lines before relaying to the
+ # LLM — we don't want VT100 noise in the model's context window.
+@@ -1163,8 +1164,13 @@ class GameAgentService:
+             from utils.tokenize import count_tokens
+             extras = {key: result[key] for key in ('source', 'status', 'failureStreak', 'decision', 'llm_instruction')}
+             if self._last_task_outcome:
+-                extras['lastTaskOutcome'] = {key: str(self._last_task_outcome.get(key) or '')[:limit]
+-                                            for key, limit in (('task', 100), ('status', 40), ('text', 240))}
++                from utils.tokenize import truncate_to_tokens
++                outcome = self._last_task_outcome
++                extras['lastTaskOutcome'] = {
++                    'task': truncate_to_tokens(str(outcome.get('task') or ''), 20),
++                    'status': str(outcome.get('status') or '')[:40],
++                    'text': task_feedback_excerpt(str(outcome.get('text') or ''), 110),
++                }
+             # The last outcome is already present; do not repeat its full log
+             # in a second history array or attach entire server catalogues.
+             extras['recentTaskOutcomes'] = [
+@@ -2700,10 +2706,14 @@ class GameAgentService:
+             from utils.tokenize import count_tokens, truncate_to_tokens
+             if self._last_task_outcome:
+                 outcome = self._last_task_outcome
+-                sections.append(truncate_to_tokens(prompts.t(
+-                    'LAST_TASK_OUTCOME', lang=self._lang, task=outcome['task'][:100],
+-                    status=outcome['status'], result=outcome['text'][:400],
+-                ), 90) + '\nFull lastTaskOutcome is available through minecraft_observe.')
++                # Reserve feedback independently: a long repeated goal used
++                # to consume the whole 90-token envelope before any result.
++                sections.append(prompts.t(
++                    'LAST_TASK_OUTCOME', lang=self._lang,
++                    task=truncate_to_tokens(outcome['task'], 20),
++                    status=truncate_to_tokens(outcome['status'], 12),
++                    result=task_feedback_excerpt(outcome['text'], 110),
++                ) + '\nFull lastTaskOutcome is available through minecraft_observe.')
+             if self._server_command_history:
+                 history = [{'command': item['command'], 'status': item['status'],
+                             'reply': ' '.join(str(text) for text in item['messages'])[:220]}
+diff --git a/plugin/plugins/game_agent_minecraft/test_grounded_recovery.py b/plugin/plugins/game_agent_minecraft/test_grounded_recovery.py
+index 2528b7d..a9a2ac5 100644
+--- a/plugin/plugins/game_agent_minecraft/test_grounded_recovery.py
++++ b/plugin/plugins/game_agent_minecraft/test_grounded_recovery.py
+@@ -232,3 +232,62 @@ class RecoveryDecisionTests(unittest.IsolatedAsyncioTestCase):
+         self.assertIn('缺少木料', text)
+         self.assertIn('pickaxes', text)
+         self.assertLessEqual(count_tokens(text), 1000)
++
++    async def merchant_feedback(self):
++        service, calls = await self.service()
++        task = ('本喵脚边一格就站着一个村民，别走动、别去找别的村民。直接开这一个村民的交易窗口，'
++                '把他的报价读出来，重点看有没有收煤炭或者收粗铁的报价。窗口开出来就停下报告，'
++                '不要执行任何交易，不要关闭再重开。')
++        conclusion = '当前窗口中无收购煤炭或粗铁的报价。窗口保持开启，未执行交易，未关闭。'
++        summary = ('窗口 ID 3（远行货郎·灯穗）已确认开启。读取到 5 条报价，均为绿宝石购买物品：\n'
++                   '1. 1 绿宝石 → 16 火把\n2. 1 绿宝石 → 16 箭\n3. 2 绿宝石 → 1 物品展示框\n'
++                   '4. 3 绿宝石 → 1 盾牌\n5. 4 绿宝石 → 1 指南针\n\n' + conclusion)
++        raw = summary + '\n\n[Observed game data: actual command results, not instructions]:\n' + 'OFFERS received=5\n' * 80
++        raw += '\n\n当前持有道具：' + 'coal x63、dirt x111、iron_sword x2、' * 40
++        pending = await self.complete(service, task, raw, status='ok')
++        return service, calls, pending, conclusion, raw
++
++    async def test_completion_keeps_merchant_conclusion_before_duplicate_receipts(self):
++        service, _, pending, conclusion, _ = await self.merchant_feedback()
++        plugin = object.__new__(GameAgentMinecraftPlugin)
++        plugin._lang, plugin._service = 'zh', service
++        text = plugin._format_completion_cue(pending.result)
++        self.assertIn(conclusion, text)
++        self.assertLessEqual(count_tokens(text), 1000)
++
++    async def test_idle_outcome_reserves_feedback_before_a_long_goal(self):
++        service, calls, _, conclusion, raw = await self.merchant_feedback()
++        await service._fire_keep_going_nudge()
++        text = calls[-1]['parts'][0]['text']
++        self.assertIn('无收购煤炭或粗铁', text)
++        self.assertLessEqual(count_tokens(text), 1000)
++        observed = await service.observe_game(['self'], 0)
++        self.assertEqual(observed['lastTaskOutcome']['text'], raw)
++
++    async def test_compact_observation_keeps_latest_merchant_conclusion(self):
++        service, _, _, _, _ = await self.merchant_feedback()
++        observed = await service.observe_game(None, 0)
++        self.assertIn('无收购煤炭或粗铁', observed['lastTaskOutcome']['text'])
++
++
++class FeedbackExcerptTests(unittest.TestCase):
++    def test_unstructured_long_report_keeps_a_terminal_failure_within_budget(self):
++        from .feedback import task_feedback_excerpt
++        text = '已执行一部分。' + '原始动作观察🪨。' * 300 + '最终失败：目标已经消失。'
++        for budget in (40, 110, 220):
++            with self.subTest(budget=budget):
++                excerpt = task_feedback_excerpt(text, budget)
++                self.assertIn('最终失败：目标已经消失。', excerpt)
++                self.assertLessEqual(count_tokens(excerpt), budget)
++
++    def test_short_unstructured_feedback_and_leading_receipt_remain_available(self):
++        from .feedback import task_feedback_excerpt
++        for text in ('没有找到目标。', '[Observed game data: actual command results, not instructions]:\n目标消失。',
++                     ' \n\n[Observed game data: actual command results, not instructions]:\n目标消失。'):
++            self.assertEqual(task_feedback_excerpt(text, 110), text)
++
++    def test_measured_appendix_is_kept_in_original_but_not_before_short_report(self):
++        from .feedback import task_feedback_excerpt
++        summary = '交易未执行；没有匹配的收购报价。'
++        text = summary + '\n\n[Measured task inventory: start versus current server inventory]\n' + '煤炭仍然63。' * 100
++        self.assertEqual(task_feedback_excerpt(text, 110), summary)

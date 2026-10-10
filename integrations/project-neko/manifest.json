@@ -1,9 +1,9 @@
 {
   "upstreamRepository": "https://github.com/Project-N-E-K-O/N.E.K.O",
   "baseCommit": "fb2a2e731a8c954478d08678b0c8cf40e8145a54",
-  "sourceCommit": "144beaa42225eb0729c64cce6f6bbafdd9210a6b",
+  "sourceCommit": "7d75c0898e24005399b9cd77bfcc2aed2ce8f4ad",
   "scope": "plugin/plugins/game_agent_minecraft",
-  "resultPluginTree": "1ff3f05a64dd02748d81c5a1165b5df9f85a22bf",
+  "resultPluginTree": "188d5a0b61dc1d5910e1cdd3b5dd412f603b716c",
   "patches": [
     {
       "file": "0001-chore-configure-text-only-local-Qwen-Minecraft-trial.patch",
@@ -240,12 +240,16 @@
     {
       "file": "0059-fix-distinguish-storage-providers-without-restrictin.patch",
       "sha256": "89d1fdcb236584e6e32d9d96cb8be2d2d3fbe718a2b5f3b5662b627c9ba307b9"
+    },
+    {
+      "file": "0060-fix-preserve-task-conclusions-in-bounded-Minecraft-c.patch",
+      "sha256": "b40778a4ce1b3d47b60f3726a6e7b0fc09333244b64652f121d0ea4ba0f4513d"
     }
   ],
   "verification": {
     "appliedInOrderToBase": true,
     "resultPluginTreeMatchesSource": true,
-    "pluginTestsPassed": 189,
+    "pluginTestsPassed": 195,
     "hostCallbackTestsPassed": 195,
     "hostFileBlobsMatchSource": true,
     "nativeSourceTestsPassed": 450,
@@ -517,5 +521,17 @@
     "unattendedGuardianRestored": true,
     "lanViewerHttpStatus": 200,
     "longRunSurvivalProven": false
+  },
+  "taskFeedbackVerification": {
+    "date": "2026-10-10",
+    "pluginSourceCommit": "7d75c0898e24005399b9cd77bfcc2aed2ce8f4ad",
+    "regressionCasesAdded": 6,
+    "originalCompletionAndIdleReproductionsFailed": true,
+    "capturedCompletionTokensBefore": 936,
+    "capturedCompletionTokensAfter": 900,
+    "merchantConclusionRetained": true,
+    "fullLastTaskOutcomeUnchanged": true,
+    "periodicInferenceAdded": false,
+    "longRunBehaviorProven": false
   }
 }

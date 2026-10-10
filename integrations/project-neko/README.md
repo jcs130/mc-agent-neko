@@ -1,5 +1,11 @@
 # Project N.E.K.O. companion patches
 
+Bounded completion, idle and observation context now preserves task conclusions
+before duplicated command/inventory appendices. Long goal names no longer
+consume the result's entire budget. Full feedback remains queryable. See
+[the feedback report](../../docs/neko-task-feedback-2026-10-10.md)
+for the two reproduced losses and verification limits.
+
 Native task endings now require current game evidence, and inventory
 observations follow player slots in initialized open merchant/container windows.
 This prevents an unobserved first reply from completing or abandoning a task,
@@ -84,7 +90,7 @@ python -m unittest discover -s plugin/plugins/game_agent_minecraft -t .
 git rev-parse HEAD:plugin/plugins/game_agent_minecraft
 ```
 
-The exported plugin passed 189 tests. All 59 ordered plugin patches reproduce
+The exported plugin passed 195 tests. All 60 ordered plugin patches reproduce
 the committed source. The manifest records the exact reproduced
 plugin tree and host-file blobs. The host callback/media regression suite passed
 195 tests at its last unchanged delivery, including six Minecraft budget tests.

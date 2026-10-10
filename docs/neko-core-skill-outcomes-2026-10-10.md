@@ -68,6 +68,9 @@ autonomous trade: three iron ingots were paid and one emerald received, with
 emeralds increasing from three to four. It is evidence of existing gameplay
 progress, not an outcome attributable to these new repairs. Deployment and
 subsequent natural actions are recorded separately in the local hourly audit.
-This inspection left the running native process intact because genuine actions
-and recovery continued, followed by night. These changes are queued for a safe
-daylight/idle reload and are not yet evidence of successful live escape.
+The original inspection preserved ongoing actions and night recovery. The next
+inspection loaded these changes at 07:59 on 2026-10-10 during a safe daylight
+idle boundary. The native game reconnected with full health and food while the
+main service, model and desktop continued. Escape to ground level occurred
+before this reload and is not attributed to these repairs. Further natural
+gameplay remains necessary to assess their reliability.
