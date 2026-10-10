@@ -29,6 +29,8 @@ node main.js                                        ← 入口
 
 工单经 `repair-queue.json` 交给既有每小时维护任务。维护者修代码、检查和部署，再用 `repair.mjs` 写回提交、日志哈希与运行验证；DSH 将回执作为记录读取，不取得游戏控制权，也不自动关单。部署过、哨兵条件清除、模型给出诊断和实际恢复分别记录。配置、边界和验证入口见 [dsh-supervisor.md](dsh-supervisor.md)。
 
+外置主脑在两条原生任务之间仍拥有自主规划权。`reflex_watchdog` 的 pin-breaker 复用 `hasExternalAutonomyOwner()`，在非 vital 状态让位并重置计时，不把命令租约空隙累积为强制取消或搬迁；窒息自救和其他紧急检查保留。证据、回归与部署边界见[pin 所有权修正](neko-pin-ownership-2026-10-10.md)。
+
 ### 2026-10 本地推理与等待优化
 
 原生执行/聊天、脚本生成及 N.E.K.O. 主脑共享本机 Strata / Qwen 服务；按需视觉的编码与理解沿用同一张 RTX 3090。当前聊天和视觉使用 `none`，原生代码生成使用 `low`、512-token 思考预算。原生外部任务执行保留独立 system 检查点，只有 Minecraft 主脑持有引擎的单一显式固定前缀。

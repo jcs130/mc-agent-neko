@@ -3872,14 +3872,20 @@ const modes_list = [
                 //   走 reset 分支: 每拍把 pin 窗口钉到 now (admin 时间绝不累计成 kick) 且跳过下方 kick body;
                 //   任务真卡死由 AdminMission 的 deadline + onNoProgress 自评兜底, 不靠 watchdog 强拆。致命态
                 //   adminExclusiveActive 自返回 false → 放行 (下方"受伤/溺水 wedged-reflex"保命网照常运行)。
-                const _adminHold = adminExclusiveActive(bot);
-                if (_adminHold || !this.pinAnchor || bot.entity.position.distanceTo(this.pinAnchor) > 10) {
+                // Neko owns planning between native missions too. An expired
+                // command lease is not permission for the legacy kernel to
+                // cancel its next action or accumulate a relocation timer.
+                // Keep the vital-danger exception and the rescue branches.
+                let _externalPinHold = false;
+                try { _externalPinHold = Boolean(agent.hasExternalAutonomyOwner?.()) && !arbiterVitalNow(bot); } catch (e) {}
+                const _pinOwnerHold = adminExclusiveActive(bot) || _externalPinHold;
+                if (_pinOwnerHold || !this.pinAnchor || bot.entity.position.distanceTo(this.pinAnchor) > 10) {
                     // Moved out of the pin zone (or admin owns the body) — the wedge/livelock broke.
                     // Clear the kick counter and persistent-pin escalation flags so the next pin gets a
                     // fresh window (and a fresh, un-backed-off cadence).
                     this.pinAnchor = bot.entity.position.clone(); this.pinAt = now; this.pinKick = 0; this.pinKickCount = 0;
                     try { bot._persistentPinKicks = 0; bot._persistentPinSince = 0; } catch (e) {}
-                    if (_adminHold) {
+                    if (_pinOwnerHold) {
                         // Also clear the pocket-fuse anchor so its 12-min budget doesn't count admin time,
                         // and drop a throttled breadcrumb that the pin-breaker stood down for admin.
                         try { bot._exemptAnchor = null; } catch (e) {}
@@ -3887,7 +3893,7 @@ const modes_list = [
                             bot._lastPinAdminExemptAt = now;
                             try {
                                 fs.appendFileSync('bots/_supervisor/progress.txt',
-                                    `[${new Date().toISOString()}] [reflex_watchdog] admin 独占期 pin-breaker 让位: extIntent 新鲜 — 不强制 interrupt (任务卡死由 AdminMission deadline/onNoProgress 兜底)\n`);
+                                    `[${new Date().toISOString()}] [reflex_watchdog] ${_externalPinHold ? '外部主脑' : 'admin'} 独占期 pin-breaker 让位 — 不强制 interrupt (任务自身的 deadline/onNoProgress 继续生效)\n`);
                             } catch (e) {}
                         }
                     }
