@@ -44,4 +44,3 @@
 - [x] Export the committed Neko change as the next ordered host patch; checksum and replay the complete bundle. Commit public configuration/docs/evidence, push only the user fork.
 - [x] Switch the private per-voice route and reload the owned Neko host at a speech/task boundary. Verify fresh game state, preserved native/model identities, desktop readiness and natural VoxCPM2 requests.
 - [x] Save private runtime proof and append a scoped maintenance entry. Distinguish warm backend latency, native pipeline timing, human voice assessment and any remaining limitations.
-
