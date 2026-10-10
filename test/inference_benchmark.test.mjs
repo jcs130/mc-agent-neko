@@ -93,10 +93,10 @@ test('synthetic commands validate against the native catalog without starting a 
             '!cannotComplete("保护区禁止破坏，当前任务无法执行")'];
         const good=replies.map((content,i)=>validateResponse(w.game(i),{content,finishReason:'stop'},w.parse).ok);
         const wrong=validateResponse(w.game(2),{content:'!goToCoordinates(12,64,8)',finishReason:'stop'},w.parse).ok;
-        console.log(JSON.stringify({good,wrong}));
+        console.log(JSON.stringify({good,wrong,fixtureCount:w.fixtureCount}));
         process.exit(0);
     `;
     const { stdout } = await promisify(execFile)(process.execPath,['--input-type=module','-e',script],
         {cwd:fileURLToPath(new URL('../',import.meta.url)),timeout:15000});
-    assert.deepEqual(JSON.parse(stdout),{good:[true,true,true,true],wrong:false});
+    assert.deepEqual(JSON.parse(stdout),{good:[true,true,true,true],wrong:false,fixtureCount:4});
 });

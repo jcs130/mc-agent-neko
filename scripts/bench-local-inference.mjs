@@ -42,7 +42,8 @@ const destination = path.resolve(args.out);
 const save = async () => {
     await mkdir(path.dirname(destination),{recursive:true});
     await writeFile(destination,JSON.stringify({schema:1,label:args.label,checkedAt:new Date().toISOString(),
-        rounds,lead_ms:400,settings:{temperature:0,top_p:1,seed:1234,reasoning_effort:'none',explicit_prefix:false},
+        rounds,lead_ms:400,warmup_fixtures:workload.fixtureCount,
+        settings:{temperature:0,top_p:1,seed:1234,reasoning_effort:'none',explicit_prefix:false},
         baseline,groups,records:rows,summary:summarize(rows)},null,2)+'\n');
 };
 async function request(fixture, scenario, round, phase, generation) {
@@ -109,6 +110,7 @@ async function runGroup(scenario, round, phase) {
 }
 let exitCode=0;
 try {
+    for(let round=0;round<workload.fixtureCount;round++) await runGroup('solo',round,'warmup');
     await runGroup('alternating',0,'warmup');
     await runGroup('three_clients',0,'warmup');
     for(let round=0;round<rounds;round++) for(const scenario of ['solo','alternating','background_first','game_first','three_clients']) {

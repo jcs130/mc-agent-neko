@@ -131,7 +131,7 @@ export async function createWorkload() {
     ];
     const facts = Array.from({length:12}, (_,i) => ({ id: 's' + (i+1), fact:
         `第${i+1}段只确认观察与工具结果，保护拒绝仍未解除；背包内容尚待重新读取，不能声称完成采矿，下一轮需要核对窗口和权限。` }));
-    return { parse: parseCommandMessage,
+    return { parse: parseCommandMessage, fixtureCount:tasks.length,
         game: round => { const task = tasks[round % tasks.length]; return { type:'execution', ...task,
             body: { messages:[{role:'system',content:system},{role:'user',content: task.text + '\n观测版本：' + round}],
                 max_tokens:256, reasoning_effort:'none' } }; },
