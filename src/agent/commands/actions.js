@@ -991,8 +991,9 @@ export const actionsList = [
             'target': { type: 'string', description: 'The target as an entity type, block type, or "nothing" for no target.' }
         },
         perform: runAsAction(async (agent, tool_name, target) => {
-            await skills.useToolOn(agent.bot, tool_name, target);
+            const result = await skills.useToolOn(agent.bot, tool_name, target);
             if (agent.bot.currentWindow) skills.log(agent.bot, describeMenu(agent.bot));
+            return result;
         })
     },
 ];

@@ -3214,9 +3214,46 @@ export async function equip(bot, itemName) {
      * await skills.equip(bot, "iron_pickaxe");
      **/
     if (itemName === 'hand') {
-        await bot.unequip('hand');
-        // give the server a couple ticks to register the unequip before any follow-up packet
+        // Mineflayer unequip uses player slot numbers even with a merchant open,
+        // and drops the held stack if it finds no space. Neither is safe here.
+        const cursorOccupied = () => bot.currentWindow?.selectedItem || bot.inventory?.selectedItem;
+        if (cursorOccupied()) {
+            log(bot, 'Cannot empty hand while the cursor holds an item. Resolve it first.');
+            return false;
+        }
+        if (bot.currentWindow) {
+            if (typeof bot.currentWindow.close !== 'function') {
+                log(bot, 'Cannot empty hand: current window slots are not ready.');
+                return false;
+            }
+            // closeWindow copies the initialized window's player slots back to
+            // bot.inventory; only afterward are player slot indices valid.
+            bot.closeWindow(bot.currentWindow);
+            await tickConfirm.sleepMs(100);
+        }
+        const slots = bot.inventory?.slots;
+        if (bot.currentWindow || cursorOccupied() || bot.interrupt_code || bot.health === 0 ||
+            !Array.isArray(slots) || slots.length < 45 ||
+            !Number.isInteger(bot.quickBarSlot) || bot.quickBarSlot < 0 || bot.quickBarSlot > 8) {
+            log(bot, 'Cannot empty hand: window, cursor or player inventory changed. Inspect inventory first.');
+            return false;
+        }
+        const emptyHotbar = slots.findIndex((item, index) => index >= 36 && index < 45 && !item);
+        if (emptyHotbar >= 0) bot.setQuickBarSlot(emptyHotbar - 36);
+        else {
+            const emptyStorage = slots.findIndex((item, index) => index >= 9 && index < 36 && !item);
+            if (emptyStorage < 0) {
+                log(bot, 'Cannot empty hand: no empty storage slot. Store an ordinary stack first; no item was discarded.');
+                return false;
+            }
+            await bot.moveSlotItem(36 + bot.quickBarSlot, emptyStorage);
+        }
         await tickConfirm.sleepMs(100);
+        if (bot.currentWindow || cursorOccupied() || bot.interrupt_code || bot.health === 0 ||
+            bot.inventory.slots[36 + bot.quickBarSlot]) {
+            log(bot, 'Empty hand was not confirmed. Inspect the current window and inventory before retrying.');
+            return false;
+        }
         log(bot, `Unequipped hand.`);
         return true;
     }
@@ -6507,14 +6544,8 @@ export async function useToolOn(bot, toolName, targetName) {
             return false;
         }
         await goToPosition(bot, entity.position.x, entity.position.y, entity.position.z);
-        if (toolName === 'hand') {
-            await bot.unequip('hand');
-            await tickConfirm.sleepMs(100);
-        }
-        else {
-            const equipped = await equip(bot, toolName);
-            if (!equipped) return false;
-        }
+        const equipped = await equip(bot, toolName);
+        if (!equipped) return false;
 
         // For lead specifically: confirm by inventory delta (one lead leaves the bot
         // on a successful leash). Without this we cannot tell a successful leash
