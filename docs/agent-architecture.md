@@ -25,9 +25,15 @@ node main.js                                        ← 入口
 
 ### 2026-10 外置 Neko 与 DSH 监工
 
-当前试跑由 N.E.K.O. 驾驶原生游戏；`services/dsh-supervisor/app.mjs` 被动订阅 `:48909`，在本机模型空闲时串行运行 DSH 的 observer、diagnoser、reviewer 三个独立会话。`audit.mjs` 在各角色准入后采样并保留不可变证据；协调器验证后调用 `:48920` 工单服务，原生 botwatch 继续提供规则检测。
+当前试跑由 N.E.K.O. 驾驶原生游戏；`services/dsh-supervisor/app.mjs` 被动订阅 `:48909`，串行运行 DSH 的 observer、diagnoser、reviewer 三个独立会话。三个角色已迁移到线上 `deepseek-flash`、低档思考，不再等待或回退到本机 Strata。`audit.mjs` 在各角色调用前采样并保留不可变证据；协调器验证后调用 `:48920` 工单服务，原生 botwatch 继续提供规则检测。
 
 工单经 `repair-queue.json` 交给既有每小时维护任务。维护者修代码、检查和部署，再用 `repair.mjs` 写回提交、日志哈希与运行验证；DSH 将回执作为记录读取，不取得游戏控制权，也不自动关单。部署过、哨兵条件清除、模型给出诊断和实际恢复分别记录。配置、边界和验证入口见 [dsh-supervisor.md](dsh-supervisor.md)。
+
+### 2026-10 本地推理与等待优化
+
+原生执行/聊天、脚本生成及 N.E.K.O. 主脑共享本机 Strata / Qwen 服务；按需视觉的编码与理解沿用同一张 RTX 3090。当前聊天和视觉使用 `none`，原生代码生成使用 `low`、512-token 思考预算。原生外部任务执行保留独立 system 检查点，只有 Minecraft 主脑持有引擎的单一显式固定前缀。
+
+可选后台请求等待空闲并合并同类待处理项；完整观测可分页读取，客户端计时只保存元数据。16 个会话缓存槽位不等于 16 路推理；本次基线仍为单并发，没有调用方专属槽位或全局严格优先级调度。适用条件、交付提交和实验状态集中见[本地部署优化指南](local-llm-optimization.md)；后文六月的历史运行记录不代表本次部署配置。
 
 | 文件 | 职责 |
 |---|---|

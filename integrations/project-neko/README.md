@@ -1,5 +1,12 @@
 # Project N.E.K.O. companion patches
 
+**Local deployment optimization:** this bundle includes the matching N.E.K.O.
+host and Minecraft plugin changes for a shared local Strata / Qwen service.
+The [local deployment guide](../../docs/local-llm-optimization.md) covers opt-in
+configuration, one-RTX-3090 measurements, caller/thinking boundaries and features
+that remain experimental. Private provider configuration and model weights are
+not included.
+
 Metadata-only native and host timings distinguish preparation, SDK return,
 stream fragments and validated commands. See [the timing guide](../../docs/llm-client-latency.md)
 and [the natural workload and concurrency observations](../../docs/llm-client-latency-observations-2026-10-10.md).
@@ -107,13 +114,13 @@ python -m unittest discover -s plugin/plugins/game_agent_minecraft -t .
 git rev-parse HEAD:plugin/plugins/game_agent_minecraft
 ```
 
-The exported plugin passed 195 tests. All 60 ordered plugin patches reproduce
-the committed source. The manifest records the exact reproduced
-plugin tree and host-file blobs. The host callback/media regression suite passed
-195 tests at its last unchanged delivery, including six Minecraft budget tests.
-The current native source suite passed 567 tests; this contribution branch's
-full `node --test` discovery passed 590 tests. The existing mineDown contract
-test also passed.
+The manifest is authoritative for the current bundle: 62 ordered plugin patches
+and three host patches reproduce the declared source's plugin tree and all 14
+affected host-file blobs. Test counts are dated delivery evidence, not a claim
+that every later checkout has already been tested. See the
+[prefill verification report](../../docs/neko-llm-prefill-2026-10-10.md) for plugin
+coverage and the [latest timing delivery report](../../docs/llm-client-latency-observations-2026-10-10.md)
+for the native, contribution and host regression results.
 
 Follow the patched plugin's README for the existing N.E.K.O. plugin lifecycle,
 viewer and unattended settings. On the Minecraft body, set

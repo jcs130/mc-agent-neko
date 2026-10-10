@@ -17,6 +17,9 @@
 > [!IMPORTANT]
 > **本 fork 的监工/接管者必读**：[docs/HANDOFF.md](docs/HANDOFF.md)（交接书：现状、红线、重构方案、操作/监控/改进手册、教训全集）与 [docs/agent-architecture.md](docs/agent-architecture.md)（六模块架构图谱：慢脑/快脑/身体/感知/记忆/监督）。改动台账在 `bots/_supervisor/CHANGELOG.md`。
 
+> [!NOTE]
+> **本地 LLM 部署优化**：本 fork 包含面向单 RTX 3090、Strata / Qwen 的前缀复用、观测分页、后台准入及客户端计时优化，连同 N.E.K.O. 主脑配套补丁交付。启用条件、调用方与思考设置、实测结果和实验边界见[本地部署优化指南](docs/local-llm-optimization.md)。双并发仍待验证，目标位置实验默认关闭。
+
 > [!Caution]
 Do not connect this bot to public servers with coding enabled. This project allows an LLM to write/execute code on your computer. The code is sandboxed, but still vulnerable to injection attacks. Code writing is disabled by default, you can enable it by setting `allow_insecure_coding` to `true` in `settings.js`. Ye be warned.
 
