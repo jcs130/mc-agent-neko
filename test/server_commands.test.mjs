@@ -104,3 +104,16 @@ test('reply collection is bounded and preserves an explicit truncation indicator
     assert.ok(r.messages.join('').length<=16000);
     assert.ok(r.records.length<=64);
 });
+
+test('reply metadata distinguishes allowlisted queries from mutations and unknown commands', async () => {
+    const send = await bridge(), bot = fakeBot(b => b.emit('messagestr', 'reply', 'system'));
+    for (const command of ['/mycli guild status', '/agentfriend:mycli  spells list 1', '/mycli help']) {
+        const result = await send(bot, { command }, { quietMs: 2, timeoutMs: 20 });
+        assert.equal(result.readOnly, true, command);
+    }
+    for (const command of ['/mycli cast selfheal', '/mycli guild accept example', '/mycli future-command']) {
+        const result = await send(bot, { command }, { quietMs: 2, timeoutMs: 20 });
+        assert.equal(result.readOnly, false, command);
+        assert.equal(result.confirmed, false);
+    }
+});
