@@ -1,0 +1,66 @@
+From 3d449a7e382a2d2cc8bb9a1a05f57a6ef69b6e76 Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Sun, 11 Oct 2026 01:01:23 +0800
+Subject: [PATCH] fix: expose measured protected swim recovery to planner
+
+---
+ .../plugins/game_agent_minecraft/decision_context.py |  3 +++
+ .../docs/2026-10-11-query-progress-repair.md         |  7 +++++++
+ .../game_agent_minecraft/test_focused_context.py     | 12 ++++++++++++
+ 3 files changed, 22 insertions(+)
+
+diff --git a/plugin/plugins/game_agent_minecraft/decision_context.py b/plugin/plugins/game_agent_minecraft/decision_context.py
+index 5bd6b72..8451627 100644
+--- a/plugin/plugins/game_agent_minecraft/decision_context.py
++++ b/plugin/plugins/game_agent_minecraft/decision_context.py
+@@ -215,6 +215,9 @@ def build_focused_view(info, *, mode='decision', max_events=6, max_tokens=1600,
+         active['digging'] = _short((activity.get('digging') or {}).get('name'), 64) or None
+         active['usingHeldItem'] = activity.get('usingHeldItem')
+         active['mobility'] = _select(activity.get('mobility'), ('state', 'enclosed'))
++        recovery = activity.get('recovery')
++        if isinstance(recovery, dict) and recovery.get('type') == 'protected-surface-swim-stall':
++            active['recovery'] = _select(recovery, ('type', 'noProgressSeconds', 'next'))
+         compact = {'self': own_brief, 'world': _select(world, ('dimension', 'timeOfDay', 'weather')),
+                    'activity': active}
+         if mode != 'running':
+diff --git a/plugin/plugins/game_agent_minecraft/docs/2026-10-11-query-progress-repair.md b/plugin/plugins/game_agent_minecraft/docs/2026-10-11-query-progress-repair.md
+index daa1770..6db4563 100644
+--- a/plugin/plugins/game_agent_minecraft/docs/2026-10-11-query-progress-repair.md
++++ b/plugin/plugins/game_agent_minecraft/docs/2026-10-11-query-progress-repair.md
+@@ -35,3 +35,10 @@ does not turn the existing 30/60-second retry schedule into a wakeup loop.
+ Live verification must separately inspect accepted actions, position changes,
+ task results and remaining repetition; passing these tests is not completion
+ of the wheat quest or evidence that every physical trap can be escaped.
++
++The matching native protected-water repair can report an expiring
++`activity.recovery` handoff only after a measured non-lethal surface stall.
++Focused context preserves its type, elapsed time and next-step guidance so the
++external planner can choose an existing passage or available escape ability.
++This is not a claim that a teleport succeeded or permission to destroy a roof.
++The native water reflex itself retains emergency ownership while submerged.
+diff --git a/plugin/plugins/game_agent_minecraft/test_focused_context.py b/plugin/plugins/game_agent_minecraft/test_focused_context.py
+index b40656f..8a53b86 100644
+--- a/plugin/plugins/game_agent_minecraft/test_focused_context.py
++++ b/plugin/plugins/game_agent_minecraft/test_focused_context.py
+@@ -14,6 +14,18 @@ from .service import GameAgentService
+ 
+ 
+ class FocusedContextTests(unittest.TestCase):
++    def test_native_protected_swim_recovery_survives_focused_context(self):
++        data = crowded_frame()
++        data['state']['activity']['recovery'] = {
++            'type': 'protected-surface-swim-stall', 'noProgressSeconds': 45,
++            'next': 'Use an existing passage; do not repeat denied digging.',
++        }
++        observations = GameObservations()
++        observations.ingest_state(data)
++        view = observations.focused_view(max_tokens=950)
++        self.assertEqual(view['state']['activity']['recovery']['type'], 'protected-surface-swim-stall')
++        self.assertIn('existing passage', view['state']['activity']['recovery']['next'])
++
+     def observations(self):
+         data = crowded_frame()
+         data['state']['self'].update(food=7, oxygen=20)
+-- 
+2.55.0.windows.5
+

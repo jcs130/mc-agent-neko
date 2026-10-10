@@ -54,7 +54,9 @@ test('a cloud audit completes while the local model is unreachable, with no fall
         assert.equal(await done, 0);
         assert.deepEqual(roles.map(value => value.role), ['observer', 'diagnoser', 'reviewer']);
         assert.ok(roles.every(value => value.options.provider === 'neko-deepseek' && value.options.model === 'deepseek-flash'));
-        assert.ok(requests.every(url => url.startsWith('http://127.0.0.1:48920/')));
+        assert.ok(requests.every(url => url.startsWith('http://127.0.0.1:48920/') ||
+            url === 'http://127.0.0.1:48916/security/csrf-token'));
+        assert.equal(requests.filter(url => url.startsWith('http://127.0.0.1:18030')).length, 0);
         const status = JSON.parse(fs.readFileSync(path.join(runtimeRoot, 'status.json'), 'utf8'));
         assert.equal(status.modelUrl, 'https://api.deepseek.com/v1');
         assert.equal(status.gameCommandsSent, 0);

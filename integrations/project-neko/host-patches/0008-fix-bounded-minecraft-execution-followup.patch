@@ -1,0 +1,462 @@
+From 072c6d78ebda8d34a38ad335ceaa4f4cb7b08b3b Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Sun, 11 Oct 2026 00:38:06 +0800
+Subject: [PATCH] fix: preserve a bounded action opportunity for idle Minecraft
+ decisions
+
+---
+ docs/2026-10-11-minecraft-execution-budget.md |  13 ++
+ main_logic/core/proactive.py                  |   3 +
+ main_logic/omni_offline_client/_lifecycle.py  |  27 +++-
+ main_logic/omni_offline_client/_tools.py      |  90 ++++++++++-
+ .../unit/test_tool_call_thought_signature.py  |   1 +
+ tests/unit/test_tool_calling.py               | 140 ++++++++++++++++++
+ 6 files changed, 267 insertions(+), 7 deletions(-)
+ create mode 100644 docs/2026-10-11-minecraft-execution-budget.md
+
+diff --git a/docs/2026-10-11-minecraft-execution-budget.md b/docs/2026-10-11-minecraft-execution-budget.md
+new file mode 100644
+index 0000000..b4198d1
+--- /dev/null
++++ b/docs/2026-10-11-minecraft-execution-budget.md
+@@ -0,0 +1,13 @@
++# Minecraft 自主执行收尾（本地模型配套补丁）
++
++## 回归报告 / Regression Report
++
++问题：本机小显存量化模型在自主回合反复调用观察/目录查询，用尽三轮工具预算后，宿主移除工具并要求文字收尾。结果可以反复说计划却没有动作；这些未执行计划还会进入对话历史，强化虚假的接取/进度记忆。
++
++改动：可信 Minecraft `mc_keep_going`/`mc_completion` 回调使用独立内部执行范围。仅本回合全为可识别查询、且最新观察明确 `ready_if_authorized` 时，将原有第四次无工具请求改为有限的可行动收尾。总调用上限不增加；只提供 task/server/chat，仍允许暂停、报告缺事实，不强制调用。服务器查询属性由原生现有只读白名单标记，未知命令不会被猜成查询。普通聊天、其他插件、社交/告警回调及忙碌状态沿用原路径。
++
++已完成的工具轮次可以确认回调已处理，无需生成额外播报。执行回合的口头计划不再写入对话历史；实际进展仍由插件状态、任务回执、服务器回执供给。已有私人对话不删除，不修改模型、推理参数、原生缓存检查点或心跳频率。
++
++潜在回归：最后一次工具调用的取消、工具拒收、静默完成及回调重投。针对本轮内外作用域、busy、未知/非查询服务器命令、暂停和取消做模拟 provider 测试；同时回归常规工具、thought_signature、取消边界、主动回调和总线。一个既有 `ChatOpenAI.__new__` 测试桩缺少部署分支所需的 base_url，补齐测试桩，未改生产适配器。
++
++验收：测试通过不等于量化模型必定选择可行动命令。需要部署后看真实派发、位置/库存/任务进度与连续失败；不能只看更早输出文字或 stop。长期学习与代码修复仍由工单维护流程处理。
+diff --git a/main_logic/core/proactive.py b/main_logic/core/proactive.py
+index ea3da32..90c4183 100644
+--- a/main_logic/core/proactive.py
++++ b/main_logic/core/proactive.py
+@@ -1854,6 +1854,9 @@ class ProactiveMixin:
+                         for cb in active_callbacks
+                     ):
+                         request_options['request_scope'] = 'minecraft'
++                        if all(cb.get('coalesce_key') in ('mc_keep_going', 'mc_completion')
++                               for cb in active_callbacks):
++                            request_options['request_scope'] = 'minecraft_execution'
+                     delivered = await self.session.prompt_ephemeral(
+                         instruction,
+                         images=_proactive_images or None,
+diff --git a/main_logic/omni_offline_client/_lifecycle.py b/main_logic/omni_offline_client/_lifecycle.py
+index 400acb5..d86c369 100644
+--- a/main_logic/omni_offline_client/_lifecycle.py
++++ b/main_logic/omni_offline_client/_lifecycle.py
+@@ -154,7 +154,7 @@ def _tracked_reply_call(method):
+     async def _wrapper(self, *args, **kwargs):
+         from utils.llm_client.prefill import game_scope
+         scope_token = None
+-        if kwargs.get('request_scope') == 'minecraft':
++        if kwargs.get('request_scope') in ('minecraft', 'minecraft_execution'):
+             scope_token = game_scope.set(getattr(self, '_stable_instruction_prefix', None))
+         self._reply_calls_in_flight = int(getattr(self, "_reply_calls_in_flight", 0)) + 1
+         try:
+@@ -627,11 +627,19 @@ class _LifecycleMixin:
+           Called at the same commit boundary with the sanitized visible text
+           (nonverbal directives removed). Callback failures never fail the turn.
+ 
+-        Returns True if any user-visible text was generated, False if aborted
+-        or only nonverbal directives were emitted.
++        Returns True if visible text was generated. Trusted Minecraft execution
++        cues also acknowledge completed tool rounds without requiring speech;
++        their narration is not stored as evidence of task acceptance/completion.
+         """
+         if not instruction or not instruction.strip():
+             return False
++        minecraft_execution_turn = request_scope == 'minecraft_execution'
++        if minecraft_execution_turn:
++            # Actual game progress is supplied by the plugin's measured state
++            # and receipts. Repeated spoken plans must not become task memory.
++            persist_response = False
++        minecraft_tools_committed = False
++        minecraft_commit_notified = False
+ 
+         # Early decline, before any await: nothing below (the anti-repeat
+         # preload, the vision switch, image fitting) is worth doing for a
+@@ -920,6 +928,7 @@ class _LifecycleMixin:
+                         # 同一轮的指令/回复对上——而那正是 turn_id 存在的理由。
+                         _tool_frames_turn_id=_bus_turn_id,
+                         _response_generation=response_generation,
++                        _minecraft_execution_turn=request_scope == 'minecraft_execution',
+                     ):
+                         # 插件总线：provider 已经吐出东西了 —— 这一轮的指令连同那
+                         # 批图确凿地被它收下了。这是本函数里最早能这么断言的地方，
+@@ -959,6 +968,14 @@ class _LifecycleMixin:
+ 
+                         if not self._response_generation_is_active(response_generation):
+                             break
++                        if minecraft_execution_turn and getattr(chunk, 'tool_round_persisted', False):
++                            minecraft_tools_committed = True
++                            if on_committed and not minecraft_commit_notified:
++                                minecraft_commit_notified = True
++                                try:
++                                    on_committed()
++                                except Exception:
++                                    logger.exception('Minecraft tool delivery acknowledgement failed')
+                         content = chunk.content if hasattr(chunk, "content") else str(chunk)
+                         if content and content.strip():
+                             emit_content = content
+@@ -1133,7 +1150,7 @@ class _LifecycleMixin:
+                         logger.exception(
+                             "prompt_ephemeral on_committed_text callback failed"
+                         )
+-                if on_committed:
++                if on_committed and not minecraft_commit_notified:
+                     try:
+                         on_committed()
+                     except Exception:
+@@ -1206,7 +1223,7 @@ class _LifecycleMixin:
+             # its completion was skipped. Only a cancellation mid-reply makes a
+             # response-mode turn report False. Callers that hand state to the
+             # completion (the avatar path's turn meta) check it themselves.
+-            reported_committed = content_committed and not (
++            reported_committed = (content_committed or minecraft_tools_committed) and not (
+                 completion_mode == "response" and response_cancelled
+             )
+             if completion_mode == "response":
+diff --git a/main_logic/omni_offline_client/_tools.py b/main_logic/omni_offline_client/_tools.py
+index ef8041d..3f2f2ad 100644
+--- a/main_logic/omni_offline_client/_tools.py
++++ b/main_logic/omni_offline_client/_tools.py
+@@ -13,6 +13,8 @@
+ # See the License for the specific language governing permissions and
+ # limitations under the License.
+ 
++import json
++
+ from utils.screen_comment_guard import project_screen_history, strip_screen_labels
+ 
+ from ._shared import (
+@@ -39,6 +41,8 @@ from ._genai_support import (
+     _GenaiToolsUnsupported,
+     _should_use_genai_sdk,
+ )
++
++
+ from ._lifecycle import _suspend_dialog_slop
+ from main_logic.tool_calling import (
+     _TOOL_IMAGE_TURN_MAX_B64_BYTES,
+@@ -68,6 +72,34 @@ _TOOLS_REFUSAL_REQUEST_QUALIFIERS = (
+ )
+ 
+ 
++def _minecraft_action_followup_tools(messages, tools):
++    """Give known-query-only idle turns an optional, bounded action opportunity.
++
++    Inspect this invocation's tool replies, never old history. Unknown server
++    commands are not classified as queries. This grants no user authority.
++    """
++    decision = None
++    seen = False
++    for message in messages:
++        if not isinstance(message, dict) or message.get("role") != "tool":
++            continue
++        seen = True
++        try:
++            output = json.loads(message.get("content", ""))
++        except (TypeError, ValueError):
++            return []
++        if not isinstance(output, dict):
++            return []
++        if message.get("name") == "minecraft_observe":
++            decision = output.get("decision")
++        elif message.get("name") != "minecraft_server" or output.get("readOnly") is not True:
++            return []
++    if not seen or not isinstance(decision, dict) or decision.get("status") != "ready_if_authorized":
++        return []
++    return [tool for tool in tools or [] if tool.get("function", {}).get("name") in
++            {"minecraft_task", "minecraft_server", "minecraft_chat"}]
++
++
+ class _ToolingMixin:
+     def _dialog_messages_for_provider(self, messages):
+         """Build the request view of ``messages``; the saved history is untouched.
+@@ -926,6 +958,7 @@ class _ToolingMixin:
+           OpenAI-compat path, which carries ``tools`` too.
+         - Otherwise: ``_astream_openai_with_tools``.
+         """
++        minecraft_execution_turn = overrides.pop("_minecraft_execution_turn", False)
+         tool_leak_filter = overrides.pop("_tool_leak_filter", None)
+         tool_leak_provider = overrides.pop("_tool_leak_provider", None)
+         tool_image_slots = overrides.pop("_tool_image_slots", None)
+@@ -984,6 +1017,7 @@ class _ToolingMixin:
+                     tool_leak_filter.reset()
+         async for chunk in self._astream_openai_with_tools(
+             messages,
++            _minecraft_execution_turn=minecraft_execution_turn,
+             _tool_leak_filter=tool_leak_filter,
+             _tool_leak_provider=tool_leak_provider,
+             _tool_image_slots=tool_image_slots,
+@@ -1096,6 +1130,8 @@ class _ToolingMixin:
+         ``finish_reason == "tool_calls"`` runs the tools, appends the
+         results to ``messages``, and re-invokes — up to
+         ``self.max_tool_iterations`` total LLM calls."""
++        minecraft_execution_turn = overrides.pop("_minecraft_execution_turn", False)
++        invocation_start = len(messages)
+         tool_leak_filter = overrides.pop("_tool_leak_filter", None)
+         tool_leak_provider = overrides.pop("_tool_leak_provider", None)
+         tool_image_slots = overrides.pop("_tool_image_slots", None)
+@@ -1324,7 +1360,11 @@ class _ToolingMixin:
+             return
+         if not generation_is_active():
+             return
+-        if executed_tool_calls == 0:
++        action_tools = (_minecraft_action_followup_tools(messages[invocation_start:], tools_payload)
++                        if minecraft_execution_turn and not zero_exec_break and "tools" in overrides else [])
++        if action_tools:
++            logger.info("OmniOfflineClient: Minecraft query budget spent; reserving the existing final request for optional execution")
++        elif executed_tool_calls == 0:
+             # 进过 tool 分支却一次都没执行成（provider 流出的 tool_call 分片
+             # 始终没带 name，collect_tool_calls 全部丢弃）：这是最值得排查的
+             # 形态，不能伪装成普通封顶日志。
+@@ -1365,13 +1405,31 @@ class _ToolingMixin:
+         final_overrides = {
+             k: v for k, v in overrides.items() if k not in ("tools", "tool_choice")
+         }
++        if action_tools:
++            final_overrides["tools"] = action_tools
++            final_overrides["tool_choice"] = "auto"
++            messages.append({"role": "user", "content": (
++                "Minecraft execution follow-up: this is the last tool opportunity in this idle decision. "
++                "Latest human stop/pause overrides all cues. If still authorized and idle, use a feasible short "
++                "minecraft_task, a documented minecraft_server gameplay action, or genuine help via minecraft_chat. "
++                "Do not re-read known catalogues or announce another future plan. If an essential fact is missing, "
++                "only query that fact or state the blocker; never invent permission, commands or prerequisites. "
++                "A browsed quest is not accepted; submitted is not completed. No action is required when stopped or busy."
++            )})
++        final_deltas = []
++        final_text = ""
++        final_reasoning = ""
+         final_finish_reason: Optional[str] = None
+         final_prompt_tokens: Optional[int] = None
+         # 封顶后这一次请求同样带着还没被 release 的工具图（slots 要到外层
+         # finally 才换回占位符），所以它也是一个真投递点，同样要抄送。漏掉它
+         # 的话，"模型看到了但插件读不到"恰好发生在工具轮打满的那些回合上。
+         tool_frames_published = False
+-        async for chunk in self.llm.astream(self._dialog_messages_for_provider(messages), **final_overrides):  # noqa: LLM_INPUT_BUDGET  # dialog messages bounded by SESSION_ARCHIVE_TRIGGER_TOKENS + RECENT_PER_MESSAGE_MAX_TOKENS truncation; output budget set per-call via overrides.
++        final_stream = (self._astream_declining_tools(
++            self._dialog_messages_for_provider(messages), final_overrides,
++            response_generation=response_generation,
++        ) if action_tools else self.llm.astream(self._dialog_messages_for_provider(messages), **final_overrides))  # noqa: LLM_INPUT_BUDGET  # Same bounded dialog and per-call output budget as the ordinary forced final request.
++        async for chunk in final_stream:
+             if not tool_frames_published:
+                 tool_frames_published = True
+                 self._publish_pending_tool_frames(
+@@ -1384,6 +1442,9 @@ class _ToolingMixin:
+                 return
+             if chunk.finish_reason:
+                 final_finish_reason = chunk.finish_reason
++            if action_tools and chunk.tool_call_deltas:
++                final_deltas.append(chunk.tool_call_deltas)
++            final_reasoning += getattr(chunk, "reasoning_content", "") or ""
+             if chunk.usage_metadata:
+                 pt = chunk.usage_metadata.get("prompt_tokens")
+                 if pt:
+@@ -1414,7 +1475,32 @@ class _ToolingMixin:
+                     chunk.content, tool_leak_filter, provider=tool_leak_provider
+                 )
+                 setattr(chunk, "_tool_leak_filtered", True)
++            final_text += getattr(chunk, "content", "") or ""
+             yield chunk
++        if (action_tools and "tools" in final_overrides and final_finish_reason == "tool_calls"
++                and final_deltas and generation_is_active()):
++            if tool_leak_filter is not None:
++                tail, event = tool_leak_filter.finalize()
++                if event:
++                    log_tool_leak_filtered(event, provider=tool_leak_provider)
++                if tail:
++                    final_text += tail
++                    tail_chunk = LLMStreamChunk(content=tail)
++                    setattr(tail_chunk, "_tool_leak_filtered", True)
++                    yield tail_chunk
++                tool_leak_filter.reset()
++            from utils.llm_client import ChatOpenAI as _ChatOpenAI
++            allowed = {tool["function"]["name"] for tool in action_tools}
++            calls = [call for call in _ChatOpenAI.collect_tool_calls(final_deltas) if call.name in allowed]
++            await self._notify_tool_round_start()
++            executed = await self._execute_and_append_openai_tool_calls(
++                messages, calls, assistant_text=strip_thinking_segments(final_text),
++                assistant_reasoning=final_reasoning, tool_image_slots=tool_image_slots,
++                tool_bus_frames=tool_bus_frames, generation_is_active=generation_is_active,
++                tool_rounds=tool_rounds,
++            )
++            if executed:
++                yield LLMStreamChunk(content="", tool_round_persisted=True)
+         # prompt_tokens 走局部变量、流结束后无条件回填（与 genai 路径同口径）：这次
+         # forced-finalize 没给 usage 时写回 None，而非沿用上一轮 tool-iteration 的旧
+         # 值，避免上层 empty-completion 诊断串台。
+diff --git a/tests/unit/test_tool_call_thought_signature.py b/tests/unit/test_tool_call_thought_signature.py
+index 952fb03..39bc1c8 100644
+--- a/tests/unit/test_tool_call_thought_signature.py
++++ b/tests/unit/test_tool_call_thought_signature.py
+@@ -180,6 +180,7 @@ async def test_openai_astream_forwards_tool_call_extra_content():
+         return _Stream()
+ 
+     client = ChatOpenAI.__new__(ChatOpenAI)
++    client.base_url = "https://unit.invalid/v1"
+     client._params = lambda messages, **kw: {"model": "gemini-3-pro"}
+     client._aclient = SimpleNamespace(
+         chat=SimpleNamespace(completions=SimpleNamespace(create=_create))
+diff --git a/tests/unit/test_tool_calling.py b/tests/unit/test_tool_calling.py
+index d4fadad..b439d7e 100644
+--- a/tests/unit/test_tool_calling.py
++++ b/tests/unit/test_tool_calling.py
+@@ -3231,6 +3231,146 @@ def _bare_tool_client(fake_llm, tool_def, handler, *, cap):
+     return client
+ 
+ 
++@pytest.mark.asyncio
++@pytest.mark.parametrize("scope,ready,server_read_only,expect_action", [
++    (True, True, True, True),
++    (False, True, True, False),
++    (True, False, True, False),
++    (True, True, False, False),
++    (True, True, None, False),
++])
++async def test_minecraft_query_cap_preserves_one_existing_action_opportunity(
++    scope, ready, server_read_only, expect_action,
++):
++    from utils.llm_client import LLMStreamChunk
++    from main_logic.tool_calling import ToolDefinition, ToolResult
++
++    def call(name, number):
++        return [LLMStreamChunk(content="", tool_call_deltas=[{
++            "index": 0, "id": f"mc{number}", "type": "function",
++            "function": {"name": name, "arguments": "{}"},
++        }], finish_reason="tool_calls")]
++
++    script = [call("minecraft_observe", 1), call("minecraft_server", 2),
++              call("minecraft_observe", 3)]
++    script.append(call("minecraft_task", 4) if expect_action else
++                  [LLMStreamChunk(content="暂停", finish_reason="stop")])
++    llm = _FakeLLM(script)
++    executed = []
++
++    async def handler(tool_call):
++        executed.append(tool_call.name)
++        output = {"decision": {"status": "ready_if_authorized" if ready else "busy"}}
++        if tool_call.name == "minecraft_server":
++            output = {"readOnly": server_read_only, "status": "received"}
++        return ToolResult(call_id=tool_call.call_id, name=tool_call.name, output=output)
++
++    client = _bare_tool_client(llm, ToolDefinition(name="minecraft_observe", description=""), handler, cap=3)
++    client._tool_definitions = [ToolDefinition(name=name, description="") for name in
++                                ("minecraft_observe", "minecraft_task", "minecraft_server", "minecraft_chat", "other")]
++    messages = [{"role": "user", "content": "continue if still authorized"}]
++    async for _chunk in client._astream_with_tools(messages, _minecraft_execution_turn=scope):
++        pass
++    assert len(llm.calls) == 4, "reuse the existing final request; never add another model round"
++    options = llm.calls[-1][1]
++    assert "_minecraft_execution_turn" not in options
++    if expect_action:
++        assert executed[-1] == "minecraft_task"
++        assert {tool["function"]["name"] for tool in options["tools"]} == {
++            "minecraft_task", "minecraft_server", "minecraft_chat"}
++        assert options.get("tool_choice", "auto") == "auto", "pause/stop must remain possible"
++        assert messages[-1]["role"] == "tool"
++    else:
++        assert executed == ["minecraft_observe", "minecraft_server", "minecraft_observe"]
++        assert "tools" not in options
++
++
++@pytest.mark.asyncio
++@pytest.mark.parametrize("scope,delivered", [("minecraft_execution", True), ("minecraft", False), (None, False)])
++async def test_silent_minecraft_execution_tool_turn_is_not_requeued(scope, delivered, monkeypatch):
++    from main_logic.omni_offline_client import OmniOfflineClient
++    from utils.llm_client import LLMStreamChunk
++
++    async def stream(self, messages, **overrides):
++        yield LLMStreamChunk(content="", tool_round_persisted=True)
++
++    monkeypatch.setattr(OmniOfflineClient, "_astream_with_tools", stream)
++    client = _minimal_offline_client_for_leak_tests()
++    client.on_response_done = None
++    notifications = []
++    actual = await client.prompt_ephemeral("idle cue", request_scope=scope,
++                                           on_committed=lambda: notifications.append(True))
++    assert actual is delivered
++    assert notifications == ([True] if delivered else [])
++
++
++@pytest.mark.asyncio
++async def test_minecraft_spoken_plan_is_not_persisted_as_execution_evidence(monkeypatch):
++    from main_logic.omni_offline_client import OmniOfflineClient
++    from utils.llm_client import AIMessage, LLMStreamChunk
++
++    async def stream(self, messages, **overrides):
++        yield LLMStreamChunk(content="先去看看再决定")
++
++    monkeypatch.setattr(OmniOfflineClient, "_astream_with_tools", stream)
++    client = _minimal_offline_client_for_leak_tests()
++    client.on_response_done = None
++    client.on_text_delta = None
++    assert await client.prompt_ephemeral("idle cue", request_scope="minecraft_execution") is True
++    assert not any(isinstance(item, AIMessage) for item in client._conversation_history)
++
++
++@pytest.mark.asyncio
++@pytest.mark.parametrize("cancel_final", [False, True])
++async def test_minecraft_final_opportunity_can_pause_or_be_cancelled_without_acting(cancel_final, monkeypatch):
++    from main_logic.omni_offline_client import _tools
++    from main_logic.tool_calling import ToolDefinition, ToolResult
++    from utils.llm_client import LLMStreamChunk
++
++    active = True
++    seen = []
++    chunks = [LLMStreamChunk(content="", tool_call_deltas=[{
++        "index": 0, "id": "observation", "type": "function",
++        "function": {"name": "minecraft_observe", "arguments": "{}"},
++    }], finish_reason="tool_calls")]
++
++    class PausingLLM(_FakeLLM):
++        def astream(self, messages, **options):
++            stream = super().astream(messages, **options)
++            if len(self.calls) != 4:
++                return stream
++
++            async def final():
++                nonlocal active
++                if cancel_final:
++                    active = False
++                    yield LLMStreamChunk(content="late", tool_call_deltas=[{
++                        "index": 0, "id": "late", "type": "function",
++                        "function": {"name": "minecraft_task", "arguments": "{}"},
++                    }], finish_reason="tool_calls")
++                else:
++                    yield LLMStreamChunk(content="先暂停", finish_reason="stop")
++            return final()
++
++    monkeypatch.setattr(_tools, "_generation_check", lambda *_: lambda: active)
++
++    async def handler(call):
++        seen.append(call.name)
++        return ToolResult(call_id=call.call_id, name=call.name,
++                          output={"decision": {"status": "ready_if_authorized"}})
++
++    llm = PausingLLM([chunks, chunks, chunks, []])
++    client = _bare_tool_client(llm, ToolDefinition(name="minecraft_observe", description=""), handler, cap=3)
++    client._tool_definitions.append(ToolDefinition(name="minecraft_task", description=""))
++    output = []
++    async for chunk in client._astream_with_tools([], _minecraft_execution_turn=True):
++        output.append(chunk.content)
++    assert seen == ["minecraft_observe"] * 3
++    assert len(llm.calls) == 4
++    assert ("先暂停" in "".join(output)) is not cancel_final
++    assert "late" not in "".join(output)
++
++
+ @contextlib.contextmanager
+ def _capture_ofc_logs():
+     """Capture the omni_offline_client module logger's records directly.
+-- 
+2.55.0.windows.5
+

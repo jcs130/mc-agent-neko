@@ -6,6 +6,7 @@ import { createRequire } from 'node:module';
 import { MODEL, MODEL_URL, buildEvidence, parseReport, auditDue, approvedIssues, roleSchema, supervisorRoleOptions, isActivityEvent, readExecutionHistory, writeDiagnosis, migrateLedger, executionRevision } from './core.mjs';
 import { runAuditStages } from './audit.mjs';
 import { buildRepairQueue, loadRepairReceipts } from './repair.mjs';
+import { advanceProgressWatch, probePluginStatus, publishProgressCandidate } from './progress_watch.mjs';
 
 export const name = 'neko-ticket-supervisors';
 export const inject = ['agents', 'subagents', 'sessions', 'tools', 'llm'];
@@ -27,6 +28,8 @@ export function apply(ctx, config) {
     const supervisorDir = path.join(nativeRoot, 'bots', '_supervisor');
     const statusPath = path.join(runtimeRoot, 'status.json');
     const ledgerPath = path.join(runtimeRoot, 'ledger.json');
+    const progressPath = path.join(runtimeRoot, 'autonomy-watch.json');
+    let progressWatch = readJson(progressPath), progressTimer = null, progressPromise = null;
     const once = process.env.NEKO_DSH_ONCE === '1';
     const ledger = migrateLedger(readJson(ledgerPath) ?? { lastAuditAt: 0, reviewed: {} });
     ledger.reviewed ??= {};
@@ -48,6 +51,33 @@ export function apply(ctx, config) {
         }
         fs.appendFileSync(log, JSON.stringify({ at: Date.now(), ...value }) + '\n');
     };
+    function sampleProgress() {
+        if (stopped || progressPromise) return progressPromise;
+        progressPromise = (async () => {
+            try {
+                const plugin = await probePluginStatus();
+                if (stopped) return;
+                progressWatch = advanceProgressWatch(progressWatch, frame, plugin);
+                // Confirm an earlier ambiguous write before posting again: ticket
+                // creation bumps occurrences even when its HTTP reply was lost.
+                progressWatch = await publishProgressCandidate(progressWatch, async body => {
+                    const matches = await api(TICKET_URL + '/api/tickets?dedupKey=autonomy-idle-decision-loop&status=open-ish');
+                    if (stopped) throw new Error('Supervisor stopped before publication');
+                    const same = matches.find(ticket => ticket.evidence?.activationId === body.evidence.activationId);
+                    return same ? { ticket: same } : api(TICKET_URL + '/api/tickets', body);
+                });
+                if (stopped) return;
+                fs.writeFileSync(progressPath, JSON.stringify(progressWatch, null, 2));
+                status.progressWatch = { checkedAt: progressWatch.checkedAt, candidate: progressWatch.candidate?.type ?? null,
+                    publication: progressWatch.publication ?? null };
+                delete status.progressProbeError;
+            } catch {
+                status.progressProbeError = 'Read-only plugin status unavailable; no stall conclusion';
+            }
+            save();
+        })().finally(() => { progressPromise = null; });
+        return progressPromise;
+    }
     const start = (key, file, args = []) => {
         if (children.has(key)) return;
         const child = spawn(process.execPath, [file, ...args], { cwd: nativeRoot, windowsHide: true,
@@ -162,6 +192,7 @@ export function apply(ctx, config) {
                 nativeEvents: readExecutionHistory(path.join(supervisorDir, 'events.log')), ticket: selected,
                 repair: receipts.filter(receipt => receipt.ticketId === selected?.id)
                     .sort((a, b) => b.recordedAt - a.recordedAt)[0],
+                progress: progressWatch?.candidate,
             });
         if (!capture(null).fresh) { status.state = 'waiting_for_fresh_game_evidence'; save(); return false; }
         ledger.lastAttemptAt = Date.now();
@@ -218,6 +249,8 @@ export function apply(ctx, config) {
         status.coordinatorSession = parentHandle.agent.id;
         await ensureServices();
         for (let attempt = 0; !frame && attempt < 60; attempt++) await delay(500);
+        await sampleProgress();
+        progressTimer = setInterval(() => { void sampleProgress(); }, 60000);
         do {
             if (fs.existsSync(path.join(runtimeRoot, 'stop'))) break;
             try {
@@ -246,7 +279,8 @@ export function apply(ctx, config) {
 
     function cleanup() {
         if (!cleanupPromise) cleanupPromise = (async () => {
-            stopped = true; clearInterval(queryTimer); socket?.close();
+            stopped = true; clearInterval(queryTimer); clearInterval(progressTimer); socket?.close();
+            await progressPromise;
             for (const child of children.values()) child.kill();
             await parentHandle?.dispose();
             status.stoppedAt = Date.now();

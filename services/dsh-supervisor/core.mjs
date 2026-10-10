@@ -110,6 +110,9 @@ export function buildEvidence(frame, worldModel, sentinel, now = Date.now(), ext
     if (sentinel) add('sentinel', { realProgress: sentinel.realProgress,
         activeDetectors: sentinel.activeDetectors, telemetryAgeS: sentinel.telemetryAgeS }, 700,
     Number.isFinite(sentinel.telemetryAgeS) ? sentinel.ts - Math.max(0, sentinel.telemetryAgeS) * 1000 : sentinel.ts);
+    if (extras.progress?.sessionId === frame?.sessionId) {
+        add('autonomy.idle_decision_window', extras.progress, 1100, extras.progress.observedAt);
+    }
     const history = (extras.nativeEvents ?? []).filter(event => Number.isFinite(event.at)
         && event.at <= now && now - event.at < 3600000 && inSession(event, frame?.sessionId));
     const failures = history.filter(event => event.value.ok === false || ['failed', 'timeout'].includes(event.value.status)).slice(-3);

@@ -1,9 +1,9 @@
 {
   "upstreamRepository": "https://github.com/Project-N-E-K-O/N.E.K.O",
   "baseCommit": "fb2a2e731a8c954478d08678b0c8cf40e8145a54",
-  "sourceCommit": "09b2b0136e7c195b0e35a8cdf761c0ea850008fd",
+  "sourceCommit": "3d449a7e382a2d2cc8bb9a1a05f57a6ef69b6e76",
   "scope": "plugin/plugins/game_agent_minecraft",
-  "resultPluginTree": "21691ceb077d3ab3e880dba3b796e978703f8787",
+  "resultPluginTree": "64e86f90898b728c71bc50c9d84ea078b1b979e3",
   "patches": [
     {
       "file": "0001-chore-configure-text-only-local-Qwen-Minecraft-trial.patch",
@@ -264,6 +264,14 @@
     {
       "file": "0065-fix-retain-queued-player-messages-across-long-game-a.patch",
       "sha256": "2c3d31cb7cc726b6ee1112430a79f372caf64ee124c82763857b205d51951b35"
+    },
+    {
+      "file": "0066-fix-separate-query-feedback-from-execution-progress.patch",
+      "sha256": "8222d93a1e63221e8c4aff2ec777bc849d44bb8eaa045e94ecb3e37f5f0d8d42"
+    },
+    {
+      "file": "0067-fix-expose-measured-protected-swim-recovery.patch",
+      "sha256": "16da622786c85eb0d84cbb58bc505afae38a575f2afcc13ba704f54cc087d03f"
     }
   ],
   "verification": {
@@ -351,6 +359,19 @@
         "main_logic/tts_client/workers/openai.py",
         "tests/unit/test_local_index_tts_backup.py",
         "tests/unit/test_openai_compatible_tts.py"
+      ]
+    },
+    {
+      "file": "host-patches/0008-fix-bounded-minecraft-execution-followup.patch",
+      "sha256": "a37c0dbb1c5dbb68bb42b68138f766ac249bf03f7f3e32a3175753c4ae0c4eb8",
+      "sourceCommit": "072c6d78ebda8d34a38ad335ceaa4f4cb7b08b3b",
+      "scopePaths": [
+        "main_logic/core/proactive.py",
+        "main_logic/omni_offline_client/_lifecycle.py",
+        "main_logic/omni_offline_client/_tools.py",
+        "tests/unit/test_tool_calling.py",
+        "tests/unit/test_tool_call_thought_signature.py",
+        "docs/2026-10-11-minecraft-execution-budget.md"
       ]
     }
   ],
@@ -809,5 +830,19 @@
     "nativeGameProcessPreserved": true,
     "gameLlmProcessPreserved": true,
     "liveOnlineOutageInduced": false
+  },
+  "idleDecisionRecoveryVerification": {
+    "date": "2026-10-11",
+    "sourceCommit": "3d449a7e382a2d2cc8bb9a1a05f57a6ef69b6e76",
+    "pluginPatches": 67,
+    "hostPatches": 8,
+    "checksumsVerified": 75,
+    "hostFilesMatched": 26,
+    "fullReplayMatchesSource": true,
+    "pluginTestsPassed": 224,
+    "hostTestsPassed": 308,
+    "nativeTestsPassed": 616,
+    "dshTestsPassed": 44,
+    "productionOutcomeVerified": false
   }
 }

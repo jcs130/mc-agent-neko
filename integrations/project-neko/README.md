@@ -7,6 +7,13 @@ configuration, one-RTX-3090 measurements, caller/thinking boundaries and feature
 that remain experimental. Private provider configuration and model weights are
 not included.
 
+The idle decision recovery companion changes keep query replies from resetting
+progress/backoff, distinguish accepted quest receipts from browsed catalogues,
+and reserve an existing final request for optional execution in confirmed idle
+Minecraft turns. Spoken plans are not stored as execution evidence. See
+[the recovery and progress-watch report](../../docs/neko-idle-decision-recovery-2026-10-11.md)
+for ownership, cancellation, verification and live outcome limits.
+
 Metadata-only native and host timings distinguish preparation, SDK return,
 stream fragments and validated commands. See [the timing guide](../../docs/llm-client-latency.md)
 and [the natural workload and concurrency observations](../../docs/llm-client-latency-observations-2026-10-10.md).
@@ -120,8 +127,8 @@ python -m unittest discover -s plugin/plugins/game_agent_minecraft -t .
 git rev-parse HEAD:plugin/plugins/game_agent_minecraft
 ```
 
-The manifest is authoritative for the current bundle: 65 ordered plugin patches
-and six host patches reproduce the declared source's plugin tree and all 18
+The manifest is authoritative for the current bundle: 67 ordered plugin patches
+and eight host patches reproduce the declared source's plugin tree and all 26
 affected host-file blobs. Test counts are dated delivery evidence, not a claim
 that every later checkout has already been tested. See the
 [prefill verification report](../../docs/neko-llm-prefill-2026-10-10.md) for plugin

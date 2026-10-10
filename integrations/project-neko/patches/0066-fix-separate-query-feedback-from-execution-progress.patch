@@ -1,0 +1,384 @@
+From a32e65467a0d1496687a7cd396a88c6f9803b2e1 Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Sun, 11 Oct 2026 00:12:08 +0800
+Subject: [PATCH] fix: separate query feedback from autonomous execution
+ progress
+
+---
+ .../game_agent_minecraft/decision_context.py  |  2 +-
+ .../docs/2026-10-11-query-progress-repair.md  | 37 +++++++
+ .../game_agent_minecraft/observations.py      | 50 +++++++++-
+ .../plugins/game_agent_minecraft/prompts.py   |  4 +-
+ .../server_play_context.py                    | 19 +++-
+ .../plugins/game_agent_minecraft/service.py   |  2 +
+ .../test_adaptive_heartbeat.py                | 25 +++++
+ .../test_query_progress.py                    | 98 +++++++++++++++++++
+ 8 files changed, 228 insertions(+), 9 deletions(-)
+ create mode 100644 plugin/plugins/game_agent_minecraft/docs/2026-10-11-query-progress-repair.md
+ create mode 100644 plugin/plugins/game_agent_minecraft/test_query_progress.py
+
+diff --git a/plugin/plugins/game_agent_minecraft/decision_context.py b/plugin/plugins/game_agent_minecraft/decision_context.py
+index 8b9b208..5bd6b72 100644
+--- a/plugin/plugins/game_agent_minecraft/decision_context.py
++++ b/plugin/plugins/game_agent_minecraft/decision_context.py
+@@ -294,7 +294,7 @@ def build_focused_view(info, *, mode='decision', max_events=6, max_tokens=1600,
+                 compact['server'] = {'scoreboards': titles}
+             welcome = info.server_welcome()
+             if mode == 'decision':
+-                play = received_play_routes(welcome, inv, server, info.clock())
++                play = received_play_routes(welcome, inv, server, info.clock(), info.server_progress())
+                 if play:
+                     value['serverPlay'] = play
+             if welcome and welcome.get('messages'):
+diff --git a/plugin/plugins/game_agent_minecraft/docs/2026-10-11-query-progress-repair.md b/plugin/plugins/game_agent_minecraft/docs/2026-10-11-query-progress-repair.md
+new file mode 100644
+index 0000000..daa1770
+--- /dev/null
++++ b/plugin/plugins/game_agent_minecraft/docs/2026-10-11-query-progress-repair.md
+@@ -0,0 +1,37 @@
++# Separate query feedback from execution progress
++
++The reported symptom was repeated wheat-harvesting narration while the body
++stayed near the same village position. Read-only observations covered a
++32-second unchanged interval and the longer vitals history. Fresh narration
++IDs and tool-cap exits accompanied repeated catalogue/status queries. This is
++evidence of newly generated planning, not proof of a replayed TTS file.
++
++Two input/scheduling failures were reproduced:
++
++- Solicited query replies were excluded from immediate attention callbacks but
++  still changed the revision used by idle retry backoff. Changing catalogue
++  records could also reset that revision without physical or quest progress.
++- A browsed `MC_MARKET_DETAIL` without `currentStep` became the focused task.
++  The actual `/mycli guild status` reply described a different accepted quest;
++  the short event/history buffers discarded it after unrelated queries.
++
++Solicited system/title/protection feedback remains readable, but does not
++reset idle backoff. Unsolicited protection failures, real chat/whispers and
++`MC_MARKET_CHECK` progress still change decisions. Unaccepted catalogue detail
++is now `serverPlay.inspectedReference`, separate from an actual active report.
++The latest real guild-status reply is retained for at most ten minutes, with
++its age, within its game session. It is historical server text, not a task
++acceptance inferred by the plugin or authorization to act.
++
++The change does not shorten the existing retry timer, suppress speech by text
++matching, remove game evidence, or issue escape actions. The matching native
++repair prevents an advisory legacy night-shelter commitment from cancelling
++another task's path. It retains an executing nightShelter's deliberate hold.
++
++Regression scenarios cover repeated solicited feedback, actual progress,
++private messages, unsolicited denials, session/age boundaries and 400/700-token
++capsules. A fake-clock service test verifies that two-second query feedback
++does not turn the existing 30/60-second retry schedule into a wakeup loop.
++Live verification must separately inspect accepted actions, position changes,
++task results and remaining repetition; passing these tests is not completion
++of the wheat quest or evidence that every physical trap can be escaped.
+diff --git a/plugin/plugins/game_agent_minecraft/observations.py b/plugin/plugins/game_agent_minecraft/observations.py
+index bc648a2..0d8e816 100644
+--- a/plugin/plugins/game_agent_minecraft/observations.py
++++ b/plugin/plugins/game_agent_minecraft/observations.py
+@@ -70,6 +70,33 @@ class GameObservations:
+         self.dropped = 0
+         self.decision_revision = 0
+         self._fingerprint = None
++        self._progress_report = None
++
++    def record_server_reply(self, command, messages, observed_at=None):
++        """Keep an actual status reply separately from browsed catalogues."""
++        if command != '/mycli guild status' or not isinstance(messages, list):
++            return
++        stamp = self.clock() if observed_at is None else observed_at
++        if type(stamp) not in (int, float) or not math.isfinite(stamp):
++            return
++        lines = [line for line in messages if isinstance(line, str) and line.strip()]
++        if not lines:
++            return
++        previous = self._progress_report
++        if previous and stamp < previous['observedAt']:
++            return
++        if previous and stamp - previous['observedAt'] <= 2:
++            lines = list(dict.fromkeys([*previous['messages'], *lines]))
++        self._progress_report = {'command': command, 'observedAt': stamp,
++                                 'messages': [line[:180] for line in lines[-4:]],
++                                 'truncated': len(lines) > 4 or any(len(line) > 180 for line in lines)}
++
++    def server_progress(self):
++        report = self._progress_report
++        if not report or not 0 <= self.clock() - report['observedAt'] <= 600:
++            return None
++        return {**report, 'ageSeconds': round(self.clock() - report['observedAt']),
++                'historicalReply': True}
+ 
+     @property
+     def fresh(self):
+@@ -95,6 +122,7 @@ class GameObservations:
+             self.online = False
+             self.events.clear()
+             self._fingerprint = None
++            self._progress_report = None
+         self.available = True
+         return True
+ 
+@@ -143,7 +171,10 @@ class GameObservations:
+             'server': {key: value for key, value in server.items()
+                        if key not in ('channels', 'protection', 'welcome', 'recipeBook')},
+             'channels': {key: value for key, value in (server.get('channels') or {}).items()
+-                         if key != 'mcagent:state'},
++                         if key != 'mcagent:state' and not (key == 'mcagent:market'
++                             and isinstance(value, dict) and isinstance(value.get('value'), dict)
++                             and value['value'].get('type') == 'MC_MARKET_DETAIL'
++                             and not value['value'].get('currentStep'))},
+             'server_player_state': {key: protocol.get(key) for key in
+                                     ('abilities', 'equipmentEffects', 'trialRescue', 'profession')},
+             'protection': {key: (server.get('protection') or {}).get(key)
+@@ -182,6 +213,10 @@ class GameObservations:
+                 event['truncated'] = True
+             self.events[ident] = event
+             added.append(event)
++            details = event.get('data') or {}
++            if event.get('kind') == 'system' and isinstance(details, dict):
++                self.record_server_reply(details.get('solicitedCommand'), [event.get('text')],
++                                         event['observedAt'] / 1000)
+         for ident, event in list(self.events.items()):
+             retention = 300 if event.get('kind') in ('chat', 'whisper') else 120
+             if self.clock() - event['observedAt'] / 1000 > retention:
+@@ -190,10 +225,17 @@ class GameObservations:
+             victim = next((ident for ident, event in self.events.items()
+                            if event.get('kind') not in ('chat', 'whisper')), next(iter(self.events)))
+             self.events.pop(victim, None)
+-        if any(event.get('kind') not in ('actionbar', 'plugin_message', 'server_record')
++        # Solicited feedback is already returned to the calling model turn.
++        # It stays readable, but another query is not autonomous progress.
++        def affects_decision(event):
++            details = event.get('data') or {}
++            if (event.get('kind') in ('system', 'title', 'subtitle', 'protection', 'server_record')
++                    and isinstance(details, dict) and details.get('solicitedCommand')):
++                return False
++            return (event.get('kind') not in ('actionbar', 'plugin_message', 'server_record')
+                or (event.get('kind') == 'plugin_message' and isinstance(event.get('data'), dict) and
+-                   str(event['data'].get('channel', '')).endswith(':event'))
+-               for event in added):
++                   str(event['data'].get('channel', '')).endswith(':event')))
++        if any(affects_decision(event) for event in added):
+             self.decision_revision += 1
+         return added
+ 
+diff --git a/plugin/plugins/game_agent_minecraft/prompts.py b/plugin/plugins/game_agent_minecraft/prompts.py
+index b72e693..bece2a8 100644
+--- a/plugin/plugins/game_agent_minecraft/prompts.py
++++ b/plugin/plugins/game_agent_minecraft/prompts.py
+@@ -825,8 +825,8 @@ PROMPTS.update({
+         "en": "Use game chat only for genuine player replies, help or cooperation; keep tool calls/plans/progress local. You may initiate a private conversation with a real online player using minecraft_chat(player=...). Keep private replies private. Avoid repetition and stop nudging nonresponders; failed whispers never fall back to public chat.",
+     },
+     "AUTONOMOUS_DECISION_BODY": {
+-        "zh": "无人值守有效，停止/暂停优先。先处理危险、脱困和当前目标必需的装备；combat.melee={} 表示确认无剑/斧，安全后用现有材料补一把并验证产物，护甲/镐不算近战武器；null 是未知，先查。安全且够用后先核对并继续 serverPlay.focus 的委托，不因探矿回执转去挖煤；没有 focus 再从 routes 选居民事务、公会或试炼，不反复囤材料。沿用未完成玩法目标，每次执行一个短步骤：minecraft_task 操作，minecraft_server 按收到的指引推进；不要做完服务器操作又强行派采矿。serverPlay 只是入口，书页不是当前进度；查真实回执确认资格、接取、完成、领奖，未知先查所选玩法指引，不猜命令。失败换方法，可用已知回城技能或私聊求助。最多补查1项缺失事实，留一轮行动。自动挖掘检查仍禁止绕过 deny/unknown。",
+-        "en": "Unattended play is enabled; stop/pause wins. Resolve danger, escape and equipment needed for the current goal. combat.melee={} confirms no sword/axe: once safe, craft one from available supplies and verify the item; armor/pickaxes are not melee weapons. null means unknown: observe first. Once safe/equipped, verify and continue serverPlay.focus; incidental prospecting feedback is not a new goal. Without focus, choose village/guild/trial routes; do not stockpile indefinitely. Continue an unfinished gameplay goal one short step at a time: minecraft_task for movement/actions, minecraft_server for documented server actions. A server action need not be followed by mining. Routes/books are references, not current progress: verify eligibility, acceptance, completion and rewards from actual replies; read the selected guide rather than invent syntax. On failure change methods, use known recovery or private help. Query at most one missing fact, reserve an action round, never bypass deny/unknown.",
++        "zh": "无人值守有效，停止/暂停优先。先脱险、脱困、补必需装备；combat.melee={} 表示确认无剑/斧，安全后用现有材料补一把并验证产物，护甲/镐不算近战武器；null 是未知，先查。安全后先核对 serverPlay.activeReport 已接回执及时效；inspectedReference 仅是目录。否则核对 serverPlay.focus，不因探矿回执转去挖煤；没有 focus 再从 routes 选居民事务、公会或试炼，不反复囤材料。沿用未完成玩法目标，每次执行一个短步骤：minecraft_task 操作，minecraft_server 按收到的指引推进；服务器操作无需再派采矿。书页不是当前进度；查真实回执确认资格、接取、完成、领奖，未知先查所选玩法指引，不猜命令。失败换方法，可用已知回城技能或私聊求助。最多补查1项缺失事实，留一轮行动。自动挖掘检查仍禁止绕过 deny/unknown。",
++        "en": "Unattended play is enabled; stop/pause wins. Resolve danger, escape and equipment needed for the current goal. combat.melee={} confirms no sword/axe: once safe, craft one from available supplies and verify the item; armor/pickaxes are not melee weapons. null means unknown: observe first. Once safe/equipped, prefer the accepted-task reply in serverPlay.activeReport, verifying its age/progress. inspectedReference is only a browsed catalogue, never acceptance. Without an accepted-task reply, verify and continue serverPlay.focus; incidental prospecting feedback is not a new goal. Without focus, choose village/guild/trial routes; do not stockpile indefinitely. Continue an unfinished gameplay goal one short step at a time: minecraft_task for movement/actions, minecraft_server for documented server actions. A server action need not be followed by mining. Routes/books are references, not current progress: verify eligibility, acceptance, completion and rewards from actual replies; read the selected guide rather than invent syntax. On failure change methods, use known recovery or private help. Query at most one missing fact, reserve an action round, never bypass deny/unknown.",
+     },
+     "RECOVERY_POLICY": {
+         "zh": "先核对当前工具、木料和工作台，只解决一个可行的前置步骤。连续失败就改用已知脱困技能或私聊在线玩家求助；不要只换措辞重试，也别把等树长成等长链塞进短任务。停止/暂停优先。",
+diff --git a/plugin/plugins/game_agent_minecraft/server_play_context.py b/plugin/plugins/game_agent_minecraft/server_play_context.py
+index f53c414..c439add 100644
+--- a/plugin/plugins/game_agent_minecraft/server_play_context.py
++++ b/plugin/plugins/game_agent_minecraft/server_play_context.py
+@@ -17,7 +17,7 @@ _TOPICS = (
+ _COMMAND = re.compile(r'/mycli(?:[ \t]+(?:[a-z_][a-z0-9_:-]*|[0-9]+|<[a-z_][a-z0-9_]*>))*', re.I)
+ 
+ 
+-def received_play_routes(welcome, inventory, server=None, now=None):
++def received_play_routes(welcome, inventory, server=None, now=None, progress=None):
+     routes, ranks = {}, {}
+ 
+     def add(text, location):
+@@ -100,11 +100,21 @@ def received_play_routes(welcome, inventory, server=None, now=None):
+         if (type(stamp) in (int, float) and math.isfinite(stamp) and
+                 type(now) in (int, float) and math.isfinite(now)):
+             focus['ageSeconds'] = max(0, round(now - stamp / 1000))
+-    if not routes and not focus:
++    inspected = None
++    if focus and kind == 'MC_MARKET_DETAIL' and 'currentStep' not in focus:
++        # Current servers also send catalogue-only DETAIL packets. Merely
++        # browsing one must not replace an accepted, unfinished objective.
++        inspected = {key: focus[key] for key in ('id', 'title', 'ageSeconds') if key in focus}
++        focus = None
++    if not routes and not focus and not inspected and not progress:
+         return None
+     play = {'referenceOnly': True, 'routes': routes}
+     if focus:
+         play['focus'] = focus
++    if inspected:
++        play['inspectedReference'] = inspected
++    if progress:
++        play['activeReport'] = progress
+     return play
+ 
+ 
+@@ -118,6 +128,11 @@ def shorten_play_routes(play):
+             page = re.search(r'inventory slot=(\d+) page=(\d+)', route)
+             if page:
+                 play['routes'][topic] = f'inventory:{page[1]}:{page[2]}'
++    if play.get('activeReport'):
++        report = play['activeReport']
++        play['activeReport'] = {key: report[key] for key in ('command', 'messages', 'ageSeconds') if key in report}
++        # The actual status is more useful than an unrelated inspected ID.
++        play.pop('inspectedReference', None)
+     if play.get('focus'):
+         focus = play['focus']
+         play['focus'] = {key: focus[key] for key in ('id', 'currentStep', 'ageSeconds', 'ready') if key in focus}
+diff --git a/plugin/plugins/game_agent_minecraft/service.py b/plugin/plugins/game_agent_minecraft/service.py
+index 9aa73b7..751e091 100644
+--- a/plugin/plugins/game_agent_minecraft/service.py
++++ b/plugin/plugins/game_agent_minecraft/service.py
+@@ -1301,6 +1301,8 @@ class GameAgentService:
+             'messages': result.get('messages') or [], 'records': result.get('records') or [],
+         }, 6000)
+         entry['cacheTruncated'] = clipped
++        if result.get('status') not in ('failed', 'error', 'unavailable'):
++            self._game_observations.record_server_reply(entry['command'], result.get('messages'), entry['observedAt'])
+         self._server_command_history = [entry, *(item for item in self._server_command_history
+                                                 if item['command'] != entry['command'])][:3]
+         if self._pending is None and self._task_finished:
+diff --git a/plugin/plugins/game_agent_minecraft/test_adaptive_heartbeat.py b/plugin/plugins/game_agent_minecraft/test_adaptive_heartbeat.py
+index a1496ea..10a6f0b 100644
+--- a/plugin/plugins/game_agent_minecraft/test_adaptive_heartbeat.py
++++ b/plugin/plugins/game_agent_minecraft/test_adaptive_heartbeat.py
+@@ -7,6 +7,31 @@ from .service import GameAgentService
+ 
+ 
+ class AdaptiveHeartbeatTests(unittest.IsolatedAsyncioTestCase):
++    async def test_repeated_solicited_catalogues_do_not_restart_idle_decision_backoff(self):
++        clock = [1000.0]
++        service, calls = self.service(clock)
++
++        async def step(_):
++            clock[0] += .5
++            if clock[0] > 1090:
++                raise asyncio.CancelledError
++            if clock[0] % 2 == 0:
++                data = self.frame(clock, int(clock[0]))
++                data['recentEvents'] = [{'id': f'reply-{clock[0]}', 'kind': 'system',
++                    'text': '任务目录：亲手收割，再补种', 'observedAt': clock[0] * 1000,
++                    'data': {'solicitedCommand': '/mycli guild market tm_carrots'}}]
++                data['state']['server']['channels']['mcagent:market'] = {
++                    'observedAt': clock[0] * 1000, 'value': {'type': 'MC_MARKET_DETAIL',
++                        'id': 'tm_carrots', 'steps': [{'index': 1, 'goal': 'harvest', 'target': 10}]}}
++                await service._on_game_state(data)
++
++        module = 'plugin.plugins.game_agent_minecraft.service'
++        with patch(module + '.time.time', lambda: clock[0]), patch(module + '.asyncio.sleep', step):
++            await service._system_prompt_loop()
++        wakes = [stamp - 1000 for stamp, call in calls if call['ai_behavior'] == 'respond']
++        self.assertEqual(wakes, [10.0, 40.0])
++        self.assertTrue(service._game_observations.events, 'query feedback must remain observable')
++
+     def service(self, clock):
+         calls = []
+         service = GameAgentService(logger=None, push_message_fn=lambda **kw: calls.append((clock[0], kw)))
+diff --git a/plugin/plugins/game_agent_minecraft/test_query_progress.py b/plugin/plugins/game_agent_minecraft/test_query_progress.py
+new file mode 100644
+index 0000000..b47a0f1
+--- /dev/null
++++ b/plugin/plugins/game_agent_minecraft/test_query_progress.py
+@@ -0,0 +1,98 @@
++"""Queries are references; accepted-task reports and physical progress are distinct."""
++import copy
++import json
++import unittest
++
++from utils.tokenize import count_tokens
++
++from .observations import GameObservations
++from .test_server_play_context import gameplay_frame
++
++
++class QueryProgressTests(unittest.TestCase):
++    def info(self):
++        self.clock = [1000.0]
++        info = GameObservations(clock=lambda: self.clock[0])
++        self.data = gameplay_frame()
++        self.data['observedAt'] = 1000000
++        self.data['recentEvents'] = []
++        info.ingest_state(self.data)
++        return info
++
++    def event(self, ident, command=None, kind='system', text='任务目录说明'):
++        return {'id': ident, 'kind': kind, 'text': text, 'observedAt': self.clock[0] * 1000,
++                'data': {'solicitedCommand': command} if command else {}}
++
++    def events(self, info, events):
++        info.ingest_events({**self.data, 'events': events})
++
++    def test_solicited_query_replies_remain_readable_without_resetting_idle_backoff(self):
++        info = self.info()
++        revision = info.decision_revision
++        self.events(info, [self.event(str(i), '/mycli guild market tm_carrots') for i in range(3)])
++        self.assertEqual(info.decision_revision, revision)
++        self.assertEqual(len(info.events), 3)
++
++    def test_private_chat_and_unsolicited_denial_still_wake_decisions(self):
++        info = self.info()
++        for event in (self.event('private', kind='whisper', text='NEKO 要帮忙吗'),
++                      self.event('denied', text='无法破坏受保护建筑')):
++            revision = info.decision_revision
++            self.events(info, [event])
++            self.assertGreater(info.decision_revision, revision)
++
++    def test_inspected_catalogue_is_not_an_active_goal_or_physical_progress(self):
++        info = self.info()
++        for seq, ident in ((2, 'tm_wheat'), (3, 'tm_carrots')):
++            data = copy.deepcopy(self.data)
++            data['seq'] = seq
++            data['state']['server']['channels']['mcagent:market'] = {
++                'observedAt': 1000000, 'value': {'type': 'MC_MARKET_DETAIL', 'id': ident,
++                'title': '未确认接取的任务', 'steps': [{'index': 1, 'goal': 'harvest', 'target': 10}]}}
++            revision = info.decision_revision
++            info.ingest_state(data)
++            self.assertEqual(info.decision_revision, revision)
++        play = info.focused_view()['serverPlay']
++        self.assertNotIn('focus', play)
++        self.assertEqual(play['inspectedReference']['id'], 'tm_carrots')
++
++    def test_actual_progress_report_survives_unrelated_queries_and_small_capsule(self):
++        info = self.info()
++        progress = '正在进行：青禾的麦田约定 · 1/3 收割成熟小麦 [4/8]'
++        self.events(info, [self.event('guild-status', '/mycli guild status', text=progress)])
++        self.clock[0] += 2
++        self.events(info, [self.event('catalogue', '/mycli guild market tm_carrots')])
++        for budget in (700, 400):
++            text = info.focused_context(max_tokens=budget)
++            play = json.loads(text.split('\n', 1)[1])['serverPlay']
++            self.assertIn(progress, str(play.get('activeReport')))
++            self.assertLessEqual(count_tokens(text), budget)
++        self.clock[0] += 130
++        self.events(info, [])  # Short-lived event list is not the progress-report cache.
++        self.assertIn(progress, str(info.server_progress()))
++
++    def test_progress_report_expires_and_never_crosses_game_sessions(self):
++        info = self.info()
++        self.events(info, [self.event('status', '/mycli guild status', text='正在进行：小麦 [4/8]')])
++        self.assertIsNotNone(info.server_progress())
++        self.clock[0] += 601
++        self.assertIsNone(info.server_progress())
++        self.clock[0] = 1001
++        self.data['sessionId'] = 'new-game-session'
++        info.ingest_state(self.data)
++        self.assertIsNone(info.server_progress())
++
++    def test_real_check_progress_is_still_a_decision_change(self):
++        info = self.info()
++        data = copy.deepcopy(self.data)
++        data['seq'] = 2
++        data['state']['server']['channels']['mcagent:market'] = {
++            'value': {'type': 'MC_MARKET_CHECK', 'task': 'tm_wheat', 'step': 1,
++                      'progress': 4, 'ready': False}}
++        revision = info.decision_revision
++        info.ingest_state(data)
++        self.assertGreater(info.decision_revision, revision)
++
++
++if __name__ == '__main__':
++    unittest.main()
+-- 
+2.55.0.windows.5
+
