@@ -1364,6 +1364,13 @@ const modes_list = [
         // rock; cap the head; seal open sides; blockless L-niche fallback when naked).
         bunkerDown: async function (agent) {
             const bot = agent.bot;
+            // The retreat may become boxed after shouldFlee admitted it. Reuse
+            // its non-damaging unreachable-threat handoff before digging and
+            // inside the running kite, so recovery can regain the body. Actual
+            // recent damage and close creepers must retain emergency priority.
+            const yieldBlockedRetreat = () => Date.now() - (bot.lastDamageTime || 0) >= 4000
+                && !this.nearestCreeper(bot, 8) && rangedUnreachableTrap(bot);
+            if (yieldBlockedRetreat()) return;
             // ★OSCILLATION BREAKER (the 300ms "securing ↔ Can't seal ↔ running" thrash,
             // 03:47, 13min of standstill): with NO mobs around, a failed bunker re-fired
             // every mode tick, and each refire's interrupt starved the skill layer
@@ -1690,6 +1697,7 @@ const modes_list = [
                 try { bot.interrupt_code = false; } catch (e) {}
                 for (let kited = 0; kited < 4000 && !this.isDay(bot); kited++) {
                     if (bot.interrupt_code || bot.health <= 0) break;     // real stop / death — return promptly
+                    if (yieldBlockedRetreat()) break;
                     // Only bail to the swim reflex if we're ACTUALLY DROWNING (low O2). Do NOT
                     // bail on merely standing in a shallow water-edge tile — that made the kite
                     // exit instantly at the water-edge spawn → re-bunker → kite → exit → a new
