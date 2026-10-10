@@ -3,7 +3,17 @@ import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
-import { consumeSse, safeBaseUrl, summarize, resultMetadata, validateResponse } from '../scripts/lib/inference-benchmark.mjs';
+import { consumeSse, safeBaseUrl, summarize, resultMetadata, validateResponse, memoryFloorDecision } from '../scripts/lib/inference-benchmark.mjs';
+
+test('opt-in memory floor stops new work at pressure or unknown readings, without changing the default', () => {
+    const total = 64 * 2**30;
+    assert.equal(memoryFloorDecision({ram_total:total,ram_used:total-100*2**20},0).stop,false);
+    assert.equal(memoryFloorDecision({ram_total:total,ram_used:total-100*2**20},2560).stop,true);
+    assert.equal(memoryFloorDecision({ram_total:total,ram_used:total-2560*2**20},2560).stop,false);
+    assert.equal(memoryFloorDecision({ram_total:total,ram_used:total+1},2560).reason,'memory_unknown');
+    assert.equal(memoryFloorDecision(null,2560).stop,true);
+    assert.throws(()=>memoryFloorDecision(null,-1));
+});
 
 test('benchmark refuses non-loopback, credentials and URL decorations', () => {
     assert.equal(safeBaseUrl('http://127.0.0.1:18030/v1'), 'http://127.0.0.1:18030');

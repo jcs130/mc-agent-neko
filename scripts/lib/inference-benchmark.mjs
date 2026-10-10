@@ -8,6 +8,16 @@ export function safeBaseUrl(value) {
     return url.origin;
 }
 
+export function memoryFloorDecision(memory, minFreeMib = 0) {
+    if (!Number.isSafeInteger(minFreeMib) || minFreeMib < 0) throw Error('Invalid memory floor');
+    const valid = Number.isSafeInteger(memory?.ram_total) && memory.ram_total > 0
+        && Number.isSafeInteger(memory?.ram_used) && memory.ram_used >= 0 && memory.ram_used <= memory.ram_total;
+    const availableMib = valid ? (memory.ram_total - memory.ram_used) / 1048576 : null;
+    const reason = minFreeMib === 0 ? 'disabled' : !valid ? 'memory_unknown'
+        : availableMib < minFreeMib ? 'below_floor' : 'ok';
+    return { stop:['memory_unknown','below_floor'].includes(reason), reason, available_mib:availableMib, min_free_mib:minFreeMib };
+}
+
 export async function consumeSse(response, now = () => performance.now()) {
     if (!response.ok) throw new Error('http_' + response.status);
     const decoder = new TextDecoder();

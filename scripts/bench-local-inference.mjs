@@ -3,18 +3,20 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
-import { safeBaseUrl, consumeSse, validateResponse, resultMetadata, summarize, createWorkload } from './lib/inference-benchmark.mjs';
+import { safeBaseUrl, consumeSse, validateResponse, resultMetadata, summarize, createWorkload, memoryFloorDecision } from './lib/inference-benchmark.mjs';
 
 const args = Object.fromEntries(process.argv.slice(2).reduce((pairs, value, i, all) => {
     if (value.startsWith('--')) pairs.push([value.slice(2), all[i+1]]); return pairs;
 }, []));
 if (!args.label || !args.out) {
-    console.error('Usage: node scripts/bench-local-inference.mjs --label NAME --out FILE --expect-slots N [--rounds 4] [--url http://127.0.0.1:18030]');
+    console.error('Usage: node scripts/bench-local-inference.mjs --label NAME --out FILE --expect-slots N [--rounds 4] [--min-free-mib 2560] [--url http://127.0.0.1:18030]');
     process.exit(2);
 }
 const base = safeBaseUrl(args.url || 'http://127.0.0.1:18030');
 const rounds = Number(args.rounds || 4), expectedSlots = Number(args['expect-slots'] || 1);
+const minFreeMib = Number(args['min-free-mib'] || 0);
 if (!Number.isInteger(rounds) || rounds < 1 || rounds > 30 || ![1,2,3,4].includes(expectedSlots)) throw Error('Invalid rounds or expected slots');
+memoryFloorDecision(null,minFreeMib); // Validate the opt-in threshold before sending any inference.
 const json = async route => {
     const reply = await fetch(base + route, { signal:AbortSignal.timeout(5000) });
     if (!reply.ok) throw Error('metadata_http_' + reply.status);
@@ -42,7 +44,7 @@ const destination = path.resolve(args.out);
 const save = async () => {
     await mkdir(path.dirname(destination),{recursive:true});
     await writeFile(destination,JSON.stringify({schema:1,label:args.label,checkedAt:new Date().toISOString(),
-        rounds,lead_ms:400,warmup_fixtures:workload.fixtureCount,
+        rounds,lead_ms:400,warmup_fixtures:workload.fixtureCount,min_free_mib:minFreeMib,
         settings:{temperature:0,top_p:1,seed:1234,reasoning_effort:'none',explicit_prefix:false},
         baseline,groups,records:rows,summary:summarize(rows)},null,2)+'\n');
 };
@@ -63,6 +65,12 @@ async function request(fixture, scenario, round, phase, generation) {
 }
 async function runGroup(scenario, round, phase) {
     const before = await waitIdle();
+    const initialFloor = memoryFloorDecision(before.memory,minFreeMib);
+    if (initialFloor.stop) {
+        groups.push({scenario,round,phase,before,after:null,contaminated:true,memory_floor:initialFloor,error:'memory_floor'});
+        await save();
+        throw Error('Memory floor unavailable or crossed; no new synthetic requests sent');
+    }
     const peaks = { ram_used:before.memory.ram_used, gpu_mem_used:before.memory.gpu_mem_used, samples:0, errors:0 };
     let polling = false;
     let lastPoll = Promise.resolve();
@@ -94,19 +102,21 @@ async function runGroup(scenario, round, phase) {
     } finally { clearInterval(sampler); await lastPoll; }
     // Persist completed requests even if the engine disappears before the final boundary.
     for (const row of results) { row.contaminated=true; rows.push(row); }
+    const floor = memoryFloorDecision({ram_total:before.memory.ram_total,ram_used:peaks.ram_used},minFreeMib);
     let after;
-    try { after=await waitIdle(); }
+    try { after=floor.stop ? await snapshot() : await waitIdle(); }
     catch {
         groups.push({scenario,round,phase,before,after:null,peaks,contaminated:true,error:'idle_boundary_lost'});
         await save();
         throw Error('Final idle boundary lost; completed request metadata retained');
     }
-    const contaminated=after.started!==before.started || after.totalRequests-before.totalRequests!==results.length;
+    const contaminated=floor.stop || after.started!==before.started || after.totalRequests-before.totalRequests!==results.length;
     for(const row of results) row.contaminated=contaminated;
-    groups.push({scenario,round,phase,before,after,peaks,contaminated});
+    groups.push({scenario,round,phase,before,after,peaks,contaminated,memory_floor:floor,...(floor.stop?{error:'memory_floor'}:{})});
     await save();
     console.log(JSON.stringify({label:args.label,scenario,round,phase,contaminated,
         results:results.map(row=>({type:row.call_type,ms:row.client_roundtrip_ms,quality:row.quality_ok,new:row.new_input_tokens,output:row.output_tokens}))}));
+    if (floor.stop) throw Error('Observed memory floor crossed; completed metadata retained, new synthetic calls stopped');
 }
 let exitCode=0;
 try {
