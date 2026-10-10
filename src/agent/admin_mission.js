@@ -584,8 +584,11 @@ export class AdminMission {
         // argument or changed answer breaks the streak. Do not truncate evidence
         // into a false match; oversized/empty results are deliberately excluded.
         const invocation = JSON.stringify([parsed.commandName, parsed.args || []]);
+        const bodyBusy = this.agent.actions?.executing || this.agent.actions?.currentActionLabel
+            || this.agent.supervised_skill || this.agent.bot?._currentSkill || this.agent.bot?.targetDigBlock
+            || this.agent.bot?.usingHeldItem || this.agent.bot?.isSleeping;
         if (!model || !query || typeof result !== 'string' || !result.trim()
-            || result.length > 12000 || invocation.length > 512) {
+            || result.length > 12000 || invocation.length > 512 || bodyBusy) {
             mission.queryLoop = null;
             return null;
         }

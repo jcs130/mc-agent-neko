@@ -71,6 +71,19 @@ test('an executed action or an explicit player command breaks a model query stre
     assert.equal(mission.isActive(), true);
 });
 
+test('query replies cannot end a legitimate long action, wait, dig or survival reflex', async () => {
+    const { agent, mission, finishes, execute } = harness();
+    mission._handoff({ text: '等待采集完成', taskId: 'busy-queries', origin: 'ws' });
+    for (const busy of [() => { agent.actions = { executing: true }; },
+        () => { agent.actions = { currentActionLabel: 'mode:self_preservation' }; },
+        () => { agent.actions = {}; agent.bot.targetDigBlock = {}; }]) {
+        busy();
+        for (let i = 0; i < 6; i++) await execute(agent, '!stats', () => {});
+    }
+    assert.equal(finishes.length, 0);
+    assert.equal(mission.isActive(), true);
+});
+
 test('model cannot finish a fresh task before any game result or measured change', async () => {
     const { agent, mission, finishes, execute } = harness();
     mission._handoff({ text: '存入泥土', taskId: 'unobserved', origin: 'ws' });
