@@ -23,7 +23,7 @@ function fixture({ weapon = false, armor = true, mobs = [['zombie', 3]], hurt = 
         settings: { proactive_night_shelter: true },
         mc: { isHostile: entity => entity.type === 'hostile' },
         hasMeleeWeapon, threatCanReachBot: (body, entity) => threatCanReachBot(body, entity, now),
-        commandedFightActive: () => false, rangedUnreachableTrap: () => false,
+        commandedFightActive: () => false,
         isFutileMob: () => false, unblacklistAttackers() {}, say() {},
         execute: mode => calls.push(mode.name),
         world: { getNearestEntityWhere: (body, predicate, range) => Object.values(body.entities)
@@ -32,8 +32,9 @@ function fixture({ weapon = false, armor = true, mobs = [['zombie', 3]], hurt = 
     });
     const source = readFileSync(new URL('../src/agent/modes.js', import.meta.url), 'utf8');
     const solo = source.slice(source.indexOf('function armoredSoloBrawl('), source.indexOf('function rangedUnreachableTrap('));
+    const trap = source.slice(source.indexOf('function rangedUnreachableTrap('), source.indexOf('\n// ★C360', source.indexOf('function rangedUnreachableTrap(')));
     const list = source.slice(source.indexOf('const modes_list = ['), source.indexOf('async function execute('));
-    vm.runInContext(solo + list + '\nglobalThis.modes = modes_list;', context);
+    vm.runInContext(solo + trap + list + '\nglobalThis.modes = modes_list;', context);
     const preservation = context.modes.find(mode => mode.name === 'self_preservation');
     preservation.coveredNightHoldStatus = () => ({ hold: false });
     const defense = context.modes.find(mode => mode.name === 'self_defense');
@@ -100,6 +101,43 @@ test('stale or contradicted wall evidence cannot suppress a real threat', async 
         await f.defend();
         assert.deepEqual(f.calls, ['self_defense']);
     }
+});
+
+function observeBox(bot, ts = 99500) {
+    bot._mobility = { state: 'FREE', exits: [], enclosed: false };
+    bot._world = { ts, mobility: { state: 'ENTOMBED', exits: [], enclosed: false } };
+}
+
+test('fresh boxed geometry yields futile retreat to recovery despite a stale FREE mode', async () => {
+    const f = fixture({ mobs: [['zombie', 0.4]] });
+    observeBox(f.bot);
+    assert.equal(f.preservation.shouldFlee(f.bot), false);
+    await f.defend();
+    assert.deepEqual(f.calls, [], 'a non-damaging boxed threat must leave the body for escape');
+    assert.equal(f.bot._mobility.state, 'FREE', 'policy must not rewrite physical telemetry');
+});
+
+test('boxed retreat handoff cannot suppress actual damage or a nearby creeper', () => {
+    for (const options of [{ hurt: true, mobs: [['zombie', 0.4]] }, { hurt: true, mobs: [['skeleton', 3]] }, { mobs: [['creeper', 3], ['zombie', 0.4]] }]) {
+        const f = fixture(options);
+        observeBox(f.bot);
+        assert.equal(f.preservation.shouldFlee(f.bot), true);
+    }
+});
+
+test('stale or future world geometry cannot override a current open mobility mode', () => {
+    for (const ts of [94000, 100001]) {
+        const f = fixture({ mobs: [['zombie', 0.4]] });
+        observeBox(f.bot, ts);
+        assert.equal(f.preservation.shouldFlee(f.bot), true);
+    }
+});
+
+test('fresh open geometry overrides an obsolete trapped mode during retreat selection', () => {
+    const f = fixture({ mobs: [['zombie', 0.4]] });
+    f.bot._mobility = { state: 'ENTOMBED', exits: [], enclosed: false };
+    f.bot._world = { ts: 99500, mobility: { state: 'FREE', exits: [[1, 0]], enclosed: false } };
+    assert.equal(f.preservation.shouldFlee(f.bot), true);
 });
 
 test('creepers retain retreat priority and are never melee combat targets', async () => {

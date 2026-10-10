@@ -308,7 +308,14 @@ function rangedUnreachableTrap(bot) {
         // 之后, self_defense 一开机就 engage(active=true) → ModeController break → mobility
         // 永远没跑过一拍 → 本函数读 undefined → trapped=false → 永不 disengage → 死锁自锁.
         // 修: 回退到 bot._world.mobility(always:true 观察者自算, 不可能被饿死, 5568).
-        const mobSrc = bot._mobility || (bot._world && bot._world.mobility) || null;
+        // The action-mode state can remain FREE while an earlier reflex owns
+        // every tick. The always-on observer independently samples geometry;
+        // prefer that fresh observation, without rewriting either state source.
+        const observedWorld = bot._world;
+        const now = Date.now();
+        const freshWorld = Number.isFinite(observedWorld?.ts) && observedWorld.ts <= now
+            && now - observedWorld.ts < 5000;
+        const mobSrc = (freshWorld && observedWorld.mobility) || bot._mobility || null;
         const mob = (mobSrc && mobSrc.state) || '';
         const enclosed = !!(mobSrc && mobSrc.enclosed);
         const noExit = !!(mobSrc && Array.isArray(mobSrc.exits) && mobSrc.exits.length === 0);
@@ -925,6 +932,10 @@ const modes_list = [
             const hasWeapon = hasMeleeWeapon(bot);
             const hasShield = bot.inventory.items().some(i => i.name === 'shield') || (bot.inventory.slots[45] && bot.inventory.slots[45].name === 'shield');
             const recentlyHurt = Date.now() - bot.lastDamageTime < 3000;
+            // Repeated bunkering cannot open a sealed pocket. Share combat's
+            // existing confinement handoff so mobility can breach an exit.
+            // Actual damage and the creeper branch above retain priority.
+            if (Date.now() - (bot.lastDamageTime || 0) >= 4000 && rangedUnreachableTrap(bot)) return false;
             // A distant melee mob still permits bootstrap work via the distance
             // gate below. Once it closes in or deals damage, an unarmed body
             // must retreat: self_defense requires a real melee weapon.
