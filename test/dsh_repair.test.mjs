@@ -50,11 +50,12 @@ test('repair comments are confirmed, retryable and idempotent without changing t
 });
 
 test('failed writes and post-repair recurrence remain pending for a maintainer', async () => {
-    for (const current of [ticket, { ...ticket, occurrences: 3 }]) {
-        let saved;
+    for (const current of [ticket, { ...ticket, occurrences: 3 }, { ...ticket, occurrences: 1 }]) {
+        let saved, posts = 0;
         const result = await repair.recordRepair({ receipt, read: async () => current, save: value => { saved = value; },
-            post: async () => { if (current.occurrences > 2) assert.fail('must not acknowledge a new recurrence'); throw new Error('HTTP 500'); } });
+            post: async () => { posts++; throw new Error('HTTP 500'); } });
         assert.equal(result.writeback.state, 'pending');
         assert.equal(saved.writeback.state, 'pending');
+        assert.equal(posts, current.occurrences === 2 ? 1 : 0);
     }
 });

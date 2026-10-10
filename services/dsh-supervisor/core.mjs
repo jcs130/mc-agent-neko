@@ -7,15 +7,16 @@ export const MODEL = 'qwen3.8-flash-next-iq3_xxs';
 export const MODEL_URL = 'http://127.0.0.1:18030/v1';
 
 export function roleSchema(role, evidenceIds = [], issueKeys = []) {
-    const text = { type: 'string' }, ids = { type: 'array', maxItems: 3, items: evidenceIds.length ? { ...text, enum: evidenceIds } : text };
+    // DSH enforces a schema subset: maxItems and array const are unsupported.
+    // The coordinator always intersects accepted keys with actual candidates.
+    const text = { type: 'string' }, ids = { type: 'array', items: evidenceIds.length ? { ...text, enum: evidenceIds } : text };
     const object = properties => ({ type: 'object', properties, required: Object.keys(properties), additionalProperties: false });
     if (role === 'observer') return object({ summary: text, issues: { type: 'array', items: object({
         key: text, title: text, severity: text, scope: { ...text, enum: ['current', 'execution'] }, detail: text, evidenceIds: ids,
     }) } });
     if (role === 'diagnoser') return object({ summary: text, evidenceIds: ids });
     if (role === 'reviewer') return object({ decision: { ...text, enum: ['accept', 'reject', 'uncertain'] },
-        acceptedKeys: { type: 'array', items: issueKeys.length ? { ...text, enum: issueKeys } : text,
-            maxItems: issueKeys.length }, evidenceIds: ids, summary: text });
+        acceptedKeys: { type: 'array', items: issueKeys.length ? { ...text, enum: issueKeys } : text }, evidenceIds: ids, summary: text });
     throw new Error('Unknown supervisor role');
 }
 

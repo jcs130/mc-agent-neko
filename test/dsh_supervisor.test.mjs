@@ -148,7 +148,8 @@ test('reviewer accepts issue keys, not evidence IDs, and cannot invent candidate
     const schema = roleSchema('reviewer', ['native.execution.123'], ['pinned-forced-kick']);
     assert.deepEqual(schema.properties.acceptedKeys.items.enum, ['pinned-forced-kick']);
     assert.deepEqual(schema.properties.evidenceIds.items.enum, ['native.execution.123']);
-    assert.equal(roleSchema('reviewer', ['game.self'], []).properties.acceptedKeys.maxItems, 0);
+    const evidence = buildEvidence(frame, null, null, NOW);
+    assert.deepEqual(approvedIssues([], { decision: 'accept', acceptedKeys: ['invented'], evidenceIds: ['game.self'] }, evidence, evidence, NOW), []);
 });
 
 test('reviewed tickets rotate instead of revisiting the first ticket forever', () => {

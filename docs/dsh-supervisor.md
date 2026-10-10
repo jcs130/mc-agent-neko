@@ -104,11 +104,13 @@ CLI 验证提交确实存在、证据文件存在且非空，计算 SHA-256。�
 
 ```powershell
 node --test test/dsh_supervisor.test.mjs
+node --test test/dsh_audit.test.mjs test/dsh_repair.test.mjs test/dsh_schema_compat.test.mjs
 node --check services/dsh-supervisor/app.mjs
 # 实际模型验收，透明转发本机请求并只记录模型名、思考开关等元数据。
 node services/dsh-supervisor/verify.mjs D:\neko-mc-trial\mc-agent-neko D:\neko-mc-trial\runtime\dsh-verification
 ```
 
 单元回归覆盖本机路由、模型忙碌让路、证据预算、任务指引保留、过期/跨会话拒绝、复核引用和事件冷却。
+本机已安装 DSH 时，兼容回归直接调用其实际 schema 校验器；未安装时只跳过该集成项。该版本不支持 `maxItems` 或数组 `const`，候选数量和引用预算由提示及协调器校验控制，不能随意增加标准 JSON Schema 关键字。
 `-Once` 的真实模型验收必须同时检查两个或三个独立子会话均 `completed`、报告中的证据来自当前游戏、游戏没有被派发诊断任务。
 只有角色真实执行过才能计入 `roleRuns`；未触发诊断员时不冒称诊断员已经实测。

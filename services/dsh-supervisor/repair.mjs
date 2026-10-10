@@ -66,7 +66,7 @@ export async function recordRepair({ receipt, read, post, save }) {
     try {
         const ticket = await read(receipt.ticketId);
         if (ticket.id !== receipt.ticketId) throw new Error('Wrong ticket returned');
-        if ((ticket.occurrences ?? 1) > receipt.ticketOccurrences) throw new Error('Ticket recurred after repair baseline; inspect again');
+        if ((ticket.occurrences ?? 1) !== receipt.ticketOccurrences) throw new Error('Ticket recurrence baseline changed or is invalid; inspect again');
         const confirmed = value => value?.id === receipt.ticketId && typeof value.updatedAt === 'string'
             && value.history?.some(item => item.actor === 'hourly-maintainer' && item.note?.includes(tag));
         if (confirmed(ticket)) result.writeback = { state: 'written', updatedAt: ticket.updatedAt, duplicate: true };
