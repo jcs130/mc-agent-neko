@@ -51,10 +51,17 @@ function ordinaryGoalAfterDocs(prompt) {
 
 export function executionPromptHistory(turns, agent) {
     if (!externalMission(agent)) return turns;
-    // These native loop reminders repeat the task already pinned above. They
-    // contain no new observations; preserve all user text and actual results.
-    return turns.filter(turn => !(turn.role === 'system'
-        && turn.content.startsWith('You are self-prompting with the goal:')));
+    const nativeLoopTurn = turn => turn?.role === 'system'
+        && turn.content.startsWith('You are self-prompting with the goal:');
+    // Older reminders duplicate the authoritative task pinned above. The newest
+    // trigger still starts a NEW execution turn: dropping it after a prose reply
+    // leaves the request ending in that assistant plan, encouraging repetition.
+    const projected = turns.filter(turn => !nativeLoopTurn(turn));
+    if (nativeLoopTurn(turns.at(-1))) projected.push({ role: 'system', content:
+        'EXECUTION TURN: Continue only the CURRENT TASK above. Reply with the next documented !commandName(parameters), '
+        + 'or !endGoal only after verified success, or !cannotComplete("reason") with actual blocking evidence. '
+        + 'A prose plan is not an executed action. Do not repeat prior narration.' });
+    return projected;
 }
 
 export function sanitizeMemorySummary(value) {

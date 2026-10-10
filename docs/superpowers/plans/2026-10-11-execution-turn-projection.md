@@ -1,0 +1,11 @@
+# Retain the current native execution turn
+
+Evidence at 05:22 Beijing: a real iron-sword task produced the same prose plan across the initial response, three native self-prompts and the no-progress adjudication, with no executable command. Other tasks still issue commands and the character moves, so this is not a continuous process freeze. Local connection errors around 05:15 recovered without restarting the model; do not conflate them with the earlier prose loop.
+
+Trace the model-facing history projection, not just raw logs: external missions remove every native self-prompt, including the newest request to issue the next command. After a prose response, the projected history can therefore end in that assistant response. Retain a compact, stable execution-turn contract only when the newest raw turn is the native loop trigger. Continue removing older duplicate goal reminders; the authoritative current goal stays in the existing task section. Ordinary conversation, human text, real results, tools, safety/stop rules, model parameters and cadence remain unchanged.
+
+Before the source edit, reproduce the missing final execution turn through the production Prompter and the actual GPT HTTP-body builder with fake transport. Verify the compact instruction reaches the final user turn, older reminders disappear, no stale task text is restored, non-loop conversation is unchanged and the projection does not mutate archived history. Run related native lifecycle and complete contribution regression checks.
+
+Record ticket occurrences before repair, commit to the existing user fork, and load only at a legitimate daytime safe idle boundary. Preserve the main service, model, TTS and MindServer. Observe natural commands and subsequent outcomes without injecting a test game task. No command-syntax pass, movement or prose-loop exit alone proves toolkit/commission completion; leave runtime acceptance pending if the natural incident is not exercised.
+
+Verification before deployment: the two missing-turn cases fail on the old implementation (15 pass / 2 fail). After the projection change, the related ownership/lifecycle/batch/context suite passes 62/62 in both repositories, and the full contribution suite including bots tests passes 718/718. These checks establish request construction and regression safety, not actual model task success.

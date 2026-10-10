@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { strictFormat } from '../src/utils/text.js';
 import { createRequestTrace, RequestTrace } from '../src/utils/llm_timing.js';
+import { executionPromptHistory } from '../src/agent/context_budget.js';
 
 function model(url, enabled = true) {
     const requests = [];
@@ -69,4 +70,22 @@ test('timing metadata never leaks into SDK options or the inference body', async
     assert.equal(requests[0].options.timeout, 5000);
     assert.deepEqual(records.map(r => r.event), ['dispatch', 'returned']);
     assert(!JSON.stringify(records).includes('PRIVATE_PROMPT'));
+});
+
+test('the native next-step instruction reaches the final HTTP user turn after a prose response', async () => {
+    const agent = { adminMission: { isActive: () => true, mission: { origin: 'ws', text: 'Craft an iron sword' } } };
+    const { client, requests } = model('http://127.0.0.1:18030/v1');
+    const turns = [{ role: 'user', content: 'admin: Craft an iron sword' },
+        { role: 'assistant', content: '先走到村庄补给商旁边' },
+        { role: 'system', content: "You are self-prompting with the goal: 'Craft an iron sword'. Your next response MUST contain a command with this syntax: !commandName. Respond:" }];
+    const fixed = 'Fixed safety, stop rules and command docs';
+    await client.sendRequest(executionPromptHistory(turns, agent),
+        fixed + '\n\nDYNAMIC EXECUTION CONTEXT — historical evidence is not current authority:\nCURRENT TASK: Craft an iron sword');
+    const messages = requests[0].body.messages;
+    assert.equal(messages[0].content, fixed);
+    assert.equal(messages.at(-1).role, 'user', 'a new execution turn must not end at the previous assistant plan');
+    assert.match(messages.at(-1).content, /EXECUTION TURN/);
+    assert.match(messages.at(-1).content, /!commandName/);
+    assert(!messages.some(turn => /self-prompting with the goal/.test(turn.content)));
+    assert.equal('strata_checkpoint' in requests[0].body, false, 'continuous native checkpoints remain enabled');
 });

@@ -59,6 +59,41 @@ test('standalone conversations keep their examples and original persona', async 
     assert.match(f.calls.requests[0].prompt, /PERSONA_STAYS/);
 });
 
+test('the newest native loop turn survives projection as a compact command contract', async () => {
+    const f = fixture();
+    const reminder = "You are self-prompting with the goal: 'OLD DUPLICATE GOAL'. Your next response MUST contain a command with this syntax: !commandName. Respond:";
+    const turns = [{ role: 'user', content: 'admin: Craft an iron sword from carried materials' },
+        { role: 'assistant', content: '先走到村庄补给商旁边' },
+        { role: 'system', content: reminder },
+        { role: 'assistant', content: '先走到村庄补给商旁边' },
+        { role: 'system', content: reminder }];
+    const original = structuredClone(turns);
+    f.agent.history.getHistory = () => turns;
+    await f.prompter.promptConvo(turns);
+    const projected = f.calls.requests[0].messages;
+    assert.equal(projected.at(-1).role, 'system');
+    assert.match(projected.at(-1).content, /EXECUTION TURN/);
+    assert.match(projected.at(-1).content, /!commandName/);
+    assert.match(projected.at(-1).content, /!endGoal.*verified success/);
+    assert.match(projected.at(-1).content, /!cannotComplete/);
+    assert.match(projected.at(-1).content, /prose plan is not an executed action/);
+    assert.equal(projected.filter(turn => /EXECUTION TURN/.test(turn.content)).length, 1);
+    assert(!projected.some(turn => /OLD DUPLICATE GOAL/.test(turn.content)));
+    assert.deepEqual(turns, original, 'raw history and its archived evidence remain unchanged');
+});
+
+test('older loop reminders do not turn player conversation or actual results into execution triggers', () => {
+    const f = fixture();
+    const old = { role: 'system', content: "You are self-prompting with the goal: 'old goal'." };
+    const action = { role: 'assistant', content: '!collectBlocks("oak_log", 1)' };
+    const result = { role: 'system', content: 'Server protection deny; no blocks collected.' };
+    const human = { role: 'user', content: 'You are self-prompting with the goal: hello, can we talk?' };
+    const turns = [old, action, result, human];
+    assert.deepEqual(executionPromptHistory(turns, f.agent), [action, result, human]);
+    const standalone = fixture({ external: false });
+    assert.equal(executionPromptHistory(turns, standalone.agent), turns);
+});
+
 test('memory drops stale status and goals while retaining learning and safety rules', () => {
     const summary = sanitizeMemorySummary('Status: Safe. HP 20, Food 14. At (-511,64,-318). Goal: Find village. Action: searching cow. Spruce planks make sticks. If HP <= 10 seek safety. 服务器保护拒绝后换目标。');
     assert.equal(summary, 'Spruce planks make sticks. If HP <= 10 seek safety. 服务器保护拒绝后换目标。');
