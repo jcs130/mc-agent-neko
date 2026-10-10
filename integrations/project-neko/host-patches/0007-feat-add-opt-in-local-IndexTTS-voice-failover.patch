@@ -1,0 +1,441 @@
+From 09b2b0136e7c195b0e35a8cdf761c0ea850008fd Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Sat, 10 Oct 2026 22:40:41 +0800
+Subject: [PATCH] feat: add opt-in local IndexTTS voice failover
+
+---
+ main_logic/tts_client/__init__.py         |  27 ++++
+ main_logic/tts_client/local_backup.py     |  79 +++++++++++
+ main_logic/tts_client/workers/openai.py   |  19 ++-
+ tests/unit/test_local_index_tts_backup.py | 158 ++++++++++++++++++++++
+ tests/unit/test_openai_compatible_tts.py  |  45 ++++++
+ 5 files changed, 324 insertions(+), 4 deletions(-)
+ create mode 100644 main_logic/tts_client/local_backup.py
+ create mode 100644 tests/unit/test_local_index_tts_backup.py
+
+diff --git a/main_logic/tts_client/__init__.py b/main_logic/tts_client/__init__.py
+index 60dc849..08830ca 100644
+--- a/main_logic/tts_client/__init__.py
++++ b/main_logic/tts_client/__init__.py
+@@ -282,6 +282,29 @@ def get_tts_worker(
+     voice_id='',
+     *,
+     excluded_provider_keys=frozenset(),
++):
++    """Resolve the existing route, optionally retaining a local voice backup."""
++    from .local_backup import resolve_local_backup
++    primary = _get_primary_tts_worker(
++        core_api_type, has_custom_voice, voice_id,
++        excluded_provider_keys=excluded_provider_keys,
++    )
++    try:
++        backup = get_config_manager().load_json_config('local_tts_backup.json', {})
++    except Exception:
++        backup = {}
++    return resolve_local_backup(
++        backup, voice_id, frozenset(excluded_provider_keys or ()),
++        primary, dummy_tts_worker,
++    )
++
++
++def _get_primary_tts_worker(
++    core_api_type='qwen',
++    has_custom_voice=False,
++    voice_id='',
++    *,
++    excluded_provider_keys=frozenset(),
+ ):
+     """
+     Return a callable based on the core_api type and whether a custom voice exists.
+@@ -683,3 +706,7 @@ _tts_providers.register(_tts_providers.TTSProvider(
+     tts_dropdown_only=True,
+     tts_config_visible=False,
+ ))
++
++# Explicitly opted-in local backup identities, excluded from provider selection.
++from .local_backup import register_local_backup_providers as _register_local_backup
++_register_local_backup(_tts_providers, TTS_PROVIDER_REGISTRY)
+diff --git a/main_logic/tts_client/local_backup.py b/main_logic/tts_client/local_backup.py
+new file mode 100644
+index 0000000..753292a
+--- /dev/null
++++ b/main_logic/tts_client/local_backup.py
+@@ -0,0 +1,79 @@
++"""Opt-in local speech backup using the existing runtime exclusion/replay chain."""
++from dataclasses import replace
++from functools import partial
++from urllib.parse import urlsplit
++
++PRIMARY_PROVIDER = 'free_local_backup'
++BACKUP_PROVIDER = 'index_local_backup'
++
++
++def _valid_config(config, voice_id):
++    if not isinstance(config, dict) or config.get('enabled') is not True:
++        return False
++    if not voice_id or config.get('source_voice_id') != voice_id:
++        return False
++    try:
++        url = urlsplit(str(config.get('base_url') or ''))
++        return bool(
++            url.scheme == 'http' and url.hostname in {'127.0.0.1', '::1'}
++            and url.port and not url.username and not url.password
++            and not url.query and not url.fragment and url.path == '/v1'
++            and isinstance(config.get('voice'), str) and config['voice'].strip()
++            and config.get('model') == 'indextts-2.5'
++        )
++    except (TypeError, ValueError):
++        return False
++
++
++def index_backup_worker(request_queue, response_queue, api_key, voice_id, *,
++                        base_url, local_voice, model):
++    # Both credentials and voice identity belong to the local clone, never to
++    # the failed online provider. 原在线凭证和音色 ID 不得透传到本地端点。
++    from .workers.openai import openai_tts_worker
++    return openai_tts_worker(
++        request_queue, response_queue, '', local_voice,
++        base_url=base_url, model=model, voice=local_voice,
++        label='本地 IndexTTS 2.5 备用语音', safe_error_provider=BACKUP_PROVIDER,
++        # This model rejects API sample_rate overrides. Decode its native
++        # 22.05 kHz correctly before resampling to Neko's 48 kHz output.
++        # 本地故障不叠加 SDK 隐式重试；其他语音提供方的 24 kHz 默认值不变。
++        extra_body_overrides={'extra_params': {'lang': 'zh'}},
++        request_timeout=60.0, max_retries=0, pcm_sample_rate=22050,
++    )
++
++
++def resolve_local_backup(config, voice_id, excluded, primary, silent_worker):
++    """Wrap only the matching free voice; preserve every other dispatch route."""
++    if primary[0] is silent_worker:
++        return primary
++    valid = _valid_config(config, voice_id)
++    if PRIMARY_PROVIDER in excluded:
++        # Configuration removal and local failure both exhaust this chain.
++        # 配置被移除或两端都失败后结束，不循环重连故障的在线服务。
++        if not valid or BACKUP_PROVIDER in excluded:
++            return silent_worker, '', None
++        return (
++            partial(index_backup_worker, base_url=config['base_url'],
++                    local_voice=config['voice'], model=config['model']),
++            '', BACKUP_PROVIDER,
++        )
++    if valid and primary[2] == 'free':
++        return primary[0], primary[1], PRIMARY_PROVIDER
++    return primary
++
++
++def register_local_backup_providers(registry, architectural_metadata):
++    """Runtime-only identities: no new selection priority or settings dropdown."""
++    for key in (PRIMARY_PROVIDER, BACKUP_PROVIDER):
++        registry.register(registry.TTSProvider(
++            key=key, kind='hosted' if key == PRIMARY_PROVIDER else 'local', priority=1000,
++            capabilities=frozenset({'preset'}), is_selected=lambda ctx: False,
++            resolve=lambda ctx: None, fallback_on_failure=True,
++            tts_config_visible=False,
++        ))
++    # Keep the primary's absent metadata, including its original normalization.
++    # The local HTTP worker confirms sentences, enabling suffix-only replay.
++    architectural_metadata[BACKUP_PROVIDER] = replace(
++        architectural_metadata['openai'], name=BACKUP_PROVIDER,
++        notes='仅供本地 IndexTTS 克隆音色故障回退',
++    )
+diff --git a/main_logic/tts_client/workers/openai.py b/main_logic/tts_client/workers/openai.py
+index e743560..027e054 100644
+--- a/main_logic/tts_client/workers/openai.py
++++ b/main_logic/tts_client/workers/openai.py
+@@ -91,6 +91,10 @@ def openai_tts_worker(
+     voice=OPENAI_TTS_DEFAULT_VOICE,
+     label="OpenAI TTS",
+     safe_error_provider=None,
++    extra_body_overrides=None,
++    request_timeout=None,
++    max_retries=None,
++    pcm_sample_rate=OPENAI_TTS_PCM_SAMPLE_RATE,
+ ):
+     """OpenAI-compatible TTS: sentence input with a streamed PCM response."""
+ 
+@@ -122,6 +126,10 @@ def openai_tts_worker(
+ 
+     async def setup(response_queue):
+         client_kwargs = _openai_auth_client_kwargs(AsyncOpenAI, audio_api_key)
++        if request_timeout is not None:
++            client_kwargs["timeout"] = request_timeout
++        if max_retries is not None:
++            client_kwargs["max_retries"] = max_retries
+         if base_url:
+             # Validate/normalize inside setup so configuration failures travel
+             # through the shared worker skeleton's normal __ready__ channel.
+@@ -134,7 +142,10 @@ def openai_tts_worker(
+                     endpoint_query,
+                 )
+         client = AsyncOpenAI(**client_kwargs)
+-        extra_body = openai_tts_extra_body(base_url or OPENAI_TTS_DEFAULT_BASE_URL)
++        extra_body = {
++            **openai_tts_extra_body(base_url or OPENAI_TTS_DEFAULT_BASE_URL),
++            **(extra_body_overrides or {}),
++        }
+         base_payload = build_openai_tts_payload("", effective_model, effective_voice)
+ 
+         async def synthesize(text: str, speech_id: str) -> None:
+@@ -154,7 +165,7 @@ def openai_tts_worker(
+                 pending = b""
+                 received_samples = False
+                 resampler = soxr.ResampleStream(
+-                    OPENAI_TTS_PCM_SAMPLE_RATE,
++                    pcm_sample_rate,
+                     48000,
+                     1,
+                     dtype="float32",
+@@ -170,7 +181,7 @@ def openai_tts_worker(
+                         received_samples = True
+                         resampled = _resample_audio(
+                             audio_array,
+-                            OPENAI_TTS_PCM_SAMPLE_RATE,
++                            pcm_sample_rate,
+                             48000,
+                             resampler,
+                         )
+@@ -184,7 +195,7 @@ def openai_tts_worker(
+ 
+                 tail = _resample_audio(
+                     np.empty(0, dtype=np.int16),
+-                    OPENAI_TTS_PCM_SAMPLE_RATE,
++                    pcm_sample_rate,
+                     48000,
+                     resampler,
+                     last=True,
+diff --git a/tests/unit/test_local_index_tts_backup.py b/tests/unit/test_local_index_tts_backup.py
+new file mode 100644
+index 0000000..bc74dd5
+--- /dev/null
++++ b/tests/unit/test_local_index_tts_backup.py
+@@ -0,0 +1,158 @@
++"""Opt-in local voice backup: route identity, exhaustion and credential isolation."""
++from functools import partial
++import queue
++from unittest.mock import Mock
++
++import pytest
++
++from main_logic.tts_client.local_backup import (
++    BACKUP_PROVIDER, PRIMARY_PROVIDER, resolve_local_backup,
++)
++
++
++def primary_worker(*args):
++    pass
++
++
++def silent_worker(*args):
++    pass
++
++
++@pytest.fixture
++def config():
++    return {
++        'enabled': True, 'source_voice_id': 'online-yui',
++        'base_url': 'http://127.0.0.1:18040/v1',
++        'model': 'indextts-2.5', 'voice': 'yui-local',
++    }
++
++
++def route(config, excluded=(), voice='online-yui', provider='free'):
++    return resolve_local_backup(
++        config, voice, frozenset(excluded),
++        (primary_worker, 'online-secret', provider), silent_worker,
++    )
++
++
++@pytest.mark.parametrize('change', [{'enabled': False}, {'source_voice_id': 'other'}, {}])
++def test_disabled_or_other_voice_keeps_existing_route(config, change):
++    config.update(change)
++    if change == {}:
++        config.clear()
++    assert route(config) == (primary_worker, 'online-secret', 'free')
++
++
++def test_matching_voice_wraps_primary_identity_only(config):
++    assert route(config) == (primary_worker, 'online-secret', PRIMARY_PROVIDER)
++    assert route(config, provider='qwen') == (primary_worker, 'online-secret', 'qwen')
++
++
++def test_failure_uses_local_voice_without_online_credentials(config, monkeypatch):
++    from main_logic.tts_client.workers import openai as worker_module
++    worker = Mock()
++    monkeypatch.setattr(worker_module, 'openai_tts_worker', worker)
++    selected, key, provider = route(config, [PRIMARY_PROVIDER])
++    assert isinstance(selected, partial)
++    assert key == ''
++    assert provider == BACKUP_PROVIDER
++    selected('requests', 'responses', 'must-not-leak', 'online-yui')
++    assert worker.call_args.args == ('requests', 'responses', '', 'yui-local')
++    assert worker.call_args.kwargs['voice'] == 'yui-local'
++    assert worker.call_args.kwargs['base_url'] == config['base_url']
++    assert worker.call_args.kwargs['extra_body_overrides'] == {
++        'extra_params': {'lang': 'zh'},
++    }
++    assert worker.call_args.kwargs['max_retries'] == 0
++    assert worker.call_args.kwargs['pcm_sample_rate'] == 22050
++
++
++def test_both_failed_end_without_returning_to_primary(config):
++    assert route(config, [PRIMARY_PROVIDER, BACKUP_PROVIDER]) == (silent_worker, '', None)
++
++
++@pytest.mark.parametrize('url', [
++    'https://speech.example/v1', 'http://localhost:18040/v1',
++    'http://user:secret@127.0.0.1:18040/v1',
++    'http://127.0.0.1:18040/v1?key=secret', 'http://127.0.0.1:18040/other',
++])
++def test_invalid_endpoint_keeps_primary_and_never_retries_failed_primary(config, url):
++    config['base_url'] = url
++    assert route(config) == (primary_worker, 'online-secret', 'free')
++    assert route(config, [PRIMARY_PROVIDER]) == (silent_worker, '', None)
++
++
++def test_disable_tts_during_fallback_stays_silent(config):
++    assert resolve_local_backup(
++        config, 'online-yui', frozenset({PRIMARY_PROVIDER}),
++        (silent_worker, None, None), silent_worker,
++    ) == (silent_worker, None, None)
++
++
++def test_real_dispatch_is_opt_in_and_registry_can_fail_over(config, monkeypatch):
++    from main_logic import tts_client
++    from utils.tts import provider_registry
++    cm = Mock()
++    cm.load_json_config.return_value = config
++    monkeypatch.setattr(tts_client, 'get_config_manager', lambda: cm)
++    monkeypatch.setattr(tts_client, '_get_primary_tts_worker',
++                        lambda *a, **kw: (primary_worker, 'online-secret', 'free'))
++    assert tts_client.get_tts_worker('free', True, 'online-yui')[2] == PRIMARY_PROVIDER
++    fallback = tts_client.get_tts_worker('free', True, 'online-yui',
++                                        excluded_provider_keys={PRIMARY_PROVIDER})
++    assert fallback[1:] == ('', BACKUP_PROVIDER)
++    assert provider_registry.falls_back_on_failure(PRIMARY_PROVIDER)
++    assert provider_registry.falls_back_on_failure(BACKUP_PROVIDER)
++    assert not provider_registry.uses_configured_preset_voice(PRIMARY_PROVIDER)
++    assert not provider_registry.uses_configured_preset_voice(BACKUP_PROVIDER)
++    assert tts_client.TTS_PROVIDER_REGISTRY[BACKUP_PROVIDER].category == 'http_sentence'
++
++
++@pytest.mark.parametrize('audio_emitted', [False, True])
++def test_native_runtime_replays_only_safe_current_text(config, monkeypatch, audio_emitted):
++    from main_logic import tts_client
++    from main_logic.core import LLMSessionManager
++    cm = Mock()
++    cm.load_json_config.return_value = config
++    monkeypatch.setattr(tts_client, 'get_config_manager', lambda: cm)
++    monkeypatch.setattr(tts_client, '_get_primary_tts_worker',
++                        lambda *a, **kw: (primary_worker, 'online-secret', 'free'))
++    mgr = LLMSessionManager.__new__(LLMSessionManager)
++    mgr._tts_active_provider_key = PRIMARY_PROVIDER
++    mgr._tts_excluded_provider_keys = frozenset()
++    mgr.tts_request_queue = queue.Queue()
++    mgr.current_speech_id = 'current'
++    mgr.tts_pending_chunks = [('old', 'discard'), ('current', 'later')]
++    mgr._tts_replay_speech_id = 'current'
++    mgr._tts_replay_chunks = [('old', 'discard'), ('current', 'replay')]
++    mgr._tts_replay_done = True
++    mgr._tts_replay_audio_emitted = audio_emitted
++    mgr._tts_replay_progress_supported = False
++    mgr._tts_done_queued_for_turn = True
++    mgr._tts_done_pending_until_ready = False
++    mgr._tts_fallback_uses_default_voice = False
++    mgr._reset_tts_stream_normalizer = lambda: None
++    started = []
++
++    def start_fallback(*, preserve_provider_exclusions):
++        assert preserve_provider_exclusions
++        selected = tts_client.get_tts_worker(
++            'free', True, 'online-yui', excluded_provider_keys=mgr._tts_excluded_provider_keys)
++        started.append(selected)
++        mgr._tts_active_provider_key = selected[2]
++
++    mgr._start_tts_thread = start_fallback
++    assert mgr._activate_configured_tts_fallback('injected_failure') is True
++    assert mgr._tts_active_provider_key == BACKUP_PROVIDER
++    assert started[0][1] == ''
++    assert not mgr._tts_fallback_uses_default_voice
++    assert mgr.tts_request_queue.get_nowait() == ('__shutdown__', None)
++    assert mgr.tts_pending_chunks == (
++        [('current', 'later')] if audio_emitted else
++        [('current', 'replay'), ('current', 'later')])
++
++
++def test_retired_runtime_cannot_switch_the_live_voice():
++    from main_logic.core import LLMSessionManager
++    mgr = LLMSessionManager.__new__(LLMSessionManager)
++    mgr._tts_output_is_current = lambda: False
++    assert mgr._activate_configured_tts_fallback('late_failure') is False
+diff --git a/tests/unit/test_openai_compatible_tts.py b/tests/unit/test_openai_compatible_tts.py
+index 9c33ff3..6e9b1b1 100644
+--- a/tests/unit/test_openai_compatible_tts.py
++++ b/tests/unit/test_openai_compatible_tts.py
+@@ -1331,6 +1331,10 @@ def _run_worker_once(
+     model=None,
+     voice_id="character-voice",
+     audio_api_key="sk-test",
++    extra_body_overrides=None,
++    request_timeout=None,
++    max_retries=None,
++    pcm_sample_rate=None,
+ ):
+     clients = _install_fake_openai(monkeypatch, chunks)
+     request_queue = queue.Queue()
+@@ -1340,6 +1344,14 @@ def _run_worker_once(
+         kwargs["base_url"] = base_url
+     if model is not None:
+         kwargs["model"] = model
++    if extra_body_overrides is not None:
++        kwargs["extra_body_overrides"] = extra_body_overrides
++    if request_timeout is not None:
++        kwargs["request_timeout"] = request_timeout
++    if max_retries is not None:
++        kwargs["max_retries"] = max_retries
++    if pcm_sample_rate is not None:
++        kwargs["pcm_sample_rate"] = pcm_sample_rate
+     thread = threading.Thread(
+         target=tts_client.openai_tts_worker,
+         args=(request_queue, response_queue, audio_api_key, voice_id),
+@@ -1402,6 +1414,39 @@ def test_sentence_worker_reports_audible_boundaries_before_runtime_error():
+     ]
+ 
+ 
++def test_local_index_worker_decodes_native_rate_and_requests_chinese_without_hidden_retries(monkeypatch):
++    rates = []
++    original_resample = openai_worker_module._resample_audio
++
++    def track_resample(audio, source_rate, *args, **kwargs):
++        rates.append(source_rate)
++        return original_resample(audio, source_rate, *args, **kwargs)
++
++    monkeypatch.setattr(openai_worker_module, "_resample_audio", track_resample)
++    clients, request_queue, response_queue, thread = _run_worker_once(
++        monkeypatch,
++        [b"\x00\x00"],
++        base_url="http://127.0.0.1:18040/v1",
++        model="indextts-2.5",
++        voice_id="yui-local",
++        audio_api_key="",
++        extra_body_overrides={"extra_params": {"lang": "zh"}},
++        request_timeout=60.0,
++        max_retries=0,
++        pcm_sample_rate=22050,
++    )
++    _wait_for_item(response_queue, lambda item: isinstance(item, bytes))
++    request_queue.put((tts_client.TTS_SHUTDOWN_SENTINEL, None))
++    thread.join(timeout=5)
++    assert not thread.is_alive()
++    assert clients[0].client_kwargs["timeout"] == 60.0
++    assert clients[0].client_kwargs["max_retries"] == 0
++    assert clients[0].create_calls[0]["extra_body"] == {
++        "extra_params": {"lang": "zh"},
++    }
++    assert rates and set(rates) == {22050}
++
++
+ def test_custom_worker_uses_openai_sdk_and_siliconflow_extensions(monkeypatch):
+     monkeypatch.setattr(
+         openai_worker_module,

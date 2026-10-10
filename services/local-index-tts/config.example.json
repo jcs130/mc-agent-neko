@@ -1,0 +1,5 @@
+{
+  "distribution": "Ubuntu-24.04",
+  "linux_root": "/opt/neko-index-tts",
+  "port": 18040
+}

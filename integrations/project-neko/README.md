@@ -359,3 +359,18 @@ within their existing limit; no translation inference or heartbeat is added.
 The plugin suite passed 183 tests, and all 57 plugin patches reproduce the
 declared source tree. See [the speech verification report](../../docs/neko-chinese-speech-2026-10-10.md)
 for local model probes and the passive deployment evidence.
+
+## Optional local IndexTTS 2.5 voice backup
+
+Host patch 0007 preserves the selected free voice as primary and uses the
+native exclusion/replay runtime to fall back to an explicitly configured local
+clone. It keeps online credentials out of the local HTTP worker, decodes the
+backend's native 22.05 kHz PCM correctly, and retains cancellation and stale
+worker fences. It does not add a model call for emotion or avatar control.
+
+The accompanying `services/local-index-tts/` deployment uses pinned vLLM-Omni
+in WSL on the RTX 3080 Ti; the game LLM and vision stay on the RTX 3090.
+Reference audio, weights, actual voice IDs and private configuration are not
+included. Defaults remain opt-in. See [the local deployment guide](../../docs/local-index-tts-backup.md)
+for installation, the 68-second initial warmup, measured steady-state latency,
+native end-to-end limits, failure behavior and real deployment verification.

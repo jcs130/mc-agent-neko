@@ -1,7 +1,7 @@
 {
   "upstreamRepository": "https://github.com/Project-N-E-K-O/N.E.K.O",
   "baseCommit": "fb2a2e731a8c954478d08678b0c8cf40e8145a54",
-  "sourceCommit": "a2ad656dd4a63fdb192f63019b64d80c226022e0",
+  "sourceCommit": "09b2b0136e7c195b0e35a8cdf761c0ea850008fd",
   "scope": "plugin/plugins/game_agent_minecraft",
   "resultPluginTree": "21691ceb077d3ab3e880dba3b796e978703f8787",
   "patches": [
@@ -339,6 +339,18 @@
       "scopePaths": [
         "static/app/app-websocket.js",
         "tests/frontend/test_avatar_turn_coalescing.mjs"
+      ]
+    },
+    {
+      "file": "host-patches/0007-feat-add-opt-in-local-IndexTTS-voice-failover.patch",
+      "sha256": "093d879142a35f970fa7abd94530a32853249025ba94e32f75d43778a9f55e1a",
+      "sourceCommit": "09b2b0136e7c195b0e35a8cdf761c0ea850008fd",
+      "scopePaths": [
+        "main_logic/tts_client/__init__.py",
+        "main_logic/tts_client/local_backup.py",
+        "main_logic/tts_client/workers/openai.py",
+        "tests/unit/test_local_index_tts_backup.py",
+        "tests/unit/test_openai_compatible_tts.py"
       ]
     }
   ],
@@ -767,5 +779,35 @@
       "backendReady": true,
       "servedFileMatchesSource": true
     }
+  },
+  "localIndexTtsBackupVerification": {
+    "date": "2026-10-10",
+    "sourceCommit": "09b2b0136e7c195b0e35a8cdf761c0ea850008fd",
+    "routingAndHttpTestsPassed": 87,
+    "runtimeCompatibilityTestsPassed": 63,
+    "backend": "WSL2 Ubuntu 24.04 / vLLM-Omni 0.30.0",
+    "omniSourceCommit": "a8576ccb725c4e21cd13c3eb5f9a546b21149d2b",
+    "ttsGpu": "RTX 3080 Ti",
+    "gameLlmGpuPreserved": "RTX 3090",
+    "onlinePrimaryPreserved": true,
+    "credentialsNotForwarded": true,
+    "nativePcmSampleRate": 22050,
+    "outputSampleRate": 48000,
+    "httpImplicitRetries": 0,
+    "isolatedFailureWithRealAudioVerified": true,
+    "partialPrimaryAudioNotReplayed": true,
+    "interruptStaleAudioBytes": 0,
+    "coldBackendMs": 68309.4,
+    "warmBackendSamples": 5,
+    "warmBackendMedianMs": 3224.9,
+    "nativeEndToEndSpikesStillPresent": true,
+    "cpuAsrIntelligibilityChecked": true,
+    "humanVoiceSimilarityVerified": false,
+    "fullReplayMatchesSource": true,
+    "hostFilesMatched": 23,
+    "deploymentPhase": "deployed",
+    "nativeGameProcessPreserved": true,
+    "gameLlmProcessPreserved": true,
+    "liveOnlineOutageInduced": false
   }
 }
