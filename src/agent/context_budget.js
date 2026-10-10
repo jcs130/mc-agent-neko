@@ -1,3 +1,4 @@
+/* global process */
 // Prompt projection only. Original observations remain in History and its archive.
 export function externalMission(agent) {
     if (!agent?.adminMission?.isActive?.()) return null;
@@ -8,6 +9,7 @@ export function externalMission(agent) {
 export function executionPromptTemplate(template, agent, fixedContract = '') {
     let prompt = String(template);
     const mission = externalMission(agent);
+    if (!mission && !fixedContract && process.env.MC_SELF_PROMPT_TAIL === '1') prompt = ordinaryGoalAfterDocs(prompt);
     const status = ['$STATS', '$INVENTORY'].filter(token => prompt.includes(token));
     for (const token of status) prompt = prompt.replaceAll(token, '');
     prompt = prompt.replace(/## Current Status\s*(?=##|$)/g, '');
@@ -27,6 +29,24 @@ export function executionPromptTemplate(template, agent, fixedContract = '') {
         + status.join('\n');
     if (!mission) prompt += fixedContract;
     return prompt;
+}
+
+function ordinaryGoalAfterDocs(prompt) {
+    const goals = prompt.match(/\$SELF_PROMPT/g) || [];
+    const docs = prompt.lastIndexOf('$COMMAND_DOCS');
+    if (!goals.length || docs < 0) return prompt;
+    const tokens = ['$MEMORY', '$CODE_DOCS', '$ACTION', '$CONVO', '$LAST_GOALS', '$BLUEPRINTS', '$EXAMPLES'];
+    const positions = tokens.map(token => prompt.indexOf(token)).filter(index => index >= 0);
+    const firstDynamic = positions.length ? Math.min(...positions) : prompt.length;
+    // Moving only the goal cannot repair a template that puts dynamic memory
+    // before its docs. Leave such templates unchanged for a separate experiment.
+    if (firstDynamic < docs) return prompt;
+    let at = firstDynamic;
+    const heading = prompt.slice(0, at).match(/(?:^|\n)(?:#{1,6} [^\n]*|Memory Summary)[ \t]*\r?\n$/);
+    if (heading) at = heading.index + Number(heading[0].startsWith('\n'));
+    const left = prompt.slice(0, at).replaceAll('$SELF_PROMPT', '');
+    const right = prompt.slice(at).replaceAll('$SELF_PROMPT', '');
+    return left + '$SELF_PROMPT'.repeat(goals.length) + right;
 }
 
 export function executionPromptHistory(turns, agent) {

@@ -109,3 +109,37 @@ test('conversation hands its own trace to the executor only after a current acce
     assert(records.at(-1).prompt_assembly_ms !== null);
     assert(records.at(-1).total_to_command_ms !== null);
 });
+
+test('ordinary goal-only experiment preserves every literal and placeholder, after docs before memory', () => {
+    const f = fixture({ external: false });
+    const source = 'PERSONA\n$SELF_PROMPT\nFIXED_RULES\n$COMMAND_DOCS\n## Memory\n$MEMORY\n$SELF_PROMPT\n$EXAMPLES';
+    const previous = process.env.MC_SELF_PROMPT_TAIL;
+    try {
+        process.env.MC_SELF_PROMPT_TAIL = '0';
+        const baseline = executionPromptTemplate(source, f.agent);
+        process.env.MC_SELF_PROMPT_TAIL = '1';
+        const moved = executionPromptTemplate(source, f.agent);
+        assert(moved.indexOf('$COMMAND_DOCS') < moved.indexOf('$SELF_PROMPT'));
+        assert(moved.lastIndexOf('$SELF_PROMPT') < moved.indexOf('$MEMORY'));
+        assert.equal(moved.replaceAll('$SELF_PROMPT', ''), baseline.replaceAll('$SELF_PROMPT', ''));
+        assert.equal(moved.match(/\$SELF_PROMPT/g).length, 2);
+        assert(moved.indexOf('$SELF_PROMPT') < moved.indexOf('## Memory'));
+    } finally { if (previous === undefined) delete process.env.MC_SELF_PROMPT_TAIL; else process.env.MC_SELF_PROMPT_TAIL = previous; }
+});
+
+test('ordinary goal experiment is inactive for external missions, code contracts or ambiguous templates', () => {
+    const f = fixture(), ordinary = fixture({ external: false });
+    const previous = process.env.MC_SELF_PROMPT_TAIL;
+    try {
+        process.env.MC_SELF_PROMPT_TAIL = '0';
+        const external = executionPromptTemplate(f.prompter.profile.conversing, f.agent);
+        const code = executionPromptTemplate('$SELF_PROMPT\n$COMMAND_DOCS\n$MEMORY', ordinary.agent, 'fixed coding contract');
+        process.env.MC_SELF_PROMPT_TAIL = '1';
+        assert.equal(executionPromptTemplate(f.prompter.profile.conversing, f.agent), external);
+        assert.equal(executionPromptTemplate('$SELF_PROMPT\n$COMMAND_DOCS\n$MEMORY', ordinary.agent, 'fixed coding contract'), code);
+        for (const source of ['$SELF_PROMPT\n$MEMORY\n$COMMAND_DOCS', '$SELF_PROMPT\nno tool boundary', '$COMMAND_DOCS\n$MEMORY']) {
+            assert.equal(executionPromptTemplate(source, ordinary.agent), source);
+        }
+        assert.equal(executionPromptTemplate('$SELF_PROMPT\n$COMMAND_DOCS', ordinary.agent), '\n$COMMAND_DOCS$SELF_PROMPT');
+    } finally { if (previous === undefined) delete process.env.MC_SELF_PROMPT_TAIL; else process.env.MC_SELF_PROMPT_TAIL = previous; }
+});
