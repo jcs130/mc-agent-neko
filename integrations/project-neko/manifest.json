@@ -1,9 +1,9 @@
 {
   "upstreamRepository": "https://github.com/Project-N-E-K-O/N.E.K.O",
   "baseCommit": "fb2a2e731a8c954478d08678b0c8cf40e8145a54",
-  "sourceCommit": "4448190fff5bef6aa8d310e3988fd11cc6ef57a6",
+  "sourceCommit": "259d2a9ebec0463e44b2e165a0ed30fca854f592",
   "scope": "plugin/plugins/game_agent_minecraft",
-  "resultPluginTree": "b75fd2bc2a42cf45a2e84eceab484ab8a31178d7",
+  "resultPluginTree": "b9819de3d819c5aaaa0f1689d5092f0537eced17",
   "patches": [
     {
       "file": "0001-chore-configure-text-only-local-Qwen-Minecraft-trial.patch",
@@ -304,6 +304,10 @@
     {
       "file": "0075-fix-minecraft-retain-timestamped-events-and-complete.patch",
       "sha256": "1d6adb883b259e96c260912ebe1b7e6f0885d40637dca9804d12461edbb7b9b2"
+    },
+    {
+      "file": "0076-fix-context-retain-full-evidence-behind-explicit-cur.patch",
+      "sha256": "91d0e0a17321f8b7b3f91073ec57838e10ecc2fe8bf9a2c99e3ab12303424776"
     }
   ],
   "verification": {
@@ -1534,7 +1538,7 @@
   },
   "completeInformationVerification": {
     "date": "2026-10-12",
-    "sourceCommit": "4448190fff5bef6aa8d310e3988fd11cc6ef57a6",
+    "sourceCommit": "259d2a9ebec0463e44b2e165a0ed30fca854f592",
     "nativeCommit": "7c8c278ea92138d2aa2fca71a70779c294fbb111",
     "runtimeCommit": "be808d311619b331fcb44e9ab5a771bde3eecde6",
     "nativeRelatedPassed": 243,
@@ -1562,6 +1566,15 @@
     "providerHistoryProjectionRemoved": true,
     "gameScreenCommentProjectionRemoved": true,
     "localMessagePlanePayloadBytes": 16777216,
-    "transportNeverSilentlyClips": true
+    "transportNeverSilentlyClips": true,
+    "evidencePolicy": "current facts plus immutable exact evidence; human approved",
+    "evidenceRegressionPassed": 253,
+    "evidenceSubtestsPassed": 42,
+    "fullRawInputExperiment": {
+      "promptTokens": 945024,
+      "maxContext": 32768,
+      "result": "rejected_context_overflow"
+    },
+    "runtimeAcceptance": "pending real request and action evidence"
   }
 }
