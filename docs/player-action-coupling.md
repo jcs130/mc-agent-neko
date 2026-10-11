@@ -70,6 +70,25 @@ stays explicitly unconfirmed rather than assuming that transport means acceptanc
 This repair does not guarantee that navigation, trade prerequisites, protection
 rules or a later planner decision will succeed. Those require actual action receipts.
 
+## Thrown query and action failures
+
+Live tracing found a second break in the same decision/action chain: a visual
+capture raised `page.waitForFunction: Timeout 23275ms exceeded`. The exception
+escaped command execution, so the self-prompt loop logged an error without adding
+the failed query's result to history. Later decisions could repeat the inspection
+instead of knowing it had failed.
+
+Native follow-up `d7ed3908983fa894058b9d9bb786f58af1f7b133` records an ordinary
+command exception as an actual `Action failed:` result. It confirms neither
+completion nor absence of partial side effects. The normal history/mission feedback
+path receives that result, and a failed batch does not execute its remaining actions.
+The planner can choose a physical step from existing structured game observations.
+This does not change capture readiness, increase its timeout or disable vision.
+
+Abort, body replacement, mission replacement and execution interruption retain
+their cancellation semantics. An old command's exception cannot become a result
+for a new body or task. Vision preemption now explicitly uses `AbortError`.
+
 ## 回归报告 / Regression Report
 
 Changed the idle player callback route, atomic linked task claim, exact native
@@ -82,12 +101,18 @@ still emit its action prelude. After: a linked task waits for exact acceptance,
 and failure or missing acceptance leaves the reply unsent. Busy tasks and ordinary
 social replies retain their existing ownership and availability.
 
-Validation on 2026-10-12: **659 Python tests, 47 subtests, and 55 native tests pass**.
+Validation on 2026-10-12: **659 Python tests, 47 subtests, and 96 native tests pass**.
 Coverage includes a real loopback WebSocket exchange, foreign ACKs, stop/session
 races, fast failure, cancellation, missing ACK, failed private replies, busy
 ownership, unchanged original history and trusted host scope. Ruff and Git
 whitespace checks pass; existing deprecation and invalid-noqa warnings remain.
 Initial failing tests were retained privately before implementation.
+
+The additional native cases reproduce thrown single-query and batch failures,
+prove that the next decision receives the actual failure and can issue an action,
+and preserve abort/body/mission interruption. They passed with the existing command,
+mission, self-prompt, capture and vision request regressions. No new model round
+is inserted by exception handling.
 
 The full companion series (**87 plugin + 34 host patches**) was replayed against
 the recorded base. The plugin tree and all 61 host scope files match the source;
@@ -99,9 +124,31 @@ an older executor could leave a reply unconfirmed, or a session/stop race could
 otherwise send an incorrect promise. Tests cover those boundaries. A live
 natural player invitation is separate acceptance evidence from deterministic tests.
 
-Deployment status: prepared; awaiting a verified idle boundary to load only the
-owned Neko host/plugin and native child. Model, TTS, desktop, observer and monitor
-processes must retain their identities. No history reset is required.
+The first integration loaded at a verified idle boundary on 2026-10-12 05:30
+(Asia/Shanghai), preserving the model, TTS, desktop, observer and monitor processes.
+A natural player-linked task subsequently received exact native acceptance and
+submitted its private reply. `submitted` is not a confirmed server echo; that
+escape task later failed. Short passive observation also recorded two deaths
+and respawns before the follow-up load. Those failures remain part of the evidence.
+
+The command-exception follow-up loaded at another verified idle boundary at
+05:42, updating only the owned native child and retaining Neko host PID 60892.
+Model, TTS, desktop, observer and monitor identities remained unchanged; no
+history reset was performed.
+
+After this load, another naturally generated linked task received exact native
+acceptance and a server-confirmed private reply echo. The following 55-second
+window observed `goToCoordinates` and `moveAway`, about 11.9 metres of displacement,
+continuous connection and 20 health/food. Both LAN scene streams, minimaps and
+appearance resources remained active. Twelve natural speech deliveries since
+the first load had matching playback completion and no duplicate playback cycles
+or identical repeated replies in that sample.
+
+This verifies natural acceptance, private echo and body execution. The associated
+trade/arrival attempt later returned `failed: no-progress`; it was not a completed
+purchase. Successful completion, sustained survival, audible quality and natural
+recovery from another capture exception remain open.
+The deterministic exception-path tests and actual loading are recorded separately.
 
 ## 不拆分理由 / Why Not Split
 

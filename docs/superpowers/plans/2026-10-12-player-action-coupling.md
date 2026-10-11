@@ -57,7 +57,20 @@
 
 **Files:** `integrations/project-neko/manifest.json`, plugin/host patch series, `docs/player-action-coupling.md`, private runtime audit and inspection baseline.
 
-- [ ] Commit native and Neko changes separately; export scoped companion patches and replay the entire patch series against its recorded base, comparing the plugin tree and all host scope files.
-- [ ] Load only owned changed components at a safe boundary; preserve model, TTS, desktop and observer processes. Do not generate live-player test messages.
-- [ ] Observe actual connection/activity, timing and speech through readonly interfaces. Report local deterministic integration results separately from any naturally observed live interaction.
-- [ ] Record deployment stage and remaining uncertainty; push the user fork branch and verify remote SHA.
+- [x] Commit native and Neko changes separately; export scoped companion patches and replay the entire patch series against its recorded base, comparing the plugin tree and all host scope files.
+- [x] Load only owned changed components at a safe boundary; preserve model, TTS, desktop and observer processes. Do not generate live-player test messages.
+- [x] Observe actual connection/activity, timing and speech through readonly interfaces. Report local deterministic integration results separately from any naturally observed live interaction.
+- [x] Record deployment stage and remaining uncertainty; push the user fork branch and verify remote SHA.
+
+### Task 4: Preserve a live query exception as decision feedback
+
+Live evidence after the first load showed a rendered-view capture timeout escaping
+`executeCommand` and stopping the self-prompt loop without recording that failure.
+This is a second concrete break in the thinking/action chain.
+
+- [x] Pin single-command and batch exceptions with failing tests; preserve the red output.
+- [x] Return ordinary exceptions through the existing actual-result history path;
+  keep AbortError, body/mission replacement and execution interruption as cancellation.
+- [x] Run the command, mission, self-prompt, capture and vision regressions: 96 pass.
+- [x] Load only the owned native child at an idle boundary, retaining the main host.
+- [x] Record the real deployment, natural linked receipt and remaining gameplay limits.

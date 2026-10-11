@@ -1770,8 +1770,8 @@
   },
   "playerActionCouplingVerification": {
     "sourceCommit": "7e15b51800b57374eac9877d289107577ad71a71",
-    "nativeCommit": "85191c4660fb443a231abf76f8cc39e52d9f58f1",
-    "runtimeCommit": "3deb267158e8683dc66b16cc0239b5b2af466107",
+    "nativeCommit": "d7ed3908983fa894058b9d9bb786f58af1f7b133",
+    "runtimeCommit": "3c511d00f2fed7dfaf7253b1dd29887495483b24",
     "pluginPatches": 87,
     "hostPatches": 34,
     "pluginTree": "3dc374161f1c16386f507aab7da69d6ec2730e40",
@@ -1781,10 +1781,51 @@
       "src/websocket/ws_server.js",
       "test/ws_server_lifecycle.test.mjs"
     ],
-    "deploymentPhase": "prepared",
+    "deploymentPhase": "deployed",
     "pythonTestsPassed": 659,
     "pythonSubtestsPassed": 47,
-    "nativeTestsPassed": 55,
-    "runtimeAcceptance": "Pending safe owned host/native load and natural player interaction; loopback is not live gameplay proof."
+    "nativeTestsPassed": 96,
+    "runtimeAcceptance": "natural exact acceptance/private echo/navigation observed; goal completion and sustained gameplay open",
+    "checkedAt": "2026-10-12T05:47:51.610024+08:00",
+    "firstHostDeploymentAt": 1791754241745,
+    "nativeFeedbackDeploymentAt": 1791754976952,
+    "hostPidPreservedOnFollowup": 60892,
+    "protectedServicesPreserved": true,
+    "runtimeFilesMatched": [
+      "src/websocket/ws_server.js",
+      "test/ws_server_lifecycle.test.mjs",
+      "src/agent/commands/index.js",
+      "src/agent/vision/vision_interpreter.js",
+      "test/command_invocations.test.mjs",
+      "test/vision_interpreter_snapshot.test.mjs"
+    ],
+    "companionPatches": {
+      "plugin": 87,
+      "host": 34
+    },
+    "companionPatchHashesUnchangedSinceFullReplay": true,
+    "nativeAcceptedPrivateReplyEchoSamples": 1,
+    "latestNaturalLinkedTaskId": "3557417fe96342b3a6b064e1b94e4fa0",
+    "latestPassiveSeconds": 55,
+    "latestAllOnline": true,
+    "latestMinHp": 20,
+    "latestMinFood": 20,
+    "latestDisplacement": 11.915368497464717,
+    "latestActions": [
+      "action:goToCoordinates",
+      "action:moveAway"
+    ],
+    "naturalCompletePlaybacks": 12,
+    "exactRepeatedReplyGroups": 0,
+    "duplicatePlaybackCycles": 0,
+    "privateStyleControlReplies": 0,
+    "earlierLinkedEscapeFailed": true,
+    "observedDeathsSinceFirstLoad": 2,
+    "liveLinkedTaskCompletion": "open; accepted/echoed/acting is not completed trade or arrival",
+    "naturalExceptionRecoveryAcceptance": "open; deterministic failure-path tests passed and code is loaded",
+    "longTermNavigationSurvivalAndAudibleAcceptance": "open",
+    "gameCommandsSentByMaintenance": 0,
+    "modelProbes": 0,
+    "credentialsSaved": false
   }
 }
