@@ -3249,3 +3249,7 @@
   173 related cases pass (overlapping sets). Companion patch 0024 replays with
   all 96 patches and matches 59 host files. Runtime deployment/periodic boundary
   acceptance and recurring generated narration remain separately tracked.
+- Deployment: source d5b2815 loaded at Beijing 21:26:34 during repeated explicit
+  gateway-maintenance denial, no task, model idle and completed playback. T-0069
+  deployed receipt accepted; natural inactivity-boundary verification remains
+  open. Local model/TTS/native/spectator identities were preserved.

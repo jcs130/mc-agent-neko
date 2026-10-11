@@ -11,8 +11,8 @@
 - [x] Add the existing bounded playback gate; retain user-stop, takeover, generation and session ownership behavior.
 - [x] Run relevant speech, lifecycle and proactive regressions: 173 pass, including the 17-case direct gate suite (counts overlap).
 - [x] Commit the source, export companion host patch 0024 and replay all 96 patches; plugin tree and 59 host source/test files match.
-- [ ] Publish repair documentation and fork commit; use a prepared receipt until the host is actually reloaded.
-- [ ] Reload only at the existing measured safe game and playback boundary. If no safe boundary is available, preserve services and retain prepared status.
+- [x] Publish repair documentation and fork commit `e51708f`; prepared then deployed receipt accepted by the API, without automatic closure.
+- [x] Reload once at Beijing 21:26:34: repeated gateway-maintenance offline observations, no active task, model idle and playback ended. Native/model/TTS/spectator identities remain intact; authenticated Live listener restored.
 - [ ] Observe a natural inactivity-cleanup boundary before claiming runtime verification. Short speech samples cannot prove this periodic fault fixed in production.
 
 No model/provider/voice changes, text muting, invented user activity or increased LLM calls. Raw dialogue, PCM, private voice identifiers and credentials remain out of diagnostics and the repository.

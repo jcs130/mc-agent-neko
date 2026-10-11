@@ -1413,11 +1413,15 @@
     "textMuting": false,
     "idleThresholdChanged": false,
     "watchdogChanged": false,
-    "deploymentPhase": "prepared",
+    "deploymentPhase": "deployed",
     "naturalIdleBoundaryAcceptance": "open",
     "audibleHumanAcceptance": "open",
     "semanticRepetitionAcceptance": "open",
     "ticketId": "T-0069",
-    "ticketOccurrences": 1
+    "ticketOccurrences": 1,
+    "deployedAtBeijing": "2026-10-11T21:26:34.045+08:00",
+    "deploymentBoundary": "repeated explicit gateway maintenance offline state, no task, idle inference and completed playback",
+    "nativeModelTtsSpectatorPreserved": true,
+    "receiptWriteback": "written"
   }
 }
