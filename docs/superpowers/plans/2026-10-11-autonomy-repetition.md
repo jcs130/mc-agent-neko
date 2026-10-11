@@ -38,6 +38,35 @@
 - [x] Inspect mob metadata: some endermen were stared at; do not assume neutrality.
 - [x] Reproduce repeated protected-floor excavation and add a measured 15-second handoff with bounded 60-second planner opportunity and emergency bypasses.
 - [x] Reproduce three query preludes in one decision; suppress only autonomous read-only query preludes using actual receipts, preserving results, actions, final replies and cancellation.
-- [x] Run complete native regression (740 cases), host tool/cancellation/proactive suites (175 cases), and verify all 78 companion hashes plus full scoped replay.
-- [ ] Deploy confirmed native and host repairs through owned lifecycle flows at a safe idle boundary; observe natural action and speech metadata.
+- [x] Run complete native regression (743 final cases), host tool/cancellation/proactive suites (175 cases), and verify all 78 companion hashes plus full scoped replay.
+- [x] Deploy confirmed native and host repairs through owned lifecycle flows at a safe idle boundary; observe natural action and speech metadata.
 - [ ] Record observed recovery and remaining limitations; commit and push authorized fork changes without claiming unobserved task completion.
+
+### Task 2: Preserve measured handoffs through the host plugin
+
+**Evidence:** The deployed native emitted `protected-retreat-stall`, but the
+focused context allowlist only retained the older swimming recovery type.
+The fresh idle handoff also competed with an older natural-language busy latch.
+
+- [x] Reproduce missing recovery constraints in all four focused modes and the busy-latch conflict; nine assertions/subcases fail before repair.
+- [x] Retain both measured retreat types, their original times, constraint and next-step evidence within the same context budget. Give only an unexpired, explicitly idle native handoff precedence over the old latch; keep actual actions and pending tasks authoritative.
+- [x] Run related and full plugin regression, package the scoped plugin patch, reload only the owned plugin at idle and observe natural decisions. The first sample still had no physical action; preserve that failure evidence and follow up below.
+
+### Task 3: Cover the final bounded query opportunity
+
+**Evidence:** Natural execution reached the existing final tool opportunity,
+which streamed text before its receipt classification. The observed exact
+`/mycli village villagers` catalogue also lacked read-only reply metadata.
+
+- [x] Reproduce final-round query prelude delivery and missing catalogue metadata; keep unknown commands and mutation forms conservative.
+- [x] Apply the same receipt-based speech classification to that existing final round, preserve final answers, stop and cancellation; label only the exact observed village catalogue in reply metadata without expanding query permissions.
+- [ ] Run relevant regression, export/replay matching companion patches, deploy only required owned components at idle and record natural results.
+
+### Task 4: Route current measured recovery ahead of unrelated catalogue work
+
+**Evidence:** After the body yielded and context was preserved, natural main
+turns still browsed help/villager catalogues without any physical action.
+
+- [x] Reproduce the ordinary gameplay context/goal being selected during a measured idle retreat window.
+- [x] During only that validated window, select the existing survival context and the current escape priority; retain stop/authority, prerequisites, player communication and normal gameplay routing outside it. The model still chooses its action, with no forced command or extra request.
+- [ ] Run full plugin regression, export the companion and verify actual natural action separately from successful escape.

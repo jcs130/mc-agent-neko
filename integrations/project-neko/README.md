@@ -29,6 +29,14 @@ for ownership, cancellation, verification and live outcome limits.
 Host patch 0011 keeps repeated autonomous query preludes out of spoken output,
 using actual read-only tool receipts while retaining results and final replies.
 The matching native repair bounds measured protected-floor retreat stalls.
+Plugin patch 0068 preserves measured retreat constraints in all focused
+contexts and lets a fresh, explicitly idle handoff outrank the older busy
+status latch. Actual actions, pending tasks and expired/unknown telemetry keep
+their existing ownership rules.
+Plugin patch 0069 selects the existing survival context during that measured
+idle window and prioritizes its current blocker before unrelated catalogues.
+Host patch 0012 also classifies the existing final tool opportunity before
+speaking its prelude. Neither change adds a model request or forces a tool.
 See [the regression and runtime report](../../docs/neko-protected-retreat-query-speech-2026-10-11.md).
 
 Metadata-only native and host timings distinguish preparation, SDK return,
@@ -98,7 +106,7 @@ alongside the Minecraft body in this fork. The ordered plugin series includes
 scoped protection receipts, adaptive heartbeat pacing, readable custom items,
 protected operational inventory, storage capacity, matched recovery history,
 compact task authority and conditional post-observation action guidance.
-The manifest lists the exact plugin series and eleven companion host patches.
+The manifest lists the exact plugin series and twelve companion host patches.
 
 The series targets [Project-N-E-K-O/N.E.K.O](https://github.com/Project-N-E-K-O/N.E.K.O)
 at commit `fb2a2e731a8c954478d08678b0c8cf40e8145a54`. It changes only
@@ -144,8 +152,8 @@ python -m unittest discover -s plugin/plugins/game_agent_minecraft -t .
 git rev-parse HEAD:plugin/plugins/game_agent_minecraft
 ```
 
-The manifest is authoritative for the current bundle: 67 ordered plugin patches
-and eleven host patches reproduce the declared source's plugin tree and all 41
+The manifest is authoritative for the current bundle: 69 ordered plugin patches
+and twelve host patches reproduce the declared source's plugin tree and all 41
 affected host-file blobs. Test counts are dated delivery evidence, not a claim
 that every later checkout has already been tested. See the
 [prefill verification report](../../docs/neko-llm-prefill-2026-10-10.md) for plugin

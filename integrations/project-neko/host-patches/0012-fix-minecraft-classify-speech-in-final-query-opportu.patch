@@ -1,0 +1,119 @@
+From 494c22007828afd360ce500cbccec5b583727884 Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Sun, 11 Oct 2026 10:14:49 +0800
+Subject: [PATCH] fix(minecraft): classify speech in final query opportunity
+
+---
+ main_logic/omni_offline_client/_tools.py | 24 ++++++++++++++--
+ tests/unit/test_tool_calling.py          | 36 ++++++++++++++++++++++++
+ 2 files changed, 58 insertions(+), 2 deletions(-)
+
+diff --git a/main_logic/omni_offline_client/_tools.py b/main_logic/omni_offline_client/_tools.py
+index 7cfef1a..282a2ab 100644
+--- a/main_logic/omni_offline_client/_tools.py
++++ b/main_logic/omni_offline_client/_tools.py
+@@ -1469,6 +1469,7 @@ class _ToolingMixin:
+         final_deltas = []
+         final_text = ""
+         final_reasoning = ""
++        final_visible = [] if minecraft_execution_turn and action_tools else None
+         final_finish_reason: Optional[str] = None
+         final_prompt_tokens: Optional[int] = None
+         # 封顶后这一次请求同样带着还没被 release 的工具图（slots 要到外层
+@@ -1526,7 +1527,10 @@ class _ToolingMixin:
+                 )
+                 setattr(chunk, "_tool_leak_filtered", True)
+             final_text += getattr(chunk, "content", "") or ""
+-            yield chunk
++            if final_visible is None:
++                yield chunk
++            else:
++                final_visible.append(chunk)
+         if (action_tools and "tools" in final_overrides and final_finish_reason == "tool_calls"
+                 and final_deltas and generation_is_active()):
+             if tool_leak_filter is not None:
+@@ -1537,20 +1541,36 @@ class _ToolingMixin:
+                     final_text += tail
+                     tail_chunk = LLMStreamChunk(content=tail)
+                     setattr(tail_chunk, "_tool_leak_filtered", True)
+-                    yield tail_chunk
++                    if final_visible is None:
++                        yield tail_chunk
++                    else:
++                        final_visible.append(tail_chunk)
+                 tool_leak_filter.reset()
+             from utils.llm_client import ChatOpenAI as _ChatOpenAI
+             allowed = {tool["function"]["name"] for tool in action_tools}
+             calls = [call for call in _ChatOpenAI.collect_tool_calls(final_deltas) if call.name in allowed]
+             await self._notify_tool_round_start()
++            final_receipt_start = len(messages)
+             executed = await self._execute_and_append_openai_tool_calls(
+                 messages, calls, assistant_text=strip_thinking_segments(final_text),
+                 assistant_reasoning=final_reasoning, tool_image_slots=tool_image_slots,
+                 tool_bus_frames=tool_bus_frames, generation_is_active=generation_is_active,
+                 tool_rounds=tool_rounds,
+             )
++            if final_visible is not None and generation_is_active() and not _minecraft_query_only_round(messages[final_receipt_start:]):
++                for visible_chunk in final_visible:
++                    if not generation_is_active():
++                        break
++                    yield visible_chunk
+             if executed:
+                 yield LLMStreamChunk(content="", tool_round_persisted=True)
++        elif final_visible is not None and generation_is_active():
++            # A real final answer or pause still belongs to the user. Only an
++            # actually executed read-only last round loses its query prelude.
++            for visible_chunk in final_visible:
++                if not generation_is_active():
++                    break
++                yield visible_chunk
+         # prompt_tokens 走局部变量、流结束后无条件回填（与 genai 路径同口径）：这次
+         # forced-finalize 没给 usage 时写回 None，而非沿用上一轮 tool-iteration 的旧
+         # 值，避免上层 empty-completion 诊断串台。
+diff --git a/tests/unit/test_tool_calling.py b/tests/unit/test_tool_calling.py
+index 785cf65..6011fe4 100644
+--- a/tests/unit/test_tool_calling.py
++++ b/tests/unit/test_tool_calling.py
+@@ -3300,6 +3300,42 @@ async def test_minecraft_query_buffer_keeps_final_reply_and_cancels_stale_prelud
+         assert len(llm.calls) == (1 if cancel else 2)
+ 
+ 
++@pytest.mark.asyncio
++@pytest.mark.parametrize('read_only,expected_preludes', [(True, 0), (False, 1), (None, 1)])
++@pytest.mark.parametrize('cancel_last', [False, True])
++async def test_minecraft_last_opportunity_classifies_prelude_after_actual_receipt(
++        read_only, expected_preludes, cancel_last, monkeypatch):
++    from utils.llm_client import LLMStreamChunk
++    from main_logic.tool_calling import ToolDefinition, ToolResult
++    from main_logic.omni_offline_client import _tools
++
++    prelude = '先看看是什么情况。'
++    active = True
++    monkeypatch.setattr(_tools, '_generation_check', lambda *_: lambda: active)
++    def call(name, ident, text=''):
++        return [LLMStreamChunk(content=text), LLMStreamChunk(content='', tool_call_deltas=[{
++            'index': 0, 'id': ident, 'type': 'function',
++            'function': {'name': name, 'arguments': '{}'},
++        }], finish_reason='tool_calls')]
++    llm = _FakeLLM([call('minecraft_observe', 'observe'), call('minecraft_server', 'last', prelude)])
++
++    async def handler(tool_call):
++        nonlocal active
++        output = ({'decision': {'status': 'ready_if_authorized'}} if tool_call.name == 'minecraft_observe'
++                  else {'status': 'received', 'readOnly': read_only})
++        if cancel_last and tool_call.name == 'minecraft_server':
++            active = False
++        return ToolResult(call_id=tool_call.call_id, name=tool_call.name, output=output)
++
++    client = _bare_tool_client(llm, ToolDefinition(name='minecraft_observe', description=''), handler, cap=1)
++    client._tool_definitions.append(ToolDefinition(name='minecraft_server', description=''))
++    messages = [{'role': 'user', 'content': 'Continue only if still authorized.'}]
++    chunks = [chunk async for chunk in client._astream_with_tools(messages, _minecraft_execution_turn=True)]
++    assert ''.join(chunk.content or '' for chunk in chunks).count(prelude) == (0 if cancel_last else expected_preludes)
++    assert len(llm.calls) == 2
++    assert len([message for message in messages if isinstance(message, dict) and message.get('role') == 'tool']) == 2
++
++
+ @pytest.mark.asyncio
+ @pytest.mark.parametrize("scope,ready,server_read_only,expect_action", [
+     (True, True, True, True),

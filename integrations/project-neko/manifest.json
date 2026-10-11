@@ -1,9 +1,9 @@
 {
   "upstreamRepository": "https://github.com/Project-N-E-K-O/N.E.K.O",
   "baseCommit": "fb2a2e731a8c954478d08678b0c8cf40e8145a54",
-  "sourceCommit": "b218194ea8d3e4fff87e1a04fe395a6da9363814",
+  "sourceCommit": "bf4b3c6fdb72fe13a5787cbffd5c6470c009b0b7",
   "scope": "plugin/plugins/game_agent_minecraft",
-  "resultPluginTree": "64e86f90898b728c71bc50c9d84ea078b1b979e3",
+  "resultPluginTree": "0eb7f71201478f5e469000d2856cf798fb987c92",
   "patches": [
     {
       "file": "0001-chore-configure-text-only-local-Qwen-Minecraft-trial.patch",
@@ -272,6 +272,14 @@
     {
       "file": "0067-fix-expose-measured-protected-swim-recovery.patch",
       "sha256": "16da622786c85eb0d84cbb58bc505afae38a575f2afcc13ba704f54cc087d03f"
+    },
+    {
+      "file": "0068-fix-minecraft-preserve-measured-retreat-handoffs-in-.patch",
+      "sha256": "a56dde2c51e0fdcd204725d44cb72dfdd5f8b2f4f5c3f6643c8747d6e25b3b9d"
+    },
+    {
+      "file": "0069-fix-minecraft-focus-measured-retreat-decisions-on-su.patch",
+      "sha256": "e2c50a840740cddafad54e8bfdc086dcd14de5198f6f6dc3bd31820a4d9820a5"
     }
   ],
   "verification": {
@@ -417,6 +425,15 @@
       "file": "host-patches/0011-fix-minecraft-avoid-speaking-repeated-query-preludes.patch",
       "sha256": "d700a08255833db6f88ed6e815768d7e8a5e0896ac2cc670d1ed16bd525c0728",
       "sourceCommit": "b218194ea8d3e4fff87e1a04fe395a6da9363814",
+      "scopePaths": [
+        "main_logic/omni_offline_client/_tools.py",
+        "tests/unit/test_tool_calling.py"
+      ]
+    },
+    {
+      "file": "host-patches/0012-fix-minecraft-classify-speech-in-final-query-opportu.patch",
+      "sha256": "321801958d703e0b5dc357d6ace2ae3be9136c25c74921629df7702a08b4ea93",
+      "sourceCommit": "494c22007828afd360ce500cbccec5b583727884",
       "scopePaths": [
         "main_logic/omni_offline_client/_tools.py",
         "tests/unit/test_tool_calling.py"
@@ -949,6 +966,50 @@
     "toolResultsAndFinalReplyPreserved": true,
     "extraModelCalls": 0,
     "fullReplayMatchesSource": true,
+    "deploymentPhase": "deployed",
+    "deploymentEvidence": "runtime/repair-20261011-0915/host-deployment.json",
+    "runtimeAcceptance": "Natural audio delivery observed; all-query duplicate-prelude regression passed. Audible completion and unrelated playback receipt watchdog are not verified by this change."
+  },
+  "retreatHandoffContextVerification": {
+    "date": "2026-10-11",
+    "sourceCommit": "f21df6a0ac274ea77f9716c5f0ebb7e448903681",
+    "pluginCasesPassed": 226,
+    "pluginSubtestsPassed": 26,
+    "focusedCasesPassed": 27,
+    "focusedSubtestsPassed": 8,
+    "fourContextModesRetainConstraint": true,
+    "activeActionsAndPendingTasksWin": true,
+    "staleUnknownAndInvalidHandoffsRejected": true,
+    "sameContextBudget": true,
+    "extraModelCalls": 0,
+    "deploymentPhase": "deployed",
+    "fullReplayMatchesSource": true,
+    "deploymentEvidence": "runtime/repair-20261011-0915/handoff-plugin-deployment.json"
+  },
+  "retreatPriorityVerification": {
+    "date": "2026-10-11",
+    "sourceCommit": "bf4b3c6fdb72fe13a5787cbffd5c6470c009b0b7",
+    "pluginCasesPassed": 227,
+    "pluginSubtestsPassed": 26,
+    "survivalContextSelectedOnlyDuringValidIdleHandoff": true,
+    "normalGameplayAndPlayerCommunicationPreserved": true,
+    "stopAuthorityAndPrerequisitesPreserved": true,
+    "forcedToolChoice": false,
+    "sameContextBudget": true,
+    "extraModelCalls": 0,
+    "deploymentPhase": "prepared"
+  },
+  "finalQueryPreludeVerification": {
+    "date": "2026-10-11",
+    "sourceCommit": "494c22007828afd360ce500cbccec5b583727884",
+    "toolCallingCasesPassed": 140,
+    "cancellationAndBudgetCasesPassed": 137,
+    "actualReadOnlyReceiptRequired": true,
+    "finalAnswersActionsAndStopPreserved": true,
+    "cancelledFinalPreludeCannotFlush": true,
+    "extraModelCalls": 0,
+    "nativeCatalogueCommit": "52285ffc839a922f42546ece87e88db44361c1a0",
+    "serverQueryPermissionsExpanded": false,
     "deploymentPhase": "prepared"
   }
 }

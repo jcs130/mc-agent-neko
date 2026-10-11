@@ -32,10 +32,29 @@ Existing renderer UI labels old mana as the last received reading; ability rows
 with a null remaining cooldown display unknown rather than ready.
 
 Validation: the early-login integration test first failed with `Missing
-skillsState`. After the repair, all 13 viewer/adapter tests passed, including
+skillsState`. After both startup-race repairs, all 14 viewer/adapter tests passed, including
 local and LAN views, stale timestamp retention, malformed schema recovery,
 subsequent live updates, source hash, private text, observer cleanup and skins.
 These isolated tests do not establish current server-side mana freshness.
 
-Live deployment and final runtime acceptance are recorded separately after
-the viewer-only refresh; gameplay identity must remain unchanged.
+## Runtime acceptance (2026-10-11, Beijing time)
+
+At 09:42, a viewer-only refresh retained native PID 38252, entity 3288 and
+session `58aa62f6-4f66-46eb-a6e4-490a17bcf027`. It restored the cached 26/26
+mana and nine abilities. Each real LAN Socket.IO path (`/socket.io/` and
+`/third/socket.io/`) delivered 183 avatar frames, 81 chunks and a skills state
+in 20 seconds, without connection errors. The replay retained its timestamp,
+`stale: true` and nine unknown remaining cooldowns.
+
+A later owned native reload for the separate retreat repair loaded the same
+viewer changes from ordinary startup. Both LAN streams again delivered
+183 avatar frames, 81 chunks and nine abilities in 20 seconds, with no errors.
+This time a live packet arrived after listener setup, so the host correctly
+reported live rather than replayed data. The actual dungeon page was reloaded
+and visually inspected: mana, the skill panel and game world were present.
+Old readings were explicitly labelled as waiting for a server update. These
+samples verify reception and display, not that every spell can be cast.
+
+Local evidence: `runtime/repair-20261011-0915/viewer-refresh-result.json`,
+`viewer-stream-proof.json` and `viewer-final-regression.log`. Runtime evidence
+contains metadata only and is not part of the public patch bundle.

@@ -32,11 +32,11 @@
 
 **Files:** Modify `src/agent/agent.js`, `src/agent/vision/browser_viewer.js`, `scripts/import-modern-viewer.mjs`, generated `src/agent/vision/modern/host.mjs` and `source.json`; test `test/modern_viewer.test.mjs`.
 
-**Interfaces:** `addBrowserViewer(bot, count_id, { gameInformation })`; optional host input `initialSkillsPacket = { channel, data: Buffer, observedAt }`.
+**Interfaces:** `addBrowserViewer(bot, count_id, { gameInformation })`; optional host input `getInitialSkillsPacket()` returning `{ channel, data: Buffer, observedAt }` after asynchronous asset startup.
 
-- [ ] Add a regression using a same-bot GameInformation cache with `mana: { current: 26, max: 26 }`, nine abilities and an old timestamp; connect Socket.IO before awaiting its first event and assert receipt and the unchanged timestamp.
-- [ ] Run `node --test test/modern_viewer.test.mjs` and confirm the login replay test fails.
-- [ ] Reject closed, foreign-bot, truncated, non-JSON and oversized cache entries. Feed valid cached packets to `parseSkillsPayload`; preserve the original timestamp. Keep generated-host modifications reproducible in the importer.
-- [ ] Assert malformed/foreign snapshots produce no skill state; inject a fresh protocol packet and assert its mana replaces the cache for subsequent subscribers.
-- [ ] Run viewer, browser adapter and provenance tests. Document exact results, deploy matching files and reload only the viewer; compare game identity and sequence before/after, and observe actual LAN `skillsState` events.
-- [ ] Commit only this repair, its tests and report; push the existing authorized branch.
+- [x] Add a regression using a same-bot GameInformation cache with `mana: { current: 26, max: 26 }`, nine abilities and an old timestamp; connect Socket.IO before awaiting its first event and assert receipt and the unchanged timestamp.
+- [x] Run `node --test test/modern_viewer.test.mjs` and confirm the login replay test fails.
+- [x] Reject closed, foreign-bot, truncated, non-JSON and oversized cache entries. Feed valid cached packets to `parseSkillsPayload`; preserve the original timestamp. Keep generated-host modifications reproducible in the importer.
+- [x] Assert malformed/foreign snapshots produce no skill state; inject a fresh protocol packet and assert its mana replaces the cache for subsequent subscribers.
+- [x] Run viewer, browser adapter and provenance tests. Document exact results, deploy matching files and reload only the viewer; compare game identity and sequence before/after, and observe actual LAN `skillsState` events.
+- [x] Commit only this repair, its tests and report; push the existing authorized branch.

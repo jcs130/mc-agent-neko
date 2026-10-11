@@ -1,0 +1,148 @@
+From bf4b3c6fdb72fe13a5787cbffd5c6470c009b0b7 Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Sun, 11 Oct 2026 10:18:40 +0800
+Subject: [PATCH] fix(minecraft): focus measured retreat decisions on survival
+
+---
+ .../plugins/game_agent_minecraft/service.py   | 54 +++++++++++++++----
+ .../game_agent_minecraft/test_query_loop.py   | 26 +++++++++
+ 2 files changed, 69 insertions(+), 11 deletions(-)
+
+diff --git a/plugin/plugins/game_agent_minecraft/service.py b/plugin/plugins/game_agent_minecraft/service.py
+index 5b0140a..eb633d8 100644
+--- a/plugin/plugins/game_agent_minecraft/service.py
++++ b/plugin/plugins/game_agent_minecraft/service.py
+@@ -1290,6 +1290,18 @@ class GameAgentService:
+                 'Dispatch is not completion; wait for measured feedback before claiming success.'
+             )
+         decision['status'] = status
++        handoff = self._native_retreat_handoff() if status == 'ready_if_authorized' else None
++        if handoff:
++            constraint = ('server_protection' if handoff['type'] == 'protected-retreat-stall'
++                          else 'missing_pickaxe')
++            decision['nativeRecovery'] = {'type': handoff['type'], 'constraint': constraint,
++                                         'expiresAt': handoff['expiresAt']}
++            followup = (
++                'The current physical priority is escaping the measured stalled retreat '
++                f'({constraint}) before unrelated quest/catalogue inspection. '
++                'Choose an existing passage or a received, verified escape ability; '
++                'query only an essential escape prerequisite, never repeat the denied excavation. '
++            ) + followup
+         return decision, instruction + followup
+ 
+     def record_server_command(self, result) -> None:
+@@ -1360,6 +1372,22 @@ class GameAgentService:
+             value['previousTaskOutcomes'].pop()
+         return render()
+ 
++    def _native_retreat_handoff(self):
++        """Return only a fresh, explicitly idle, bounded native recovery window."""
++        info = self._game_observations
++        activity = info.state.get('activity') if info.fresh else None
++        keys = ('action', 'skill', 'digging', 'usingHeldItem')
++        if not isinstance(activity, dict) or not all(key in activity for key in keys) or any(activity.get(key) for key in keys):
++            return None
++        recovery = activity.get('recovery')
++        if isinstance(recovery, dict) and recovery.get('type') in (
++                'protected-retreat-stall', 'tool-retreat-stall'):
++            start, end = recovery.get('observedAt'), recovery.get('expiresAt')
++            if (type(start) in (int, float) and type(end) in (int, float)
++                    and start <= time.time() * 1000 < end <= start + 60000):
++                return recovery
++        return None
++
+     def _mc_agent_busy(self) -> bool:
+         """Use fresh body telemetry as well as the natural-language busy latch.
+         A rejected new task can clear that latch while an old skill is still
+@@ -1374,15 +1402,8 @@ class GameAgentService:
+         # do not spend the short handoff window waiting for that latch's TTL.
+         # Real activity above and pending tasks in _game_execution_busy still
+         # win. Missing, expired or unrecognized telemetry grants no exception.
+-        if isinstance(activity, dict) and all(key in activity for key in (
+-                'action', 'skill', 'digging', 'usingHeldItem')):
+-            recovery = activity.get('recovery')
+-            if isinstance(recovery, dict) and recovery.get('type') in (
+-                    'protected-retreat-stall', 'tool-retreat-stall'):
+-                start, end = recovery.get('observedAt'), recovery.get('expiresAt')
+-                if (type(start) in (int, float) and type(end) in (int, float)
+-                        and start <= time.time() * 1000 < end <= start + 60000):
+-                    return False
++        if self._native_retreat_handoff():
++            return False
+         return bool(self._agent_busy) and (time.time() - self._agent_busy_at) < self._agent_busy_ttl
+ 
+     def _mark_agent_idle(self) -> None:
+@@ -2729,8 +2750,19 @@ class GameAgentService:
+         if self._game_execution_busy():
+             return False
+         sections: list[str] = [prompts.t('PLAYER_COMMUNICATION_POLICY', lang=self._lang)]
++        handoff = self._native_retreat_handoff() if self._unattended.enabled else None
+         if self._unattended.enabled:
+-            sections.append(prompts.t("AUTONOMOUS_DECISION_BODY", lang=self._lang))
++            if handoff:
++                constraint = ('server_protection' if handoff['type'] == 'protected-retreat-stall'
++                              else 'missing_pickaxe')
++                sections.append(
++                    'Latest human stop/pause wins. If unattended play is still authorized, the current physical priority '
++                    f'is escaping a measured stalled retreat ({constraint}), before unrelated quest/catalogue inspection. '
++                    'Choose one short feasible physical escape or a received, verified escape ability; '
++                    'query only an essential missing escape prerequisite. Do not repeat denied excavation, '
++                    'invent permission or merely announce another inspection. A dispatch is not completion.')
++            else:
++                sections.append(prompts.t("AUTONOMOUS_DECISION_BODY", lang=self._lang))
+         recovery = self.recovery_context(max_tokens=90)
+         if recovery:
+             sections.append(recovery)
+@@ -2763,7 +2795,7 @@ class GameAgentService:
+             sections.append('If detailsRequired=true, query the needed section before deciding; omitted facts are unknown.')
+             overhead = (prompts.spoken_language_policy(self._lang) + '\n'
+                         + prompts.t('CUE_PREFIX_IDLE', lang=self._lang) + '\n' + '\n'.join(sections))
+-            sections.append(self._game_observations.focused_context(max_tokens=min(700, max(256, 900 - count_tokens(overhead))), mode='decision'))
++            sections.append(self._game_observations.focused_context(max_tokens=min(700, max(256, 900 - count_tokens(overhead))), mode='survival' if handoff else 'decision'))
+             body_text = prompts.t('CUE_PREFIX_IDLE', lang=self._lang) + '\n' + '\n'.join(sections)
+             try:
+                 result = self._push_message(source='game_agent_minecraft', visibility=[], ai_behavior='respond',
+diff --git a/plugin/plugins/game_agent_minecraft/test_query_loop.py b/plugin/plugins/game_agent_minecraft/test_query_loop.py
+index dd31bd9..370115c 100644
+--- a/plugin/plugins/game_agent_minecraft/test_query_loop.py
++++ b/plugin/plugins/game_agent_minecraft/test_query_loop.py
+@@ -1,6 +1,7 @@
+ import json
+ import time
+ import unittest
++from types import SimpleNamespace
+ 
+ from utils.tokenize import count_tokens
+ 
+@@ -10,6 +11,31 @@ from .test_observations import frame, event
+ 
+ 
+ class QueryLoopTests(unittest.IsolatedAsyncioTestCase):
++    async def test_idle_measured_retreat_selects_survival_context_and_goal_before_catalogues(self):
++        service, calls = self.service()
++        data = frame()
++        now = time.time() * 1000
++        data['state']['activity'] = {'action': None, 'skill': None, 'digging': None,
++            'usingHeldItem': False, 'recovery': {'type': 'protected-retreat-stall',
++            'observedAt': now - 1000, 'expiresAt': now + 59000}}
++        await service._on_game_state(data)
++        self.assertTrue(await service._fire_keep_going_nudge())
++        text = calls[-1]['parts'][0]['text']
++        self.assertIn('current physical priority', text)
++        self.assertIn('server_protection', text)
++        self.assertIn('"contextMode": "survival"', text)
++        self.assertNotIn('"contextMode": "decision"', text)
++        self.assertLessEqual(count_tokens(text), 950)
++        # Unknown/disconnected execution must not acquire a recovery goal.
++        self.assertNotIn('nativeRecovery', service.observation_decision()[0])
++        service._client = SimpleNamespace(is_connected=True)
++        decision, instruction = service.observation_decision()
++        self.assertEqual(decision['nativeRecovery']['constraint'], 'server_protection')
++        self.assertIn('before unrelated quest/catalogue', instruction)
++        service._unattended.enabled = False
++        decision, _ = service.observation_decision()
++        self.assertNotIn('nativeRecovery', decision)
++
+     async def test_measured_idle_retreat_handoff_overrides_only_old_busy_latch(self):
+         service, _ = self.service()
+         now = time.time()

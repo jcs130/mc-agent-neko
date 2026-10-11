@@ -1,0 +1,144 @@
+From f21df6a0ac274ea77f9716c5f0ebb7e448903681 Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Sun, 11 Oct 2026 10:04:52 +0800
+Subject: [PATCH] fix(minecraft): preserve measured retreat handoffs in
+ planning
+
+---
+ .../game_agent_minecraft/decision_context.py  |  6 ++-
+ .../plugins/game_agent_minecraft/service.py   | 14 +++++++
+ .../test_focused_context.py                   | 21 ++++++++++
+ .../game_agent_minecraft/test_query_loop.py   | 41 +++++++++++++++++++
+ 4 files changed, 80 insertions(+), 2 deletions(-)
+
+diff --git a/plugin/plugins/game_agent_minecraft/decision_context.py b/plugin/plugins/game_agent_minecraft/decision_context.py
+index 8451627..d91b258 100644
+--- a/plugin/plugins/game_agent_minecraft/decision_context.py
++++ b/plugin/plugins/game_agent_minecraft/decision_context.py
+@@ -216,8 +216,10 @@ def build_focused_view(info, *, mode='decision', max_events=6, max_tokens=1600,
+         active['usingHeldItem'] = activity.get('usingHeldItem')
+         active['mobility'] = _select(activity.get('mobility'), ('state', 'enclosed'))
+         recovery = activity.get('recovery')
+-        if isinstance(recovery, dict) and recovery.get('type') == 'protected-surface-swim-stall':
+-            active['recovery'] = _select(recovery, ('type', 'noProgressSeconds', 'next'))
++        if isinstance(recovery, dict) and recovery.get('type') in (
++                'protected-surface-swim-stall', 'protected-retreat-stall', 'tool-retreat-stall'):
++            active['recovery'] = _select(recovery, (
++                'type', 'constraint', 'observedAt', 'expiresAt', 'noProgressSeconds', 'next'))
+         compact = {'self': own_brief, 'world': _select(world, ('dimension', 'timeOfDay', 'weather')),
+                    'activity': active}
+         if mode != 'running':
+diff --git a/plugin/plugins/game_agent_minecraft/service.py b/plugin/plugins/game_agent_minecraft/service.py
+index 751e091..5b0140a 100644
+--- a/plugin/plugins/game_agent_minecraft/service.py
++++ b/plugin/plugins/game_agent_minecraft/service.py
+@@ -1369,6 +1369,20 @@ class GameAgentService:
+         activity = info.state.get('activity') if info.fresh else None
+         if isinstance(activity, dict) and any(activity.get(key) for key in ('action', 'skill', 'digging', 'usingHeldItem')):
+             return True
++        # The native reflex has explicitly yielded a measured futile retreat.
++        # Its older natural-language status may still say "autonomous/busy";
++        # do not spend the short handoff window waiting for that latch's TTL.
++        # Real activity above and pending tasks in _game_execution_busy still
++        # win. Missing, expired or unrecognized telemetry grants no exception.
++        if isinstance(activity, dict) and all(key in activity for key in (
++                'action', 'skill', 'digging', 'usingHeldItem')):
++            recovery = activity.get('recovery')
++            if isinstance(recovery, dict) and recovery.get('type') in (
++                    'protected-retreat-stall', 'tool-retreat-stall'):
++                start, end = recovery.get('observedAt'), recovery.get('expiresAt')
++                if (type(start) in (int, float) and type(end) in (int, float)
++                        and start <= time.time() * 1000 < end <= start + 60000):
++                    return False
+         return bool(self._agent_busy) and (time.time() - self._agent_busy_at) < self._agent_busy_ttl
+ 
+     def _mark_agent_idle(self) -> None:
+diff --git a/plugin/plugins/game_agent_minecraft/test_focused_context.py b/plugin/plugins/game_agent_minecraft/test_focused_context.py
+index 8a53b86..a5a6850 100644
+--- a/plugin/plugins/game_agent_minecraft/test_focused_context.py
++++ b/plugin/plugins/game_agent_minecraft/test_focused_context.py
+@@ -14,6 +14,27 @@ from .service import GameAgentService
+ 
+ 
+ class FocusedContextTests(unittest.TestCase):
++    def test_measured_retreat_constraints_survive_every_focused_mode(self):
++        for kind, constraint in (('protected-retreat-stall', 'server_protection'),
++                                 ('tool-retreat-stall', 'missing_pickaxe')):
++            for mode in ('decision', 'running', 'social', 'survival'):
++                with self.subTest(kind=kind, mode=mode):
++                    data = crowded_frame()
++                    data['state']['activity']['recovery'] = {
++                        'type': kind, 'constraint': constraint, 'noProgressSeconds': 15,
++                        'observedAt': 1000, 'expiresAt': 61000,
++                        'next': 'Use an existing passage or an observed escape ability.',
++                    }
++                    observations = GameObservations()
++                    observations.ingest_state(data)
++                    view = observations.focused_view(mode=mode, max_tokens=950)
++                    recovery = view['state']['activity'].get('recovery')
++                    self.assertIsNotNone(recovery)
++                    self.assertEqual(recovery['constraint'], constraint)
++                    self.assertEqual(recovery['expiresAt'], 61000)
++                    self.assertIn('existing passage', recovery['next'])
++                    self.assertLessEqual(count_tokens(json.dumps(view, ensure_ascii=False)), 950)
++
+     def test_native_protected_swim_recovery_survives_focused_context(self):
+         data = crowded_frame()
+         data['state']['activity']['recovery'] = {
+diff --git a/plugin/plugins/game_agent_minecraft/test_query_loop.py b/plugin/plugins/game_agent_minecraft/test_query_loop.py
+index d94f30b..dd31bd9 100644
+--- a/plugin/plugins/game_agent_minecraft/test_query_loop.py
++++ b/plugin/plugins/game_agent_minecraft/test_query_loop.py
+@@ -1,4 +1,5 @@
+ import json
++import time
+ import unittest
+ 
+ from utils.tokenize import count_tokens
+@@ -9,6 +10,46 @@ from .test_observations import frame, event
+ 
+ 
+ class QueryLoopTests(unittest.IsolatedAsyncioTestCase):
++    async def test_measured_idle_retreat_handoff_overrides_only_old_busy_latch(self):
++        service, _ = self.service()
++        now = time.time()
++        data = frame()
++        data['state']['activity'] = {'action': None, 'skill': None, 'digging': None,
++            'usingHeldItem': False, 'recovery': {'type': 'tool-retreat-stall',
++            'observedAt': now * 1000 - 1000, 'expiresAt': now * 1000 + 59000}}
++        await service._on_game_state(data)
++        service._agent_busy, service._agent_busy_at = True, now
++        self.assertFalse(service._mc_agent_busy())
++        # A real action, pending task, expired or malformed handoff must retain
++        # ordinary ownership; this exception is not a general idle override.
++        data['seq'] += 1
++        data['state']['activity']['skill'] = 'goToPosition'
++        await service._on_game_state(data)
++        self.assertTrue(service._mc_agent_busy())
++        data['seq'] += 1
++        data['state']['activity']['skill'] = None
++        data['state']['activity']['recovery']['expiresAt'] = now * 1000 - 1
++        await service._on_game_state(data)
++        self.assertTrue(service._mc_agent_busy())
++        for expiry in ('invalid', True, float('inf'), now * 1000 + 300000):
++            data['seq'] += 1
++            data['state']['activity']['recovery']['expiresAt'] = expiry
++            await service._on_game_state(data)
++            self.assertTrue(service._mc_agent_busy())
++        data['seq'] += 1
++        data['state']['activity']['recovery'].update(type='unknown', expiresAt=now * 1000 + 59000)
++        await service._on_game_state(data)
++        self.assertTrue(service._mc_agent_busy())
++        data['seq'] += 1
++        data['state']['activity']['recovery']['type'] = 'protected-retreat-stall'
++        await service._on_game_state(data)
++        self.assertFalse(service._mc_agent_busy())
++        service._pending = object()
++        self.assertTrue(service._game_execution_busy())
++        service._pending = None
++        service._game_observations.observed_at -= 60
++        self.assertTrue(service._mc_agent_busy())
++
+     def service(self):
+         calls = []
+         service = GameAgentService(logger=None, push_message_fn=lambda **kw: calls.append(kw))
