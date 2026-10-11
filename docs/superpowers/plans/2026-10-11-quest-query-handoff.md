@@ -23,3 +23,11 @@ boundaries, reuse the existing neutral locale header for trusted execution
 events only, and test unrelated/mixed attention and task results. Export host
 patch 0014, then reload only the host at the measured idle boundary and repeat
 natural observation. Do not treat prepared, deployed and productive as synonyms.
+
+The 13:29 task deadline supplied new evidence: eight successful arrivals at
+the same nearby villager without a next interaction. Add bounded feedback at
+the existing completed-command boundary only for validated villager searches,
+comparing measured body/inventory/vitals and actual target NPC identity/position.
+Keep normal travel, waiting, busy survival, changed evidence and task generation
+boundaries. Reproduce against the real command bridge, run full native checks,
+then load only the owned native child when idle and repeat natural verification.

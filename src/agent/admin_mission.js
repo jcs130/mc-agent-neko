@@ -52,6 +52,21 @@ function failedActionState(bot) {
         health: bot.health ?? null, food: bot.food ?? null, dimension: bot.game?.dimension ?? null });
 }
 
+function villagerArrivalState(bot) {
+    const state = failedActionState(bot);
+    if (!state || !bot.entities || ![bot.health, bot.food].every(Number.isFinite)) return null;
+    const villagers = Object.values(bot.entities).filter(entity => entity?.name === 'villager');
+    if (!villagers.length || villagers.some(entity => !Number.isFinite(entity.id)
+        || ![entity.position?.x, entity.position?.y, entity.position?.z].every(Number.isFinite))) return null;
+    const position = bot.entity.position;
+    const distance = entity => Math.hypot(entity.position.x - position.x,
+        entity.position.y - position.y, entity.position.z - position.z);
+    const nearest = villagers.sort((a, b) => distance(a) - distance(b) || a.id - b.id)[0];
+    if (distance(nearest) > 6) return null;
+    return JSON.stringify({ state, target: [nearest.id,
+        nearest.position.x, nearest.position.y, nearest.position.z] });
+}
+
 // Rolling kernel-yield backstop — mirrors handleMessage's 5-min crash fallback. tick() re-stamps
 // it while the loop is truly ACTIVE; if the controller ever dies without end(), the kernel recovers
 // full autonomy + gray-zone survival within this window.
@@ -650,6 +665,41 @@ export class AdminMission {
         return null;
     }
 
+    async navigationArrivalFeedback(mission, parsed, result, { model, query }) {
+        if (this.state !== RUNNING || this.mission !== mission) return null;
+        const bot = this._bot();
+        const busy = this.agent.actions?.executing || this.agent.actions?.currentActionLabel
+            || this.agent.supervised_skill || bot?._currentSkill || bot?.targetDigBlock
+            || bot?.usingHeldItem || bot?.isSleeping;
+        const invocation = JSON.stringify([parsed.commandName, parsed.args || []]);
+        const eligible = model && !query && parsed.commandName === '!searchForEntity' && parsed.args?.[0] === 'villager';
+        const state = eligible && !busy && villagerArrivalState(bot);
+        // Count only completed, validated model searches that explicitly reached
+        // the same nearby villager. Ordinary travel, waiting and changed NPCs
+        // are not a failure, and an unfinished action never reaches this boundary.
+        if (!eligible || busy || !state || typeof result !== 'string'
+            || !/^Action output:/.test(result) || !/^You have reached at /m.test(result)
+            || result.length > 12000 || invocation.length > 512) {
+            mission.navigationArrivalLoop = null;
+            return null;
+        }
+        const previous = mission.navigationArrivalLoop;
+        const count = previous?.invocation === invocation && previous.result === result && previous.state === state
+            ? previous.count + 1 : 1;
+        mission.navigationArrivalLoop = { invocation, result, state, count };
+        if (count >= 5) {
+            await this.end('navigation-loop', `${parsed.commandName} 连续5次到达同一附近村民，位置、库存、生命饥饿及村民观测未变化。`
+                + '导航已完成但任务未推进；依据实际回执选择所需交互、核实具体前置条件或结束仅查找任务。'
+                + '这不代表服务器故障或整个目标无法完成，不要原样重复同一已完成导航。');
+            return 'Repeated arrival stopped; the task owner received the measured arrival evidence.';
+        }
+        if (count === 3) return 'Repeated arrival: the same nearby villager was reached 3 consecutive times with unchanged measured state. '
+            + 'Navigation is already complete. Choose the next necessary interaction, inspect a missing prerequisite, '
+            + 'or finish if finding the entity was the whole task. Do not repeat the completed search unchanged; '
+            + 'two more identical arrivals return this stalled task to its owner.';
+        return null;
+    }
+
     completionFeedback(command = '!endGoal') {
         if (!this.isActive() || this.mission.observations?.length || this.progressEvidence()) return null;
         // A new task can otherwise be marked done on the model's first reply,
@@ -708,6 +758,7 @@ export class AdminMission {
             case 'impossible':
             case 'query-loop':
             case 'action-loop':
+            case 'navigation-loop':
             case 'no-progress':
             case 'deadline':
             case 'deaths-exceeded': return 'failed';
@@ -723,6 +774,7 @@ export class AdminMission {
             case 'impossible': return '任务无法完成' + (detail ? '：' + detail : '。');
             case 'query-loop': return '任务因查询空转停止：' + detail;
             case 'action-loop': return '任务因动作空转停止：' + detail;
+            case 'navigation-loop': return '任务因导航空转停止：' + detail;
             case 'no-progress': return '任务无进展，已判定无法完成。';
             case 'deadline': return '任务超时（超过时限），已停止。';
             case 'deaths-exceeded': return '任务因多次死亡而中止。';

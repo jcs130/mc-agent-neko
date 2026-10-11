@@ -59,6 +59,84 @@ function menuFailureHarness() {
     return h;
 }
 
+function arrivalHarness() {
+    let result = 'Action output:\nFound villager 1 blocks away.\nFound non-destructive path (success).\nYou have reached at 1, 64, 2.';
+    const h = harness(undefined, [{ name: '!searchForEntity', params: {
+        type: { type: 'string' }, range: { type: 'int' },
+    }, perform: () => result }]);
+    Object.assign(h.agent.bot, { entity: { position: { x: 1, y: 64, z: 2 } }, health: 20, food: 20,
+        inventory: { slots: Array(46).fill(null) },
+        entities: { 184: { id: 184, name: 'villager', position: { x: 2, y: 64, z: 2 } } } });
+    h.mission._handoff({ text: '向实际村民询价', taskId: 'arrival', origin: 'ws' });
+    return { ...h, setResult: value => { result = value; } };
+}
+
+test('repeated successful arrivals at the same measured NPC warn then hand back actual evidence', async () => {
+    const h = arrivalHarness();
+    const command = '!searchForEntity("villager", 255)';
+    for (let i = 0; i < 2; i++) assert.doesNotMatch(await h.execute(h.agent, command, () => {}), /Repeated arrival/);
+    assert.match(await h.execute(h.agent, command, () => {}), /Repeated arrival.*3/s);
+    assert.equal(h.mission.isActive(), true);
+    await h.execute(h.agent, command, () => {});
+    await h.execute(h.agent, command, () => {});
+    assert.equal(h.mission.isActive(), false);
+    assert.equal(h.finishes.length, 1);
+    assert.equal(h.finishes[0][1], 'failed');
+    assert.match(h.finishes[0][2], /导航空转/);
+    assert.match(h.finishes[0][2], /Found villager 1 blocks away/);
+    assert.doesNotMatch(h.finishes[0][2], /已判定无法完成/);
+});
+
+test('changed body, NPC, result, arguments or intervening query reset arrival repetition', async () => {
+    const command = '!searchForEntity("villager", 255)';
+    for (const change of [h => { h.agent.bot.entity.position.x += 1; },
+        h => { h.agent.bot.entities[184].position.x += 1; },
+        h => { h.agent.bot.entities[184].id = 185; },
+        h => { h.agent.bot.inventory.slots[9] = { name: 'emerald', count: 1 }; },
+        h => { h.setResult('Action output:\nFound villager 2 blocks away.\nYou have reached at 1, 64, 2.'); },
+        h => h.execute(h.agent, '!searchForEntity("villager", 128)', () => {}),
+        h => h.execute(h.agent, '!stats', () => {}),
+        h => h.execute(h.agent, command)]) {
+        const h = arrivalHarness();
+        for (let i = 0; i < 4; i++) await h.execute(h.agent, command, () => {});
+        await change(h);
+        await h.execute(h.agent, command, () => {});
+        assert.equal(h.finishes.length, 0);
+        assert.equal(h.mission.isActive(), true);
+    }
+});
+
+test('unknown NPC or body state, waiting, untrusted prose and active survival never count as arrivals', async () => {
+    for (const change of [h => { h.agent.bot.entities = {}; }, h => { h.agent.bot.entity = null; },
+        h => { h.agent.actions = { executing: true }; },
+        h => { h.agent.actions = { currentActionLabel: 'mode:self_preservation' }; },
+        h => { h.agent.bot._currentSkill = 'escape'; }, h => { h.agent.bot.targetDigBlock = {}; },
+        h => { h.agent.bot.isSleeping = true; },
+        h => { h.setResult('Action output: finished waiting.'); },
+        h => { h.setResult('A player said: You have reached at 1, 64, 2.'); }]) {
+        const h = arrivalHarness();
+        change(h);
+        for (let i = 0; i < 6; i++) await h.execute(h.agent, '!searchForEntity("villager", 255)', () => {});
+        assert.equal(h.finishes.length, 0);
+        assert.equal(h.mission.isActive(), true);
+    }
+});
+
+test('late arrival result cannot stop a replacement task', async () => {
+    const h = arrivalHarness();
+    for (let i = 0; i < 4; i++) await h.execute(h.agent, '!searchForEntity("villager", 255)', () => {});
+    let release;
+    h.setResult(new Promise(resolve => { release = resolve; }));
+    const pending = h.execute(h.agent, '!searchForEntity("villager", 255)', () => {});
+    await Promise.resolve();
+    h.mission._handoff({ text: '新指令', taskId: 'new-arrival', origin: 'ws' });
+    const before = h.finishes.length;
+    release('Action output:\nFound villager 1 blocks away.\nYou have reached at 1, 64, 2.');
+    await pending;
+    assert.equal(h.finishes.length, before);
+    assert.equal(h.mission.mission.taskId, 'new-arrival');
+});
+
 test('real stale menu closes and clicks reach the existing failed-action handoff boundary', async () => {
     for (const command of ['!closeWindow(24)', '!clickWindow(24, 0)']) {
         const { agent, mission, finishes, execute } = menuFailureHarness();
