@@ -45,6 +45,21 @@ function fixture(t, options = {}) {
     return { agent, bot, frames, information };
 }
 
+test('default observation path keeps long guide text and every received merchant quote', async t => {
+    const { bot, information } = fixture(t);
+    const guide = '欢迎与玩法说明。'.repeat(1800) + '末尾关键条件：持有试炼券才可以进入。';
+    bot.emit('message', { toString: () => guide }, 'system');
+    await new Promise(resolve => setImmediate(resolve));
+    const packet = { channel: 'mcagent:state', data: Buffer.from(JSON.stringify({
+        abilities: Array.from({ length: 140 }, (_, i) => ({ id: 'spell_' + i, description: guide })) })) };
+    information.pluginPacket(packet);
+    const result = information.snapshot();
+    assert.equal(result.state.server.welcome.messages.at(-1).text, guide);
+    assert.equal(result.recentEvents.at(-1).data.value.abilities[139].description, guide);
+    assert.equal(result.state.server.channels['mcagent:state'].value.abilities.length, 140);
+    assert.deepEqual(result.truncated, []);
+});
+
 test('client authentication outcome reaches snapshots without credentials or login commands', t => {
     const { bot, information } = fixture(t);
     installServerAuth(bot, { host: 'mc.test.invalid', port: 25702, username: bot.username },
@@ -248,7 +263,7 @@ test('component names remain readable when the library getter is unavailable', t
     assert.deepEqual(item.lore, ['切换技能']);
 });
 
-test('large entity metadata cannot hide collision blocks, online players or nearby truncation', t => {
+test('large entity metadata cannot hide collision blocks, online players or metadata', t => {
     const { bot, information } = fixture(t);
     bot.entities[2].metadata = Array(128).fill('large entity payload '.repeat(800));
     information.presentation.recipeBook = {
@@ -260,8 +275,8 @@ test('large entity metadata cannot hide collision blocks, online players or near
     assert.equal(frame.state.nearby.head?.name, 'stone');
     assert.deepEqual(frame.state.nearby.onlinePlayers, ['Friend_1']);
     assert.equal(frame.state.nearby.entities[0].name, 'zombie');
-    assert.ok(frame.truncated.some(path => path.startsWith('$.nearby')),
-        'earlier section truncations must not hide the nearby omission notice');
+    assert.deepEqual(frame.state.nearby.entities[0].metadata, bot.entities[2].metadata);
+    assert.deepEqual(frame.truncated, []);
 });
 
 test('login gameplay instructions survive event expiry, eviction, respawn and a late reader', async t => {
@@ -318,16 +333,16 @@ test('welcome deduplication outlives event dedup and actual login anchors the ca
     assert.deepEqual(welcome.messages.map(message => message.text), ['early welcome', 'delayed gameplay guide']);
 });
 
-test('welcome cache reports bounded text omissions', t => {
+test('welcome cache keeps all received text', t => {
     const { information } = fixture(t);
     information.event('system', { text: '指南'.repeat(5000), source: 'server' });
     information.event('system', { text: 'second guide omitted by budget', source: 'server' });
     for (let n = 0; n < 200; n++) information.event('system', { text: `extra ${n}`, source: 'server' });
     const welcome = information.snapshot().state.server.welcome;
-    assert.ok(welcome.messages.length <= 32);
-    assert.ok(welcome.messages.reduce((total, message) => total + message.text.length, 0) <= 8192);
-    assert.equal(welcome.truncated, true);
-    assert.ok(welcome.omittedMessages > 0);
+    assert.equal(welcome.messages.length, 202);
+    assert.equal(welcome.messages[0].text, '指南'.repeat(5000));
+    assert.equal(welcome.truncated, false);
+    assert.equal(welcome.omittedMessages, 0);
 });
 
 test('protection state and blocked dig events retain coordinates and reasons', t => {
@@ -431,18 +446,19 @@ test('repeated actionbar and identical plugin packets are coalesced without losi
     assert.equal(information.snapshot().state.server.actionBar, null);
 });
 
-test('snapshot recovers events with stable IDs, caps bursts and reports omitted data', t => {
+test('snapshot and pending delivery preserve every event in a received burst', t => {
     const { information } = fixture(t);
     for (let i = 0; i < 300; i++) information.event('system', { text: `server notice ${i}` });
     const first = information.snapshot(), second = information.snapshot();
-    assert.equal(information.events.length, 128);
-    assert.equal(first.recentEvents.length, 48);
-    assert.ok(first.droppedEvents > 0);
+    assert.equal(information.events.length, 300);
+    assert.equal(information.pending.length, 300);
+    assert.equal(first.recentEvents.length, 300);
+    assert.equal(first.droppedEvents, 0);
     assert.equal(first.recentEvents.at(-1).id, second.recentEvents.at(-1).id);
     assert.ok(second.seq > first.seq);
     const bounded = boundedGameValue({ data: 'x'.repeat(20000) }, 1000);
-    assert.ok(bounded.truncated.length > 0);
-    assert.ok(bounded.value.data.length <= 1000);
+    assert.equal(bounded.truncated.length, 0);
+    assert.equal(bounded.value.data.length, 20000);
 });
 
 test('end marks the game offline even when protocol still says play; close releases all listeners', t => {
@@ -477,7 +493,8 @@ test('large item data cannot hide server feedback, menus or body facts; declared
     assert.equal(result.state.server.commandCatalog.commands[0].name, 'skills');
     assert.equal(result.state.server.commandCatalog.commands[0].arguments[0].name, 'ability');
     assert.equal(result.state.inventory.counts.written_book, 1);
-    assert.ok(result.truncated.some(path => path.startsWith('$.inventory')));
+    assert.deepEqual(result.state.inventory.slots.find(item => item?.name === 'written_book').components, bot.inventory.slots[10].components);
+    assert.deepEqual(result.truncated, []);
 });
 
 test('1.20.6 NBT book pages are readable and all command names survive large advancement data', t => {

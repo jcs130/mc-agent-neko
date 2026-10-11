@@ -141,7 +141,7 @@ test('optimistic client slots and stale server packets cannot confirm a rejected
     assert.equal(f.bot._client.listenerCount('set_slot'), 0);
 });
 
-test('merchant text stays bounded while retaining current-window trading instructions', () => {
+test('merchant text keeps every quote and current-window trading instructions', () => {
     const f = fixture();
     f.packet.trades = Array.from({ length: 80 }, () => structuredClone(f.packet.trades[0]));
     applyMerchantTrades(f.bot, f.packet);
@@ -152,8 +152,8 @@ test('merchant text stays bounded while retaining current-window trading instruc
         ];
     }
     const text = describeMenu(f.bot);
-    assert.ok(text.length < 9500, text.length);
-    assert.match(text, /Additional offers omitted/);
+    assert.equal((text.match(/\[trade /g) || []).length, 80);
+    assert.doesNotMatch(text, /Additional offers omitted/);
     assert.match(text, /!tradeWindow\(3,/);
     assert.match(text, /lore/);
 });

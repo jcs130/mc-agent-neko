@@ -37,16 +37,16 @@ async function openReceivedStorage(bot, source, activate, { timeoutMs = 2500, re
     const messages = [];
     const onMessage = (message, position, sender) => {
         if (sender || (position && position !== 'system')) return;
-        const text = label(message).trim().slice(0, 2048);
+        const text = label(message).trim();
         if (!text) return;
         const match = /^MC_[A-Z_]+\s+(\{.*\})$/.exec(text);
         if (match) {
             try {
                 const receipt = JSON.parse(match[1]);
                 if (receipt.success === false) serverFailure = [receipt.skill, receipt.errorMessage || receipt.reason,
-                    receipt.nextCommands?.[0]].filter(Boolean).join('; ').slice(0, 280);
-            } catch { /* keep the bounded human-readable server reply */ }
-        } else { messages.push(text.slice(0, 180)); if (messages.length > 2) messages.shift(); }
+                    ...(receipt.nextCommands ?? [])].filter(Boolean).join('; ');
+            } catch { messages.push(text); /* retain the actual unparsed server reply */ }
+        } else { messages.push(text); }
     };
     const pending = new Promise(resolve => { finish = resolve; });
     // Minepacks can immediately reopen the same numeric ID with its final title.

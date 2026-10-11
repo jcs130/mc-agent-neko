@@ -30,18 +30,18 @@ export function applyMerchantTrades(bot, packet) {
         return true;
     } catch (error) {
         window.trades = null;
-        window._tradeDecodeError = String(error.message || error).slice(0, 160);
+        window._tradeDecodeError = String(error.message || error);
         return false;
     }
 }
 
 function offerItem(item, count = item.count) {
     const identity = readItemIdentity(item);
-    return { item: item.name, count, ...(identity.customName ? { name: identity.customName.slice(0, 80) } : {}),
+    return { item: item.name, count, ...(identity.customName ? { name: identity.customName } : {}),
         ...(identity.lore.length ? { lore: identity.lore } : {}) };
 }
 
-export function merchantOffers(window, maxOffers = 32) {
+export function merchantOffers(window, maxOffers = Infinity) {
     if (!isMerchantWindow(window)) return null;
     if (!Array.isArray(window.trades)) return { status: window._tradeDecodeError ? 'decode_error' : 'pending',
         ...(window._tradeDecodeError ? { error: window._tradeDecodeError } : {}) };

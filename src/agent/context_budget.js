@@ -64,59 +64,9 @@ export function executionPromptHistory(turns, agent) {
     return projected;
 }
 
-export function sanitizeMemorySummary(value) {
-    return String(value || '').split(/(?<=[.!?。！？])\s+|\n+/).map(part => part.trim()).filter(part => part
-        && !/^(?:(?:current\s+)?(?:status|goal|task|action|position|location)\s*:|(?:HP|health|food|hunger)\s*[:=]?\s*\d|At\s*\(\s*-?\d|(?:当前)?(?:状态|目标|任务|行动|位置|坐标|生命值|饱食度|饥饿值)\s*[:：])/i.test(part))
-        .join(' ').slice(0, 500);
-}
-
-export function memoryEvidence(turns) {
-    const evidence = turns.filter(turn => !(turn.role === 'system' && (
-        turn.content.startsWith('You are self-prompting with the goal:')
-        || /^(?:\s*STATS\b|\s*INVENTORY\b|\s*\*COMMAND DOCS\b)/.test(turn.content)
-    )));
-    // Normal batches are already bounded by History. An oversized individual
-    // observation gets an explicit head/tail projection; its full raw text
-    // remains archived even after this partial summary commits.
-    if (evidence.length === 1 && evidence[0].content.length > 8000) {
-        const notice = { role: 'system', content: 'MEMORY INPUT LIMIT: oversized observation partly omitted. Full original remains archived. Missing text is unknown, not evidence of absence.' };
-        return [notice, projectTurn(evidence[0], 8000 - notice.content.length)];
-    }
-    return evidence;
-}
-
-export function boundedPromptHistory(turns, maxChars = 12000, maxTurns = 32) {
-    const notice = { role: 'system', content: 'CONTEXT LIMIT: older or oversized raw turns omitted; this projection is incomplete. Full evidence remains in pending memory and the archive. Prefer the current task and fresh state.' };
-    const limit = Math.max(0, maxChars - notice.content.length);
-    const selected = [];
-    let chars = 0, index = turns.length - 1, clipped = false;
-    while (index >= 0 && selected.length < maxTurns - 1) {
-        const end = index;
-        // Keep an action invocation with its following result when it fits.
-        if (turns[index].role === 'system' && index > 0 && turns[index - 1].role === 'assistant') index--;
-        const group = turns.slice(index, end + 1);
-        const size = group.reduce((sum, turn) => sum + turn.content.length, 0);
-        if (chars + size > limit || selected.length + group.length > maxTurns - 1) {
-            if (selected.length) break;
-            // A long assistant monologue must not consume the newest action
-            // result. Give its invocation at most 1000 characters, then devote
-            // the remaining budget to the measured result (including its tail).
-            const invocationBudget = group.length === 2 ? Math.min(1000, limit) : limit;
-            const invocation = projectTurn(group[0], invocationBudget);
-            selected.push(invocation);
-            if (group.length === 2) selected.push(projectTurn(group[1], limit - invocation.content.length));
-            clipped = true; index--; break;
-        }
-        selected.unshift(...group); chars += size; index--;
-    }
-    const result = index >= 0 || clipped ? [notice, ...selected] : selected;
-    return JSON.parse(JSON.stringify(result));
-}
-
-function projectTurn(turn, budget) {
-    if (turn.content.length <= budget) return { ...turn };
-    const marker = ' [PROMPT PROJECTION OMITTED MIDDLE] ';
-    if (budget <= marker.length) return { ...turn, content: turn.content.slice(0, Math.max(0, budget)) };
-    const head = Math.ceil((budget - marker.length) / 2), tail = budget - marker.length - head;
-    return { ...turn, content: turn.content.slice(0, head) + marker + (tail ? turn.content.slice(-tail) : '') };
-}
+// Compatibility names for callers. Neither raw evidence nor an accepted
+// memory summary is an expendable prompt preview. Historical authority is
+// expressed by executionPromptTemplate, not by deleting matching sentences.
+export function sanitizeMemorySummary(value) { return String(value || '').trim(); }
+export function memoryEvidence(turns) { return JSON.parse(JSON.stringify(turns)); }
+export function boundedPromptHistory(turns) { return JSON.parse(JSON.stringify(turns)); }

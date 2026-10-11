@@ -5,11 +5,10 @@ const REPLY_BYTES = 256 * 1024;
 
 function plain(value, depth = 0, seen = new Set()) {
     if (value == null || ['number', 'boolean', 'string'].includes(typeof value)) return value;
-    if (typeof value !== 'object' || depth > 6 || seen.has(value)) return undefined;
+    if (typeof value !== 'object' || seen.has(value)) return undefined;
     seen.add(value);
     const out = Array.isArray(value) ? [] : {};
     const entries = Object.entries(value);
-    if (entries.length > 256) throw new Error('Generated-code result is too large; use a smaller query.');
     for (const [key, item] of entries) {
         if (key.startsWith('_') || ['constructor', '__proto__', 'prototype'].includes(key)) continue;
         const next = plain(item, depth + 1, seen);
@@ -104,8 +103,7 @@ export function executeGeneratedCode(agent, source, api, { allowed = [], timeout
                 }
                 checkBody();
                 if (message.method.startsWith('world.') || message.method === 'bot.inventoryItems') {
-                    queryTrace.push(`${message.method}: ${JSON.stringify(plain(result))?.slice(0, 1500)}`);
-                    if (queryTrace.length > 4) queryTrace.shift();
+                    queryTrace.push(`${message.method}: ${JSON.stringify(plain(result))}`);
                 }
                 reply({ result: plain(result), snapshot: snapshot(bot) });
             } catch (e) { reply({ error: e.message || String(e) }); }

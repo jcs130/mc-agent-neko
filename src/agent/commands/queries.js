@@ -224,7 +224,7 @@ export const queryList = [
                         villagerDetails.push({
                             id: entity.id,
                             profession: profession,
-                            customName: plainText(entity.metadata?.[2]).replace(/§[0-9a-fk-or]/gi, '').slice(0, 160),
+                            customName: plainText(entity.metadata?.[2]).replace(/§[0-9a-fk-or]/gi, ''),
                             position: entity.position,
                             distance: entity.position.distanceTo(bot.entity.position),
                         });
@@ -236,13 +236,12 @@ export const queryList = [
                 if (entityType === 'villager') {
                     let villagerInfo = `${count} ${entityType}(s)`;
                     if (villagerDetails.length > 0) {
-                        const detailStrings = villagerDetails.slice(0, 16).map(v => {
+                        const detailStrings = villagerDetails.map(v => {
                             const position = ['x', 'y', 'z'].map(axis => Number.isFinite(v.position?.[axis])
                                 ? v.position[axis].toFixed(1) : '?').join(',');
                             return `(${v.id}:${v.profession}; name=${v.customName ? JSON.stringify(v.customName) : 'unknown'}; pos=(${position}); distance=${Number.isFinite(v.distance) ? v.distance.toFixed(1) : '?'})`;
                         });
                         villagerInfo += ` - Adults: ${detailStrings.join(', ')}`;
-                        if (villagerDetails.length > 16) villagerInfo += `; ${villagerDetails.length - 16} further adult identities omitted`;
                     }
                     if (babyVillagerIds.length > 0) {
                         villagerInfo += ` - Baby IDs: ${babyVillagerIds.join(', ')} (babies cannot trade)`;

@@ -14,6 +14,7 @@ export class History {
         mkdirSync(`./bots/${this.name}/histories`, { recursive: true });
 
         this.turns = [];
+        this.complete_turns = [];
 
         // Natural language memory as a summary of recent messages + previous memory
         this.memory = '';
@@ -37,9 +38,9 @@ export class History {
     }
 
     getHistory() { // expects an Examples object
-        // This is the model-facing projection only. The complete pending queue
-        // and archive remain intact even when summary requests keep failing.
-        return boundedPromptHistory([...this.pending_memory, ...this.turns]);
+        // Every received turn remains visible after summarization as well as
+        // before it. Only an explicit clear() removes conversation evidence.
+        return boundedPromptHistory(this.complete_turns);
     }
 
     async summarizeMemories(turns, oldMemory = this.memory) {
@@ -62,8 +63,8 @@ export class History {
             if (batch.length >= 32 || (batch.length && chars + turn.content.length > 8000)) break;
             batch.push(turn);
             chars += turn.content.length;
-            // A single oversized observation is projected explicitly by
-            // memoryEvidence; never combine it with other observations.
+            // A single oversized observation is summarized whole; avoid
+            // combining it with other observations in a background batch.
             if (chars >= 8000) break;
         }
         return batch;
@@ -119,6 +120,7 @@ export class History {
             if (generation !== this._summaryGeneration) return;
             this.memory = next;
             this.pending_memory.splice(0, batch.length);
+            // Summaries supplement complete_turns; they never replace its evidence.
             this._lastSummaryAt = Date.now();
             this._summaryRetryAfter = 0;
             try { await this.save(); }
@@ -174,6 +176,7 @@ export class History {
             content = `${name}: ${content}`;
         }
         this.turns.push({role, content});
+        this.complete_turns.push({role, content});
 
         if (this.turns.length >= this.max_messages) {
             let chunk = this.turns.splice(0, this.summary_chunk_size);
@@ -199,6 +202,7 @@ export class History {
                 memory: this.memory,
                 turns: this.turns,
                 pending_memory: this.pending_memory,
+                complete_turns: this.complete_turns,
                 self_prompting_state: _mActive ? 0 : this.agent.self_prompter.state,   // 0 === SelfPrompter STOPPED
                 self_prompt: (_mActive || this.agent.self_prompter.isStopped()) ? null : this.agent.self_prompter.prompt,
                 taskStart: this.agent.task.taskStartTime,
@@ -224,6 +228,7 @@ export class History {
             this.memory = sanitizeMemorySummary(data.memory || '');
             this.turns = data.turns || [];
             this.pending_memory = data.pending_memory || [];
+            this.complete_turns = data.complete_turns || [...this.pending_memory, ...this.turns];
             this._lastSummaryAt = Date.now();
             this._summaryRetryAfter = 0;
             this._scheduleMemoryFlush();
@@ -240,6 +245,7 @@ export class History {
         if (this._summaryTimer) { clearTimeout(this._summaryTimer); this._summaryTimer = null; }
         this.turns = [];
         this.pending_memory = [];
+        this.complete_turns = [];
         this.memory = '';
         this._lastSummaryAt = Date.now();
         this._summaryRetryAfter = 0;

@@ -342,6 +342,9 @@ export async function executeCommand(agent, message, beforeExecute = null) {
             const result = await command.perform(agent, ...parsed.args);
             if (mission) {
                 agent.adminMission.recordObservation(mission, parsed.commandName, result);
+                const inspectionFeedback = await agent.adminMission.merchantInspectionFeedback?.(mission, parsed, result,
+                    { model: Boolean(beforeExecute) });
+                if (inspectionFeedback) return `${result}\n\n${inspectionFeedback}`;
                 const arrivalFeedback = await agent.adminMission.navigationArrivalFeedback?.(mission, parsed, result,
                     { model: Boolean(beforeExecute), query: !isAction(parsed.commandName) });
                 if (arrivalFeedback) return `${result}\n\n${arrivalFeedback}`;

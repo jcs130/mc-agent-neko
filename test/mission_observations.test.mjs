@@ -4,11 +4,12 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { playerInventorySlots } from '../src/agent/library/inventory_snapshot.js';
 import { closeMenu, clickMenuSlot } from '../src/agent/library/menus.js';
+import { merchantOffers } from '../src/agent/library/merchant_trades.js';
 
 function harness(perform = async () => '生命 20/20；魔力 20/20；技能点 6', actions = []) {
     const finishes = [];
     const context = vm.createContext({
-        console, Date, setTimeout, clearTimeout, playerInventorySlots, process: { env: { DEBUG_CHAT: '0' } },
+        console, Date, setTimeout, clearTimeout, playerInventorySlots, merchantOffers, process: { env: { DEBUG_CHAT: '0' } },
         wsServer: { beginMissionTask() {}, finishMission: (...args) => finishes.push(args) },
         queryList: [{ name: '!readBook', params: { slot: { type: 'int' } }, perform },
             { name: '!stats', perform }],
@@ -32,6 +33,48 @@ function harness(perform = async () => '生命 20/20；魔力 20/20；技能点 
     const execute = vm.runInContext('executeCommand', context);
     return { agent, mission: agent.adminMission, finishes, execute };
 }
+
+function merchantInspectionHarness() {
+    const h = harness(undefined, [{ name: '!showVillagerTrades', params: { id: { type: 'int' } },
+        perform: agent => { agent.bot.currentWindow.id++; return 'Action output:\n' + JSON.stringify(merchantOffers(agent.bot.currentWindow)); } }]);
+    Object.assign(h.agent.bot, { entity: { position: { x: 1, y: 64, z: 2 } }, health: 20, food: 20,
+        inventory: { slots: Array(46).fill(null) }, currentWindow: { id: 1, type: 'minecraft:merchant',
+            trades: [{ inputItem1: { name: 'potato', count: 20 }, outputItem: { name: 'emerald', count: 1 },
+                realPrice: 20, nbTradeUses: 0, maximumNbTradeUses: 16 }] } });
+    h.mission._handoff({ text: '检查实际报价后交易', taskId: 'merchant', origin: 'ws' });
+    return h;
+}
+
+test('new window IDs do not disguise repeated unchanged merchant inspections', async () => {
+    const h = merchantInspectionHarness();
+    for (let i = 0; i < 4; i++) await h.execute(h.agent, '!showVillagerTrades(304)', () => {});
+    assert.equal(h.mission.isActive(), true);
+    await h.execute(h.agent, '!showVillagerTrades(304)', () => {});
+    assert.equal(h.mission.isActive(), false);
+    assert.equal(h.finishes.length, 1);
+    assert.match(h.finishes[0][2], /potato/);
+    assert.match(h.finishes[0][2], /emerald/);
+});
+
+test('real price, stock, inventory, movement and target changes reset merchant evidence', async () => {
+    for (const change of [h => { h.agent.bot.currentWindow.trades[0].realPrice--; },
+        h => { h.agent.bot.currentWindow.trades[0].nbTradeUses++; },
+        h => { h.agent.bot.inventory.slots[9] = { name: 'potato', count: 20 }; },
+        h => { h.agent.bot.entity.position.x++; }]) {
+        const h = merchantInspectionHarness();
+        for (let i = 0; i < 4; i++) await h.execute(h.agent, '!showVillagerTrades(304)', () => {});
+        change(h);
+        await h.execute(h.agent, '!showVillagerTrades(304)', () => {});
+        assert.equal(h.mission.isActive(), true);
+        assert.equal(h.mission.mission.merchantInspectionLoop.count, 1);
+    }
+    const h = merchantInspectionHarness();
+    for (let i = 0; i < 4; i++) await h.execute(h.agent, '!showVillagerTrades(304)', () => {});
+    await h.execute(h.agent, '!showVillagerTrades(305)', () => {});
+    assert.equal(h.mission.isActive(), true);
+    for (let i = 0; i < 6; i++) await h.execute(h.agent, '!showVillagerTrades(305)');
+    assert.equal(h.mission.isActive(), true, 'manual inspections never terminate the task');
+});
 
 function failedActionHarness() {
     let result = 'Action failed: !testTrade did not complete successfully.\nNot enough payment items. No trade executed.';
@@ -437,12 +480,12 @@ test('late query data is not attributed to a replacement task', async () => {
     assert.doesNotMatch(finishes[1][2], /old data/);
 });
 
-test('repeated large queries keep completion evidence bounded', async () => {
+test('repeated large queries keep complete completion evidence', async () => {
     const { agent, mission, finishes, execute } = harness(async () => 'x'.repeat(50000));
     mission._handoff({ text: '查询', taskId: 'large', origin: 'ws' });
     for (let index = 0; index < 20; index++) await execute(agent, '!readBook(-1)');
     await mission.end('done');
-    assert(finishes[0][2].length < 12500);
+    assert.equal((finishes[0][2].match(/x{50000}/g) || []).length, 20);
     assert.match(finishes[0][2], /Observed game data/);
 });
 test('completion uses assistant prose and never echoes the self-prompt as its outcome', async () => {
@@ -493,7 +536,7 @@ test('inventory evidence is isolated by mission and unknown initial inventory st
     assert.equal(mission.progressEvidence(), '', 'a replacement starts with its own measured inventory');
 });
 
-test('equipment slot transfers are not acquisitions and large deltas stay bounded', () => {
+test('equipment slot transfers are not acquisitions and all deltas remain visible', () => {
     const { agent, mission } = harness();
     agent.bot.entity = { position: {} };
     agent.bot.inventory = { slots: Array(46).fill(null) };
@@ -505,9 +548,9 @@ test('equipment slot transfers are not acquisitions and large deltas stay bounde
     for (let i = 10; i < 40; i++) agent.bot.inventory.slots[i] = { name: 'item_' + 'x'.repeat(100) + i, count: 1 };
     agent.bot.inventory.slots[40] = { name: 'iron_sword', count: 1 };
     const evidence = mission.progressEvidence();
-    assert(evidence.length < 1600);
+    assert.equal(JSON.parse(evidence.slice(evidence.indexOf('{'))).changes.length, 31);
     assert.match(evidence, /iron_sword/);
-    assert.match(evidence, /omitted/);
+    assert.doesNotMatch(evidence, /omitted/);
 });
 
 test('actual action output is retained as command evidence for its task', async () => {

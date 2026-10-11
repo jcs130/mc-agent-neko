@@ -17,7 +17,7 @@ function loadedContainers(bot, position) {
         /^(?:chest|trapped_chest|barrel|ender_chest|(?:\w+_)?shulker_box)$/.test(block.name)).map(block => block.id);
     if (!matching.length) return [];
     try {
-        return bot.findBlocks({ matching, maxDistance: 16, count: 6 }).map(pos => bot.blockAt(pos))
+        return bot.findBlocks({ matching, maxDistance: 16, count: Infinity }).map(pos => bot.blockAt(pos))
             .filter(Boolean).map(block => ({ name: block.name, position: point(block.position),
                 distance: Math.round(distance(position, block.position) * 10) / 10 }));
     } catch { return []; }
@@ -67,36 +67,27 @@ export function gameText(value) {
     return String(value);
 }
 
-export function boundedGameValue(value, maxChars = 96000) {
+export function boundedGameValue(value) {
     const clipped = [], seen = new WeakSet();
-    let left = maxChars;
     function visit(input, depth, location) {
         if (input == null || typeof input === 'boolean') return input ?? null;
         if (typeof input === 'number') return finite(input);
         if (typeof input === 'bigint') return String(input);
-        if (typeof input === 'string') {
-            const size = Math.max(0, Math.min(input.length, 8192, left));
-            left -= size;
-            if (size < input.length) clipped.push(location);
-            return input.slice(0, size);
-        }
+        if (typeof input === 'string') return input;
         if (typeof input !== 'object') return null;
-        if (depth >= 9 || seen.has(input) || left <= 0) { clipped.push(location); return null; }
+        if (seen.has(input)) { clipped.push(location); return null; }
         if (Buffer.isBuffer(input) || ArrayBuffer.isView(input)) return { byteLength: input.byteLength };
         seen.add(input);
         const entries = Array.isArray(input) ? input.entries() : Object.entries(input);
         const output = Array.isArray(input) ? [] : {};
-        let count = 0;
         for (const [key, item] of entries) {
-            if (++count > 128 || left <= 0) { clipped.push(location); break; }
             if (['__proto__', 'constructor', 'prototype'].includes(String(key))) continue;
-            left -= String(key).length + 8;
             output[key] = visit(item, depth + 1, `${location}.${key}`);
         }
         seen.delete(input);
         return output;
     }
-    return { value: visit(value, 0, '$'), truncated: [...new Set(clipped)].slice(0, 32) };
+    return { value: visit(value, 0, '$'), truncated: [...new Set(clipped)] };
 }
 
 function itemState(item, slot) {
@@ -112,8 +103,8 @@ function itemState(item, slot) {
         const book = item.components?.find(value => /^(minecraft:)?(written|writable)_book_content$/.test(value.type))?.data;
         if (Array.isArray(book?.pages)) result.book = {
             title: plainText(book.rawTitle ?? book.title), author: plainText(book.author), pageCount: book.pages.length,
-            pages: book.pages.slice(0, 128).map((page, index) => ({ page: index + 1, text: plainText(page.content ?? page.rawContent ?? page) })),
-            pagesOmitted: Math.max(0, book.pages.length - 128),
+            pages: book.pages.map((page, index) => ({ page: index + 1, text: plainText(page.content ?? page.rawContent ?? page) })),
+            pagesOmitted: 0,
         };
     } catch { unavailable.push('readableItemText'); }
     if (finite(result.durabilityUsed) != null && finite(result.maxDurability) != null && result.durabilityUsed > result.maxDurability) {
@@ -152,7 +143,7 @@ function nearbyPlayers(bot, position) {
     return Object.values(bot.entities ?? {}).filter(entity => entity.id !== bot.entity?.id &&
         entity.username && bot.players?.[entity.username] && distance(position, entity.position) <= 6)
         .sort((a, b) => distance(position, a.position) - distance(position, b.position))
-        .slice(0, 4).map(entity => entity.username);
+        .map(entity => entity.username);
 }
 
 function receivedPlayer(bot, sender, text) {
@@ -188,12 +179,12 @@ export function collectGameState(agent, presentation = {}) {
         const block = blockAt(x, y, z);
         if (block && !['air', 'cave_air', 'void_air'].includes(block.name)) blocks.set(`${x},${y},${z}`, blockState(block));
     }
-    const entities = Object.values(bot.entities ?? {}).filter(entity => entity.id !== bot.entity?.id && distance(pos, entity.position) <= 32)
+    const entities = Object.values(bot.entities ?? {}).filter(entity => entity.id !== bot.entity?.id)
         .sort((a, b) => distance(pos, a.position) - distance(pos, b.position));
     const window = bot.currentWindow;
-    const scoreboards = Object.values(bot.scoreboards ?? {}).slice(0, 12).map(board => ({
+    const scoreboards = Object.values(bot.scoreboards ?? {}).map(board => ({
         name: board.name, title: gameText(board.title),
-        items: (board.items ?? []).slice(0, 64).map(item => ({ name: gameText(item.displayName ?? item.name), value: item.value })),
+        items: (board.items ?? []).map(item => ({ name: gameText(item.displayName ?? item.name), value: item.value })),
     }));
     return {
         self: { username: bot.username, health: finite(bot.health), food: finite(bot.food),
@@ -211,17 +202,17 @@ export function collectGameState(agent, presentation = {}) {
             slots: slots.map(itemState).filter(Boolean) },
         // Keep local collision facts and real chat targets ahead of verbose
         // entity metadata. Otherwise a crowded scene hides how to get unstuck.
-        nearby: { radius: 32, onlinePlayers: Object.keys(bot.players ?? {}).slice(0, 64),
+        nearby: { radius: null, entityScope: 'all entities received on this connection', onlinePlayers: Object.keys(bot.players ?? {}),
             containers: loadedContainers(bot, pos),
             under: blockState(below), feet: pos ? blockState(blockAt(0, 0, 0)) : null,
             head: pos ? blockState(blockAt(0, 1, 0)) : null,
-            entities: entities.slice(0, 32).map(entity => ({ id: entity.id, name: entity.name,
+            entities: entities.map(entity => ({ id: entity.id, name: entity.name,
             type: entity.type, username: entity.username, displayName: gameText(entity.displayName),
-            customName: plainText(entity.metadata?.[2]).replace(/§[0-9a-fk-or]/gi, '').slice(0, 160),
+            customName: plainText(entity.metadata?.[2]).replace(/§[0-9a-fk-or]/gi, ''),
             position: point(entity.position), distance: Math.round(distance(pos, entity.position) * 10) / 10,
             droppedItem: droppedItem(entity),
             health: finite(entity.health), equipment: entity.equipment?.map(item => itemState(item)),
-            metadata: entity.metadata })), entitiesOmitted: Math.max(0, entities.length - 32),
+            metadata: entity.metadata })), entitiesOmitted: 0,
             sampledBlocks: [...blocks.values()], sampleRadius: 4,
             signs: presentation.signs ?? [] },
         window: window ? { id: window.id, type: window.type, title: gameText(window.title),
@@ -247,7 +238,8 @@ export function collectGameState(agent, presentation = {}) {
             recipeBook: presentation.recipeBook, advancements: presentation.advancements },
         coverage: { source: 'own Mineflayer connection and loaded game state',
             unavailable: ['unreceived server data', 'unloaded terrain', 'undecoded binary plugin payloads'],
-            nearbyBlocks: 'loaded samples, not a complete map', maxNearbyEntities: 32 },
+            nearbyBlocks: 'loaded samples, not a complete map', containerSearchRadius: 16,
+            entityScope: 'all received entities; unreceived/unloaded entities remain unknown' },
     };
 }
 
@@ -315,7 +307,7 @@ export class GameInformation {
         this.on(this.bot, 'actionBar', value => this.actionBar(gameText(value)));
         this.on(this.bot, 'serverProtection', value => this.event('protection', {
             text: value.text, source: 'server_permission_check',
-            data: boundedGameValue(Object.fromEntries(Object.entries(value).filter(([key]) => key !== 'text')), 4000).value,
+            data: boundedGameValue(Object.fromEntries(Object.entries(value).filter(([key]) => key !== 'text'))).value,
         }));
         this.on(this.bot, 'autonomyRecovery', value => this.event('recovery', {
             text: value?.type === 'protected-retreat-stall'
@@ -323,7 +315,7 @@ export class GameInformation {
                 : value?.type === 'tool-retreat-stall'
                 ? '避险挖掘持续没有位移，脚下石质方块因没有镐被本地工具守卫拒绝；临时交回规划器选择已有通道、交互、补工具或实际可用的脱困技能。'
                 : '水边脱困持续没有进展，附近破坏操作已被服务器拒绝；临时交回规划器选择合法通道或可用脱困技能。',
-            source: 'measured_native_recovery', data: boundedGameValue(value, 1200).value,
+            source: 'measured_native_recovery', data: boundedGameValue(value).value,
         }));
         this.on(this.bot, 'title', (value, type = 'title') => {
             this.presentation.titles[type] = { text: gameText(value), observedAt: now() };
@@ -385,20 +377,21 @@ export class GameInformation {
             this.presentation.commandCatalog = {
                 source: 'server-declared commands visible to this account; declaration does not prove execution permission',
                 count: commands.length, namesText: commands.map(node => node.extraNodeData?.name ?? node.name).join(', '),
-                argumentDetailsOmitted: Math.max(0, commands.length - 32),
-                commands: commands.slice(0, 32).map(node => ({ name: node.extraNodeData?.name ?? node.name,
-                    arguments: (node.children ?? []).slice(0, 16).map(index => {
+                argumentDetailsOmitted: 0,
+                commands: commands.map(node => ({ name: node.extraNodeData?.name ?? node.name,
+                    arguments: (node.children ?? []).map(index => {
                         const child = nodes[index];
                         return { name: child?.extraNodeData?.name ?? child?.name,
                             parser: child?.extraNodeData?.parser ?? child?.parser };
                     }) })),
             };
         });
-        this.on(this.bot._client, 'abilities', packet => { this.presentation.playerAbilities = boundedGameValue(packet, 2000).value; });
+        this.on(this.bot._client, 'abilities', packet => { this.presentation.playerAbilities = boundedGameValue(packet).value; });
         this.on(this.bot._client, 'tile_entity_data', packet => {
             if (!/sign/i.test(gameText(packet.nbtData?.value?.id?.value))) return;
+            const key = JSON.stringify(packet.location);
+            this.presentation.signs = this.presentation.signs.filter(sign => JSON.stringify(sign.position) !== key);
             this.presentation.signs.push({ position: packet.location, nbt: packet.nbtData, observedAt: now() });
-            this.presentation.signs = this.presentation.signs.slice(-16);
         });
         this.on(this.bot._client, 'advancements', packet => {
             if (packet.reset || !this.presentation.advancements.entries) this.presentation.advancements = { progress: {}, entries: {}, omitted: 0 };
@@ -408,29 +401,24 @@ export class GameInformation {
                 title: gameText(entry.value?.displayData?.title), description: gameText(entry.value?.displayData?.description),
                 parent: entry.value?.parentId, requirements: entry.value?.requirements,
             };
-            for (const entry of packet.progressMapping ?? []) state.progress[entry.key] = boundedGameValue(entry.value, 2000).value;
-            for (const map of [state.entries, state.progress]) while (Object.keys(map).length > 128) {
-                delete map[Object.keys(map)[0]]; state.omitted++;
-            }
-            this.event('advancement', { source: 'server', data: boundedGameValue({ progress: packet.progressMapping }, 4000).value });
+            for (const entry of packet.progressMapping ?? []) state.progress[entry.key] = boundedGameValue(entry.value).value;
+            this.event('advancement', { source: 'server', data: boundedGameValue({ progress: packet.progressMapping }).value });
         });
         for (const name of ['trade_list', 'window_items', 'craft_progress_bar', 'unlock_recipes']) this.on(this.bot._client, name, packet => {
             if (name === 'trade_list' && packet.windowId === this.bot.currentWindow?.id) {
-                this.presentation.trades = boundedGameValue(packet, 12000).value;
+                this.presentation.trades = boundedGameValue(packet).value;
                 applyMerchantTrades(this.bot, packet);
             }
-            if (name === 'unlock_recipes') this.presentation.recipeBook = boundedGameValue(packet, 6000).value;
+            if (name === 'unlock_recipes') this.presentation.recipeBook = boundedGameValue(packet).value;
             if (name === 'craft_progress_bar') {
                 this.presentation.windowProperties ??= {};
                 this.presentation.windowProperties[packet.property] = packet.value;
-                while (Object.keys(this.presentation.windowProperties).length > 64) delete this.presentation.windowProperties[Object.keys(this.presentation.windowProperties)[0]];
             }
         });
         this.on(this.bot._client, 'teams', packet => {
             this.presentation.teams ??= {};
             if (packet.mode === 1) delete this.presentation.teams[packet.team];
-            else this.presentation.teams[packet.team] = boundedGameValue(packet, 4000).value;
-            while (Object.keys(this.presentation.teams).length > 64) delete this.presentation.teams[Object.keys(this.presentation.teams)[0]];
+            else this.presentation.teams[packet.team] = boundedGameValue(packet).value;
         });
         this.timer = setInterval(() => this.sendState(), intervalMs);
         this.timer.unref?.();
@@ -458,12 +446,11 @@ export class GameInformation {
         for (const [key, time] of this.recent) if (now - time > 10000 || this.recent.size > 512) this.recent.delete(key);
         if (previous != null && now - previous < (kind === 'actionbar' ? 5000 : 1000)) return;
         const bounded = boundedGameValue({ id: `${this.sessionId}:${++this.eventSeq}`, kind, observedAt: now,
-            ...detail, text: text.slice(0, 8192) }, 16000);
-        const event = { ...bounded.value, truncated: text.length > 8192 || bounded.truncated.length > 0 };
+            ...detail, text });
+        const event = { ...bounded.value, truncated: bounded.truncated.length > 0 };
         this.captureWelcome(event);
         this.events.push(event); this.pending.push(event);
-        if (this.events.length > 128) { this.events.shift(); this.dropped++; }
-        if (this.pending.length > 64) { this.pending.shift(); this.dropped++; }
+        this.events = this.events.filter(item => now - item.observedAt < 120000);
         if (!this.flushTimer) this.flushTimer = setTimeout(() => this.flushEvents(), this.flushMs);
     }
 
@@ -474,12 +461,7 @@ export class GameInformation {
             event.data?.solicitedCommand || event.data?.sender || event.data?.authenticationControl || !event.text) return;
         const key = createHash('sha256').update(event.kind + '\0' + event.text).digest('hex');
         if (this.welcomeKeys.has(key)) return;
-        const left = 8192 - this.welcomeChars;
-        if (welcome.messages.length >= 32 || left <= 0) {
-            welcome.truncated = true; welcome.omittedMessages++;
-            return;
-        }
-        const text = event.text.slice(0, left), truncated = event.truncated || text.length < event.text.length;
+        const text = event.text, truncated = event.truncated;
         welcome.messages.push({ id: event.id, kind: event.kind, source: 'server',
             observedAt: event.observedAt, text, truncated });
         welcome.truncated ||= truncated;
@@ -487,10 +469,10 @@ export class GameInformation {
     }
 
     pluginPacket(packet) {
-        const channel = String(packet.channel ?? '').slice(0, 200), bytes = packet.data;
+        const channel = String(packet.channel ?? ''), bytes = packet.data;
         if (!Buffer.isBuffer(bytes)) return;
         let value = null, encoding = 'binary';
-        if (bytes.length <= 32768) {
+        {
             const text = bytes.toString('utf8');
             const controls = [...text].some(char => char.charCodeAt(0) < 32 && !['\t', '\n', '\r'].includes(char));
             if (!text.includes('\uFFFD') && !controls) {
@@ -498,13 +480,12 @@ export class GameInformation {
                 try { value = JSON.parse(text); encoding = 'json'; } catch { value = text; }
             }
         }
-        const parsed = boundedGameValue(value, 20000);
+        const parsed = boundedGameValue(value);
         const entry = { channel, encoding, byteLength: bytes.length, observedAt: this.now(),
             value: parsed.value, truncated: parsed.truncated, sha256: createHash('sha256').update(bytes).digest('hex') };
         const same = this.presentation.channels[channel]?.sha256 === entry.sha256;
         delete this.presentation.channels[channel];
         this.presentation.channels[channel] = entry;
-        while (Object.keys(this.presentation.channels).length > 16) delete this.presentation.channels[Object.keys(this.presentation.channels)[0]];
         if (!same) this.event('plugin_message', { source: 'server', data: entry });
     }
 
@@ -532,21 +513,15 @@ export class GameInformation {
         const now = this.now();
         if (this.presentation.actionBar && now - this.presentation.actionBar.observedAt > 10000) this.presentation.actionBar = null;
         for (const [kind, value] of Object.entries(this.presentation.titles)) if (now - value.observedAt > 15000) delete this.presentation.titles[kind];
-        // A large book/plugin payload must not consume another section's budget.
-        const raw = collectGameState(this.agent, this.presentation), state = {}, truncated = [], sectionOmissions = [];
-        const budgets = { self: 8000, world: 2000, activity: 3000, server: 20000, window: 24000,
-            inventory: 24000, nearby: 12000, coverage: 1000 };
-        for (const [section, budget] of Object.entries(budgets)) {
-            const bounded = boundedGameValue(raw[section], budget);
-            state[section] = bounded.value;
-            const paths = bounded.truncated.map(path => `$.${section}${path.slice(1)}`);
-            if (paths.length) sectionOmissions.push(paths[0]);
-            truncated.push(...paths);
-        }
+        // Complete received state, including long books, menus and server
+        // channels. Transport failure is explicit; never replace facts by a
+        // syntactically valid but incomplete prefix.
+        const raw = collectGameState(this.agent, this.presentation);
+        const complete = boundedGameValue(raw), state = complete.value;
         return { type: 'game_state', schemaVersion: 1, sessionId: this.sessionId, seq: ++this.stateSeq,
             observedAt: now, online: this.online && this.bot._client?.state === 'play' && this.bot._client?.socket?.destroyed !== true, state,
-            recentEvents: this.events.filter(event => now - event.observedAt < 120000).slice(-48),
-            truncated: [...new Set([...sectionOmissions, ...truncated])].slice(0, 32), droppedEvents: this.dropped };
+            recentEvents: this.events.filter(event => now - event.observedAt < 120000),
+            truncated: complete.truncated, droppedEvents: this.dropped };
     }
 
     sendState(client) {

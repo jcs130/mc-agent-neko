@@ -20,13 +20,20 @@ test('an action error after bot replacement preserves the original failure', asy
     assert.doesNotMatch(result.message, /reading 'length'/);
 });
 
-test('ordinary action logs retain their bounded output and are consumed once', () => {
+test('action receipts retain their entire middle and are consumed once', () => {
     const agent = { bot: { output: 'first-' + 'x'.repeat(600) + '-last' } };
+    const original = agent.bot.output;
     const manager = new ActionManager(agent);
     const text = manager.getBotOutputSummary();
     assert.match(text, /first-/);
     assert.match(text, /-last/);
-    assert.match(text, /has been shortened/);
+    assert.equal(text, 'Action output:\n' + original);
     assert.equal(agent.bot.output, '');
     assert.equal(manager.getBotOutputSummary(), 'Action output:\n');
+});
+
+test('an interrupted action retains the output recorded before interruption', () => {
+    const manager = new ActionManager({ bot: { interrupt_code: true, output: 'Placed one block before stopping.' } });
+    assert.equal(manager.getBotOutputSummary(), 'Action output:\nPlaced one block before stopping.');
+    assert.equal(manager.agent.bot.output, '');
 });

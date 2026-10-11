@@ -24,6 +24,7 @@
 
 import { wsServer } from '../websocket/ws_server.js';
 import { playerInventorySlots } from './library/inventory_snapshot.js';
+import { merchantOffers } from './library/merchant_trades.js';
 
 const IDLE = 'IDLE';
 const RUNNING = 'RUNNING';
@@ -584,13 +585,12 @@ export class AdminMission {
         const before = mission.inventoryStart;
         const changes = [...new Set([...Object.keys(before), ...Object.keys(current)])]
             .filter(name => (before[name] || 0) !== (current[name] || 0))
-            .map(name => ({ item: name.slice(0, 64), before: before[name] || 0,
+            .map(name => ({ item: name, before: before[name] || 0,
                 now: current[name] || 0, delta: (current[name] || 0) - (before[name] || 0) }))
             .sort((a, b) => Number(!/_sword$|_axe$|^shield$/.test(a.item)) - Number(!/_sword$|_axe$|^shield$/.test(b.item))
                 || b.delta - a.delta || a.item.localeCompare(b.item));
         if (!changes.length) return '';
-        const value = { changes: changes.slice(0, 8) };
-        if (changes.length > 8) value.omitted = changes.length - 8;
+        const value = { changes };
         return '\n\n[Measured task inventory: start versus current server inventory; not proof that an arbitrary whole goal is complete]\n'
             + JSON.stringify(value);
     }
@@ -598,8 +598,40 @@ export class AdminMission {
     recordObservation(mission, command, result) {
         if (this.state !== RUNNING || this.mission !== mission || typeof result !== 'string' || !result.trim()) return;
         const observations = mission.observations;
-        observations.push(`${command}:\n${result.trim().slice(0, 10000)}`);
-        while (observations.length > 8 || observations.reduce((size, text) => size + text.length, 0) > 12000) observations.shift();
+        observations.push(`${command}:\n${result.trim()}`);
+    }
+
+    async merchantInspectionFeedback(mission, parsed, result, { model }) {
+        if (this.state !== RUNNING || this.mission !== mission) return null;
+        if (parsed.commandName !== '!showVillagerTrades') return null;
+        const bot = this._bot();
+        const busy = this.agent.actions?.executing || this.agent.actions?.currentActionLabel
+            || this.agent.supervised_skill || bot?._currentSkill || bot?.targetDigBlock
+            || bot?.usingHeldItem || bot?.isSleeping;
+        const offers = merchantOffers(bot?.currentWindow);
+        const state = failedActionState(bot), target = parsed.args?.[0];
+        if (!model || busy || !state || !Number.isInteger(target) || ![bot.health, bot.food].every(Number.isFinite)
+            || offers?.status !== 'ready' || offers.omitted || !/^Action output:/m.test(result || '')) {
+            mission.merchantInspectionLoop = null;
+            return null;
+        }
+        // Opening the same NPC allocates a NEW window ID. Compare the actual
+        // prices/uses, body and inventory instead of the changing presentation.
+        const fingerprint = JSON.stringify({ state, target, offers });
+        const previous = mission.merchantInspectionLoop;
+        const count = previous?.bot === bot && previous.fingerprint === fingerprint
+            ? previous.count + 1 : 1;
+        mission.merchantInspectionLoop = { bot, fingerprint, count };
+        if (count >= 5) {
+            await this.end('query-loop', '同一村民连续5次检查，实际报价、库存、位置和生命未变化。'
+                + '已把完整报价交回规划器；请据此交易、选择其他NPC或说明此子任务的阻碍。'
+                + '这不是服务器故障，也不表示整个玩法目标无法完成。');
+            return 'Repeated merchant inspection stopped; complete measured quotes returned to the task owner.';
+        }
+        if (count === 3) return 'Repeated merchant inspection: the same NPC has unchanged received quotes, inventory and position. '
+            + 'Reopening is not new progress. Use the actual offers to choose a trade or a different next step; '
+            + 'two more unchanged inspections return this stalled subtask to its owner.';
+        return null;
     }
 
     async queryLoopFeedback(mission, parsed, result, { model, query }) {

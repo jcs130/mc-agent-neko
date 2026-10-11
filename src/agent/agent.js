@@ -1098,10 +1098,6 @@ export class Agent {
 
             let behavior_log = this.bot.modes.flushBehaviorLog().trim();
             if (behavior_log.length > 0) {
-                const MAX_LOG = 500;
-                if (behavior_log.length > MAX_LOG) {
-                    behavior_log = '...' + behavior_log.substring(behavior_log.length - MAX_LOG);
-                }
                 behavior_log = 'Recent behaviors log: \n' + behavior_log;
                 await this.history.add('system', behavior_log);
             }

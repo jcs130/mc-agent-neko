@@ -28,7 +28,7 @@ test('supports legacy NBT JSON pages and writable book rawContent', () => {
         data: { pages: [{ content: 'Notes' }] } }] };
     assert.match(readInventoryBook(botWith(writable)), /Notes/);
 });
-test('reports missing content honestly and caps model input', () => {
+test('reports missing content honestly and retains complete book text', () => {
     assert.match(readInventoryBook(botWith({ name: 'written_book' })), /has not supplied/);
     assert.match(readInventoryBook(botWith(null)), /No readable/);
     assert.match(readInventoryBook(botWith(null), 99), /Invalid/);
@@ -36,8 +36,8 @@ test('reports missing content honestly and caps model input', () => {
         pages: Array.from({ length: 100 }, () => ({ content: 'a'.repeat(10000) })),
     } }] };
     const output = readInventoryBook(botWith(item));
-    assert(output.length < 10500);
-    assert.match(output, /first 8 pages/);
+    assert.equal((output.match(/\[Page /g) || []).length, 100);
+    assert.match(output, /\[Page 100\] a{10000}/);
 });
 test('reads later pages by their actual page numbers without repeating the beginning', () => {
     const item = { name: 'written_book', components: [{ type: 'written_book_content', data: {
@@ -47,7 +47,7 @@ test('reads later pages by their actual page numbers without repeating the begin
     assert.match(output, /\[Page 9\] Entry 9\./);
     assert.match(output, /\[Page 16\] Entry 16\./);
     assert.doesNotMatch(output, /\[Page 1\]/);
-    assert.match(output, /readBookPages\(-1, 17\)/);
+    assert.match(output, /\[Page 23\]/);
     assert.match(readInventoryBook(botWith(item), -1, 17), /\[Page 23\]/);
     assert.match(readInventoryBook(botWith(item), -1, 24), /Invalid starting page/);
 });

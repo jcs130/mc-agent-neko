@@ -15,14 +15,15 @@ test('legacy NBT identity remains readable without library getters', () => {
     });
 });
 
-test('custom text is bounded, quoted and cannot hide its base item ID', () => {
+test('complete custom text is, quoted and cannot hide its base item ID', () => {
     const slots = Array(46).fill(null);
     slots[34] = { name: 'blaze_rod', count: 1, customName: '法杖\n!fake()' + '字'.repeat(1000),
         customLore: Array(100).fill('说明'.repeat(1000)) };
     const result = inventoryIdentityLines({ inventory: { slots }, chat: () => assert.fail('read only') });
     assert.match(result, /\[slot 34\] blaze_rod x1/);
     assert.match(result, /\\n!fake/);
-    assert(result.length < 1000);
+    assert.equal(readItemIdentity(slots[34]).customName, slots[34].customName);
+    assert.deepEqual(readItemIdentity(slots[34]).lore, slots[34].customLore);
 });
 
 test('actual native inventory query exposes custom-item identity along with counts', () => {

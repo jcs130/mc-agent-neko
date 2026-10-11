@@ -37,6 +37,8 @@ test('overflow batches for 45 seconds instead of generating a summary every five
     assert.equal(f.calls.length, 1);
     f.calls[0].resolve('Spruce planks can make sticks.'); await flush;
     assert.equal(f.history.memory, 'Spruce planks can make sticks.');
+    assert.equal(f.history.getHistory().length, 20);
+    assert(f.history.getHistory().some(turn => turn.content.startsWith('fact-0:')));
 });
 
 test('pending original turns survive trimming, serialization and reload', async () => {
@@ -132,7 +134,7 @@ test('successful commit removes only its own batch and preserves later observati
     assert(snapshot.pending_memory.some(turn => turn.content.startsWith('during-0:')));
 });
 
-test('failed summaries keep disk facts intact while model input stays explicitly bounded', async () => {
+test('failed summaries keep disk facts intact while model input keeps every raw turn', async () => {
     const f = fixture(); f.add(150, 'persistent-fact'); await f.settle();
     assert.equal(f.calls.length, 1);
     f.calls[0].reject(new Error('offline')); await f.history.waitForMemory();
@@ -141,9 +143,9 @@ test('failed summaries keep disk facts intact while model input stays explicitly
     assert.equal(snapshot.pending_memory.length + snapshot.turns.length, 150);
     assert(snapshot.pending_memory.some(turn => turn.content.startsWith('persistent-fact-0:')));
     const input = f.history.getHistory();
-    assert(input.length <= 32);
-    assert(input.reduce((sum, turn) => sum + turn.content.length, 0) <= 12000);
-    assert.match(input[0].content, /CONTEXT LIMIT.*incomplete/);
+    assert.equal(input.length, 150);
+    assert.equal(input.length, 150);
+    assert.match(input[0].content, /^persistent-fact-0:/);
     assert(input.some(turn => turn.content.startsWith('persistent-fact-149:')));
     while (f.history.pending_memory.length) {
         const flush = f.history.flushMemories(true); await f.settle();
@@ -153,12 +155,12 @@ test('failed summaries keep disk facts intact while model input stays explicitly
     assert.equal(f.history.pending_memory.length, 0);
 });
 
-test('an oversized newest observation is bounded only in the prompt projection', async () => {
+test('an oversized newest observation survives in full in the prompt', async () => {
     const f = fixture(), original = 'Verified server observation: ' + 'x'.repeat(20000);
     await f.history.add('system', original); await f.history.save();
     const input = f.history.getHistory();
-    assert(input.reduce((sum, turn) => sum + turn.content.length, 0) <= 12000);
-    assert.match(input[0].content, /CONTEXT LIMIT/);
+    assert.equal(input[0].content, original);
+    assert.equal(input[0].content, original);
     assert.equal(JSON.parse(f.files.get(f.history.memory_fp)).turns[0].content, original);
 });
 
@@ -177,15 +179,15 @@ test('a hung memory request cannot indefinitely hold the next action inference',
     assert.equal(f.history.memory, 'Late verified server rule.');
 });
 
-test('bounded prompt history keeps the newest command and result together', () => {
+test('complete prompt history keeps the newest command and result together', () => {
     const turns = Array.from({ length: 40 }, (_, i) => ({ role: 'system', content: `old fact ${i}` }));
     turns.push({ role: 'assistant', content: '!craftRecipe("stick", 2)' },
         { role: 'system', content: 'Crafted 8 sticks; measured inventory increase: 8.' });
     const input = boundedPromptHistory(turns);
-    assert(input.length <= 32);
+    assert.deepEqual(input, turns);
     assert.equal(input.at(-2).content, turns.at(-2).content);
     assert.equal(input.at(-1).content, turns.at(-1).content);
-    assert.match(input[0].content, /CONTEXT LIMIT/);
+    assert.equal(input[0].content, turns[0].content);
     assert.equal(turns.length, 42);
 });
 
@@ -194,9 +196,9 @@ test('an oversized assistant turn cannot hide the newest denial result', () => {
     const original = 'Thinking aloud '.repeat(2000);
     const turns = [{ role: 'assistant', content: original }, { role: 'system', content: result }];
     const input = boundedPromptHistory(turns);
-    assert(input.at(-2).content.length <= 1000);
+    assert.equal(input.at(-2).content, original);
     assert.equal(input.at(-1).content, result);
-    assert.match(input.at(-2).content, /PROMPT PROJECTION OMITTED MIDDLE/);
+    assert.deepEqual(input, turns);
     assert.equal(turns[0].content, original);
 });
 
@@ -204,10 +206,10 @@ test('an oversized result retains its opening facts and final failure condition'
     const turns = [{ role: 'assistant', content: '!mineOres("coal_ore", 8)' },
         { role: 'system', content: 'Measured gain: 0. ' + 'details '.repeat(3000) + 'FINAL: protection denied.' }];
     const input = boundedPromptHistory(turns);
-    assert(input.reduce((sum, turn) => sum + turn.content.length, 0) <= 12000);
+    assert.deepEqual(input, turns);
     assert.match(input.at(-1).content, /^Measured gain: 0\./);
     assert.match(input.at(-1).content, /FINAL: protection denied\.$/);
-    assert.match(input.at(-1).content, /PROMPT PROJECTION OMITTED MIDDLE/);
+    assert.equal(input.at(-1).content, turns.at(-1).content);
 });
 
 test('summary backlog is oldest-first, bounded and yields before the next batch', async () => {
@@ -226,13 +228,12 @@ test('summary backlog is oldest-first, bounded and yields before the next batch'
     f.calls[1].resolve('Verified first and second batches.'); await flush;
 });
 
-test('oversized single-turn summary input is bounded while the full archive stays intact', async () => {
+test('oversized single-turn summary input stays complete while the full archive stays intact', async () => {
     const f = fixture(), original = 'Server rules opening. ' + 'detail '.repeat(3000) + ' Final protection rule.';
     f.history.pending_memory.push({ role: 'system', content: original });
     await f.history.appendFullHistory(f.history.pending_memory);
     const flush = f.history.flushMemories(true); await f.settle();
-    assert(f.calls[0].turns.reduce((sum, turn) => sum + turn.content.length, 0) <= 8000);
-    assert.match(f.calls[0].turns[0].content, /MEMORY INPUT LIMIT/);
+    assert.equal(f.calls[0].turns[0].content, original);
     assert.match(f.calls[0].turns.at(-1).content, /^Server rules opening/);
     assert.match(f.calls[0].turns.at(-1).content, /Final protection rule\.$/);
     f.calls[0].resolve('Server protection rule learned.'); await flush;

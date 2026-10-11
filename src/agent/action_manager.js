@@ -126,19 +126,14 @@ export class ActionManager {
                     this.cancelResume(); // likely cause of repetition
                 }
                 if (this.recent_action_counter > 5) {
-                    // ★2026-07-08 用户令: 动作打转【不再 cleanKill→process.exit】。counter>3 已 cancelResume
-                    //   试图断掉重复源; 到 >5 仍在死循环 → reconnectNow 重进世界打断它, 进程照常活着。
                     this.cancelResume();
                     this.recent_action_counter = 0;
-                    // ★2026-07-09 用户令 (newAction 不得阻塞导致掉线): newAction 期间即使检出打转也不 reconnect
-                    //   —— cancelResume 已断掉重复源 (软处理足够), 断线会把正在跑的 newAction 一起打断。
-                    if (this.agent && this.agent.bot && this.agent.bot._newActionActive) {
-                        console.error('Infinite action loop detected during an active newAction — cancelResume only, NO reconnect (禁断线重连).');
-                        return { success: false, message: 'Infinite action loop during newAction; resume cancelled (no reconnect).', interrupted: true, timedout: false };
-                    }
-                    console.error('Infinite action loop detected — cancelling resume + reconnect (NO process exit).');
-                    try { this.agent.reconnectNow('infinite-action-loop'); } catch (e) {}
-                    return { success: false, message: 'Infinite action loop detected, reconnecting.', interrupted: true, timedout: false };
+                    // Speed is not evidence of a broken connection. Retire
+                    // automatic resume and return evidence to the planner;
+                    // normal disconnect recovery still owns reconnection.
+                    return { success: false, message: this.getBotOutputSummary()
+                        + 'Fast action loop paused. No new action ran; reobserve before retrying.',
+                        interrupted: false, timedout: false };
                 }
             }
             this.last_action_time = Date.now();
@@ -251,20 +246,11 @@ export class ActionManager {
 
     getBotOutputSummary() {
         const { bot } = this.agent;
-        if (bot?.interrupt_code && !this.timedout) return '';
         // A reconnect can replace agent.bot while the previous action awaits.
         // The new connection may not have a log buffer yet; retain the real
         // action error rather than throwing again while formatting its output.
         if (!bot || typeof bot.output !== 'string') return 'Action output unavailable during connection change. Reobserve the game state before retrying.\n';
-        let output = bot.output;
-        const MAX_OUT = 500;
-        if (output.length > MAX_OUT) {
-            output = `Action output is very long (${output.length} chars) and has been shortened.\n
-          First outputs:\n${output.substring(0, MAX_OUT / 2)}\n...skipping many lines.\nFinal outputs:\n ${output.substring(output.length - MAX_OUT / 2)}`;
-        }
-        else {
-            output = 'Action output:\n' + output.toString();
-        }
+        const output = 'Action output:\n' + bot.output;
         bot.output = '';
         return output;
     }

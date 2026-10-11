@@ -94,9 +94,9 @@ test('older loop reminders do not turn player conversation or actual results int
     assert.equal(executionPromptHistory(turns, standalone.agent), turns);
 });
 
-test('memory drops stale status and goals while retaining learning and safety rules', () => {
-    const summary = sanitizeMemorySummary('Status: Safe. HP 20, Food 14. At (-511,64,-318). Goal: Find village. Action: searching cow. Spruce planks make sticks. If HP <= 10 seek safety. 服务器保护拒绝后换目标。');
-    assert.equal(summary, 'Spruce planks make sticks. If HP <= 10 seek safety. 服务器保护拒绝后换目标。');
+test('memory text is not deleted by status-like words or a character cutoff', () => {
+    const original = 'Status: Historical. Goal: old goal. Important failure: ' + 'constraint '.repeat(1000).trim();
+    assert.equal(sanitizeMemorySummary(original), original);
 });
 
 test('prompt projection preserves actual observations and human messages verbatim', () => {

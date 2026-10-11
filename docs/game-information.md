@@ -14,8 +14,8 @@ are discovery data, not proof of this account's execution permission.
 
 `game_events` batches arrive after 250 ms. Public/custom/NPC chat, whispers,
 system/command feedback, titles/actionbar and lifecycle events have a stable ID,
-channel/kind, source and observation time. Text is retained up to 8,192 characters
-instead of using the viewer HUD's display truncation. Recent events also travel
+channel/kind, source and observation time. Received text is retained whole;
+viewer HUD display limits are not applied to model input. Recent events also travel
 in snapshots, so a delayed or coalesced batch can be recovered and deduplicated.
 
 Send a read-only query:
@@ -48,9 +48,8 @@ collector and nearby accounts; the donor is unknown and inventory must be
 verified. Ambient drops and ordinary mining pickups do not wake another model
 turn. Independent attention batches cannot replace each other in the host queue.
 Ordinary chat and nonurgent independent system feedback defer during actions,
-bounded to 32 events/5 minutes; full deferred evidence is queryable.
-Attention cues and complete chat text survive up to five minutes of queue/work
-delay. Explicit full queries prefer retained conversation over ambient event
+retained until delivery or connection replacement; full deferred evidence is queryable.
+Pending conversation keeps its full text through long actions. Explicit full queries prefer retained conversation over ambient event
 pressure. Routine decision views still use the recent two-minute window, so
 retention does not repeatedly inject old greetings into every planning turn.
 
@@ -58,33 +57,29 @@ See [the player perception audit](neko-player-perception-2026-10-10.md) for repl
 evidence, service routes, the independent desktop token fix and live limits.
 
 `minecraft_observe(sections, max_events)` requests a fresh snapshot without
-interrupting the action. It exposes bounded details for `self`, `world`,
+interrupting the action. It exposes complete received details for `self`, `world`,
 `inventory`, `nearby`, `window`, `activity`, `server` and `coverage`. In particular,
 `window` and `inventory` extract readable book pages and item lore before
-retaining bounded raw components/NBT, so deeply nested 1.20.6 text remains usable;
+retaining received raw components/NBT, so deeply nested 1.20.6 text remains usable;
 `server.channels` retains decodable JSON/text, including arbitrary server
 namespaces such as `mcagent:state` and `mcagent:event`.
 
 Facts older than 45 seconds, or an offline game connection, are not presented as
 current state and stop autonomous scheduling. A new connection/session clears
-old world context. Events have a 120-second retention window. Snapshots and
-buffers are bounded: 32 nearby entities within 32 blocks, loaded block samples
-within 4 blocks, 128 retained events, 48 snapshot events and 16 plugin channels.
-Each state section has its own capacity. Server command names, scoreboards and
-Tab hints precede bulky advancement display data. Truncation paths,
-omitted-entity counts and event-buffer overflow are explicit.
+old world context. Recent event time windows are explicit; pending delivery is
+not dropped by an arbitrary message count. All received entities and server
+records are retained. Local block samples use radius 4 and container searches
+use radius 16; these are world query scopes, not claims of a complete map.
+Source truncation/unknown flags remain visible.
 Unknown binary plugin payloads expose channel, length and hash with an unavailable
 decoded value. Unreceived server state and unloaded terrain remain unknown.
 
-Routine context summarizes large item/terrain data; the observe tool supports
-selecting a section for detail. The Neko host caps each callback at 1,000 tokens,
-so its plugin renders a valid summary within 700 tokens and directs the model
-to the full observation tool before decisions needing omitted facts. The cache
-and tool retain full bounded message/book content. Item text can describe older
-status; live entity/world fields take precedence for vitals, location and time.
-Game/player/NPC text remains external data with
-no instruction privilege. To send a reply into the game, the dialog must use
-`minecraft_chat`; speaking or replying in the web UI does not send Minecraft chat.
+Default observations and all context modes retain complete received facts.
+The MC plugin's trusted host route no longer applies per-item or final text
+caps. Explicit section/event selection remains available, but no automatic
+summary or reference paging hides data. See [the completeness and hard-rule
+audit](complete-game-information.md) for removed limits and retained ownership,
+freshness, protocol and execution boundaries.
 
 When an external client owns conversation, `Agent.openChat` retains body tool
 calls and action narration in local output/WS frames and never publishes them

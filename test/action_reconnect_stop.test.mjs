@@ -11,6 +11,23 @@ function fixture() {
     return { agent, calls, bot, manager: new ActionManager(agent) };
 }
 
+test('fast action calls cancel resume without reconnecting or executing another action', async t => {
+    const { agent, calls, manager } = fixture();
+    t.mock.method(Date, 'now', () => 1000);
+    manager.last_action_time = 999;
+    manager.recent_action_counter = 5;
+    manager.resume_func = () => {};
+    agent.bot.output = 'Previous action produced a block.';
+    let executed = 0;
+    const result = await manager.runAction('next', async () => { executed++; }, { timeout: -1 });
+    assert.equal(executed, 0);
+    assert.equal(calls.reconnects, 0);
+    assert.equal(manager.resume_func, null);
+    assert.equal(result.success, false);
+    assert.equal(result.interrupted, false);
+    assert.match(result.message, /Previous action produced a block/);
+});
+
 test('a stop waiting on the disconnected body cannot interrupt a replacement action', async t => {
     t.mock.timers.enable({ apis: ['setTimeout'] });
     const { agent, calls, bot, manager } = fixture();
