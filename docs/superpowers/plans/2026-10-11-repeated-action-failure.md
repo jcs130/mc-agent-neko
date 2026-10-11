@@ -21,8 +21,16 @@ or declare the whole game goal impossible. No new model calls are needed.
   otherwise record prepared status. Observe naturally occurring game actions,
   record actual acceptance limits and write the DSH maintenance receipt.
 
-The bounded idle gate did not pass; no service was restarted. The prepared
-receipt was confirmed written. Runtime acceptance remains pending deployment.
+The first two checks exited without restarting services. After the speech queue
+naturally drained and daytime arrived, the same idle gate passed. At 11:23 Beijing,
+the official lifecycle reloaded only the owned native child 18784 to 14188;
+the guardian was restored and the host, plugin, model, MindServer and TTS unit
+were preserved. The same receipt is now deployed, with API writeback confirmed.
+
+The passive 90-second window collected 91 online samples, full health/food and
+3.075 metres maximum movement, with chest actions but unchanged inventory.
+Both LAN streams carried mana and nine skills. Natural repeated-action guard
+activation and productive survival remain unverified; the receipt stays deployed.
 
 Successful handoff alone does not verify productive autonomous survival,
 physical escape, successful trading or resolved spoken repetition.
