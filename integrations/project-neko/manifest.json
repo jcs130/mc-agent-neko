@@ -1323,7 +1323,26 @@
     "extraModelCalls": 0,
     "textDeduplication": false,
     "fullReplayMatchesSource": true,
-    "deploymentPhase": "prepared",
-    "audibleLiveAcceptance": "open"
+    "deploymentPhase": "verified",
+    "audibleLiveAcceptance": "open",
+    "verificationScope": "local speech stream ownership and final playback acknowledgement",
+    "deployedAt": 1791716748219,
+    "deploymentCommit": "393be8f0a2c1786f22d343f151dfd591264172cc",
+    "runtimeCompleteNaturalSpeechCount": 3,
+    "runtimeMultiSentenceCompleteCount": 3,
+    "runtimeMaximumSentenceGapSeconds": 13.0,
+    "runtimePrematureEnds": 0,
+    "runtimeMultiplePlaybackCycles": 0,
+    "runtimeWatchdogs": 0,
+    "runtimeSentenceFailures": 0,
+    "runtimeProofSha256": "1defa5c706989f2ff58b8eb221284ad0ae19d713db3f5b65baea7c51fc410614",
+    "sampleRepeatedFullReplyGroups": 0,
+    "nativeModelTtsAndObserverPreserved": true,
+    "ticketId": "T-0021",
+    "ticketOccurrences": 1,
+    "ticketWriteback": "written",
+    "automaticTicketClosure": false,
+    "semanticRepetitionAcceptance": "open",
+    "wholeGameplayAcceptance": "open"
   }
 }
