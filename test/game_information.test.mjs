@@ -296,7 +296,7 @@ test('login gameplay instructions survive event expiry, eviction, respawn and a 
     assert.equal(welcome.sessionId, information.sessionId);
     assert.ok(welcome.messages.some(message => message.text === guide));
     assert.ok(welcome.messages.some(message => message.text === '欢迎来到千灯纪'));
-    assert.ok(!late[0].recentEvents.some(message => message.text === guide));
+    assert.ok(late[0].recentEvents.some(message => message.text === guide));
     const next = new GameInformation(agent, () => {}, { now: () => clock, intervalMs: 60000 });
     t.after(() => next.close());
     assert.deepEqual(next.snapshot().state.server.welcome.messages, [], 'new connections must not reuse old guide text');
@@ -459,6 +459,19 @@ test('snapshot and pending delivery preserve every event in a received burst', t
     const bounded = boundedGameValue({ data: 'x'.repeat(20000) }, 1000);
     assert.equal(bounded.truncated.length, 0);
     assert.equal(bounded.value.data.length, 20000);
+});
+
+test('received history and undelivered events survive age and dimension refresh', t => {
+    let now = 100000;
+    const { information } = fixture(t, { now: () => now });
+    information.event('system', { text: 'Complete historical server instruction.' });
+    now += 600000;
+    information.resetPresentation();
+    assert.equal(information.pending.length, 1);
+    const state = information.snapshot();
+    assert.equal(state.eventScope, 'complete_connection_history');
+    assert.equal(state.recentEvents[0].text, 'Complete historical server instruction.');
+    assert.equal(state.recentEvents[0].observedAt, 100000);
 });
 
 test('end marks the game offline even when protocol still says play; close releases all listeners', t => {

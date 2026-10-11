@@ -450,7 +450,6 @@ export class GameInformation {
         const event = { ...bounded.value, truncated: bounded.truncated.length > 0 };
         this.captureWelcome(event);
         this.events.push(event); this.pending.push(event);
-        this.events = this.events.filter(item => now - item.observedAt < 120000);
         if (!this.flushTimer) this.flushTimer = setTimeout(() => this.flushEvents(), this.flushMs);
     }
 
@@ -494,7 +493,8 @@ export class GameInformation {
         // A new GameInformation instance owns the next connection's cache.
         this.presentation = { welcome: this.presentation.welcome,
             bossBars: {}, channels: {}, advancements: {}, titles: {}, actionBar: null, signs: [] };
-        this.events = []; this.pending = []; this.recent.clear();
+        // A dimension/respawn refresh must not erase received events or pending delivery.
+        this.recent.clear();
     }
 
     flushEvents() {
@@ -520,7 +520,7 @@ export class GameInformation {
         const complete = boundedGameValue(raw), state = complete.value;
         return { type: 'game_state', schemaVersion: 1, sessionId: this.sessionId, seq: ++this.stateSeq,
             observedAt: now, online: this.online && this.bot._client?.state === 'play' && this.bot._client?.socket?.destroyed !== true, state,
-            recentEvents: this.events.filter(event => now - event.observedAt < 120000),
+            recentEvents: this.events.slice(), eventScope: 'complete_connection_history',
             truncated: complete.truncated, droppedEvents: this.dropped };
     }
 

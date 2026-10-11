@@ -288,7 +288,7 @@ export class AdminMission {
             try {
                 const b = this._bot();
                 act = String((b && b._currentSkill) || (this.agent.actions && this.agent.actions.currentActionLabel) || '')
-                    .replace(/\s+/g, ' ').trim().slice(0, 120);
+                    .replace(/\s+/g, ' ').trim();
             } catch (e) {}
             this._registerDrop(this._normText(this.mission.text), text, taskId, origin,
                 `机器人正在执行玩家在游戏内下达的指令「${this.mission.text}」（已运行${sec}秒${act ? `，当前动作：${act}` : ''}），此为独占任务，暂不接受新的管理指令，请等待其完成或失败报告。`);
@@ -337,7 +337,7 @@ export class AdminMission {
         try {
             const b = this._bot();
             act = String((b && b._currentSkill) || (this.agent.actions && this.agent.actions.currentActionLabel) || '')
-                .replace(/\s+/g, ' ').trim().slice(0, 120);
+                .replace(/\s+/g, ' ').trim();
         } catch (e) {}
         const prompt = '你是Minecraft机器人的任务去重判定器。机器人正在执行管理员任务A，此刻又收到新消息B。\n'
             + `任务A（执行中，已运行${sec}秒）：${m0.text}\n`
@@ -823,7 +823,7 @@ export class AdminMission {
                 if (e && (e.role === 'assistant' || e.role === this.agent.name) && useful(e.content)) {
                     // History stores the agent under the assistant role. A bare terminal
                     // command carries no report; never substitute a system/goal prompt.
-                    return String(e.content).split(/!\w+/)[0].replace(/\\t/g, '').trim().slice(0, 300);
+                    return String(e.content).split(/!\w+/)[0].replace(/\\t/g, '').trim();
                 }
             }
         } catch (e) {}
