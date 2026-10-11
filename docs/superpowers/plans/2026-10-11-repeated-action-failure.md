@@ -17,9 +17,12 @@ or declare the whole game goal impossible. No new model calls are needed.
   existing query guard and mission completion semantics intact.
 - [x] Run relevant and complete native regression. Commit the scoped change
   and documentation to the authorized fork, preserving unrelated files.
-- [ ] Deploy only the owned native child at a safe idle boundary if available;
+- [x] Deploy only the owned native child at a safe idle boundary if available;
   otherwise record prepared status. Observe naturally occurring game actions,
   record actual acceptance limits and write the DSH maintenance receipt.
+
+The bounded idle gate did not pass; no service was restarted. The prepared
+receipt was confirmed written. Runtime acceptance remains pending deployment.
 
 Successful handoff alone does not verify productive autonomous survival,
 physical escape, successful trading or resolved spoken repetition.
