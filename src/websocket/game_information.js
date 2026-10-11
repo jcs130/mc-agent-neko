@@ -312,6 +312,8 @@ export class GameInformation {
         this.on(this.bot, 'autonomyRecovery', value => this.event('recovery', {
             text: value?.type === 'protected-retreat-stall'
                 ? '避险挖掘持续没有位移，脚下破坏操作已被服务器明确拒绝；临时交回规划器选择已有通道、交互或实际可用的脱困技能。'
+                : value?.type === 'tool-retreat-stall'
+                ? '避险挖掘持续没有位移，脚下石质方块因没有镐被本地工具守卫拒绝；临时交回规划器选择已有通道、交互、补工具或实际可用的脱困技能。'
                 : '水边脱困持续没有进展，附近破坏操作已被服务器拒绝；临时交回规划器选择合法通道或可用脱困技能。',
             source: 'measured_native_recovery', data: boundedGameValue(value, 1200).value,
         }));

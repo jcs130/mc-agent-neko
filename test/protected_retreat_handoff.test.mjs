@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import Vec3 from 'vec3';
-import { protectedRetreatHandoff } from '../src/agent/protected_retreat_recovery.js';
+import { protectedRetreatHandoff, rememberRetreatDigRefusal } from '../src/agent/protected_retreat_recovery.js';
 
 function fixture() {
     const events = [];
@@ -74,6 +74,43 @@ test('missing foot/head cells cannot establish a safe planner handoff', () => {
     f.bot.blockAt = p => p.y >= 42 ? null : original(p);
     f.prime();
     assert.equal(f.check(115000), false);
+});
+
+test('an exact recent missing-pick refusal can yield without claiming server protection', () => {
+    const f = fixture();
+    f.bot.serverProtection.isDenied = () => false;
+    f.bot.inventory = { items: () => [] };
+    const refusal = { type: 'missing-held-pick', observedAt: 100000, world: 'overworld',
+        target: { x: -547, y: 41, z: -491 }, blockName: 'spruce_planks' };
+    f.bot._retreatDigRefusal = refusal;
+    f.prime();
+    assert.equal(f.check(115000), true);
+    assert.equal(f.events[0].event.type, 'tool-retreat-stall');
+    assert.equal(f.events[0].event.constraint, 'missing_pickaxe');
+    f.bot.inventory.items = () => [{ name: 'iron_pickaxe' }];
+    assert.equal(f.check(115001), false, 'newly available tools must invalidate the local refusal');
+    for (const invalid of [{ observedAt: -100000 }, { observedAt: 200000 }, { world: 'the_nether' },
+        { target: { x: -548, y: 41, z: -491 } }, { blockName: 'air' }, { type: 'unclassified' }]) {
+        f.bot.inventory.items = () => [];
+        f.bot._retreatDigRefusal = { ...refusal, ...invalid };
+        f.prime();
+        assert.equal(f.check(115000), false);
+    }
+});
+
+test('the production missing-pick guard retains its exact refusal for measured recovery', async () => {
+    const f = fixture(), source = readFileSync(new URL('../src/agent/modes.js', import.meta.url), 'utf8');
+    const start = source.indexOf('                if (!(await ensurePickForDig(block, seq))) {');
+    const end = source.indexOf('                // ★泥土空手闸', start);
+    assert(start > 0 && end > start);
+    const block = f.bot.blockAt(f.bot.entity.position.floored().offset(0, -1, 0));
+    const context = vm.createContext({ bot: f.bot, block, seq: 1, startedAt: 0,
+        ensurePickForDig: async () => false, rememberRetreatDigRefusal, write() {},
+        blockObj: value => value, envSnap: () => ({}) });
+    vm.runInContext('globalThis.guard = async function() {' + source.slice(start, end) + '};', context);
+    await assert.rejects(context.guard(), /stone dig blocked without held pick/);
+    assert.equal(f.bot._retreatDigRefusal.type, 'missing-held-pick');
+    assert.deepEqual(f.bot._retreatDigRefusal.target, { x: -547, y: 41, z: -491 });
 });
 
 test('production flee dispatch declines only the measured futile protected retreat', async () => {

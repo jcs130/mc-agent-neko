@@ -14,6 +14,15 @@ low oxygen, fire, lava, interruption or a close creeper clear it immediately.
 It emits one measured recovery event and retains the refusal and original
 game state. It does not move, dig or cast on the player's behalf.
 
+The live reload also exposed a separate local refusal: the global missing-pick
+guard rejected the floor's andesite stairs before any server protection query.
+That failure was swallowed inside the retreat, which retried immediately.
+The guard now retains its actual exact target, block name, world and time.
+The same measured handoff accepts this evidence for up to two minutes only
+while the same floor remains and the inventory still has no pickaxe. Obtaining
+a pickaxe invalidates it immediately. Recovery distinguishes missing tools
+from server protection; it never reports the former as a server refusal.
+
 ## Host Regression Report
 
 **Before:** a single autonomous decision with three observation/server-query
@@ -42,6 +51,9 @@ Native production-dispatch and recovery boundaries pass in the complete
 `b218194ea8d3e4fff87e1a04fe395a6da9363814`; 67 plugin patches and 11 host
 patches replay to the declared plugin tree and all 41 scoped host files,
 with all 78 recorded hashes verified.
+
+After the live-discovered asset-startup and missing-pick cases, the complete
+native suite passed 743 cases; focused recovery tests passed all eight cases.
 
 ## Runtime acceptance
 

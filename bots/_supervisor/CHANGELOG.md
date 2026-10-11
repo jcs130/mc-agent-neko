@@ -3079,3 +3079,15 @@
 - Falsifiable prediction: a packet received during asset loading reaches the
   first LAN subscriber. Isolated tests and real viewer-only acceptance are
   recorded in the viewer report; do not infer fresh mana from a replay.
+
+### 2026-10-11 — Include actual missing-pick retreat refusals
+- Evidence: after reload, the stationary player had no pickaxe and a stone
+  floor; the global dig guard rejected it before server preflight. The refuge
+  loop immediately retried, while its original preview truncated the result.
+- Change: retain only that guard's actual target/block/world/time; the measured
+  handoff accepts it while the same floor and no-pick inventory still hold.
+  New tools, changed geometry, stale evidence or any emergency invalidate it.
+- Falsifiable prediction: local missing-tool stalls release the planner without
+  claiming server protection. The focused case failed before the fix; exact
+  production guard/dispatch, stale evidence and emergency cases now pass.
+  Full regression and natural deployment acceptance remain separately recorded.

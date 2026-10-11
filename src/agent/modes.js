@@ -23,7 +23,7 @@ import { chooseHealingPotion, shouldAutoEat } from './framework/healing_reflex.j
 import { observeStallContext, recoveryMovedEnough } from './stall_recovery.js';
 import { protectedSurfaceSwimHandoff, protectedWaterExitRoute } from './surface_swim_recovery.js';
 import { hasMeleeWeapon, threatCanReachBot } from './combat_policy.js';
-import { protectedRetreatHandoff } from './protected_retreat_recovery.js';
+import { protectedRetreatHandoff, rememberRetreatDigRefusal } from './protected_retreat_recovery.js';
 
 const FAMINE_FOOD_RE = /cooked_|_bread|^bread$|apple|golden_apple|carrot|potato|beef|porkchop|chicken|mutton|cod|salmon|melon_slice|sweet_berries|_stew|rabbit|baked_|rotten_flesh|spider_eye/;
 const NORMAL_FOOD_RE = /cooked_|_bread|^bread$|apple|golden_apple|carrot|potato|beef|porkchop|chicken|mutton|cod|salmon|melon_slice|sweet_berries|_stew|rabbit|baked_/;
@@ -5597,6 +5597,7 @@ const modes_list = [
                     }
                 }
                 if (!(await ensurePickForDig(block, seq))) {
+                    rememberRetreatDigRefusal(bot, block);
                     const err = new Error(`stone dig blocked without held pick: ${block ? block.name : 'unknown'}`);
                     write('dig.end', { seq, ok: false, ms: Date.now() - startedAt, target: blockObj(block), error: err.message, env: envSnap() });
                     throw err;
