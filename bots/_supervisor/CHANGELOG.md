@@ -3267,3 +3267,9 @@
   gateway-maintenance denial, no task, model idle and completed playback. T-0069
   deployed receipt accepted; natural inactivity-boundary verification remains
   open. Local model/TTS/native/spectator identities were preserved.
+## 2026-10-11：重连后的新版登录提示未被识别
+
+- 触发证据：观战日志22:31–22:32实际收到前置`MC_AUTH_LOGIN`、`MC_AUTH_PASSWORD_OK`、`MC_AUTH_SUCCESS`；旧适配器只认后置DENIED/REQUIRED与OK。当前原生不断自动重连却未进入世界，私有配置绑定及密码已核对，不能把spawn-timeout单独当作网络故障。
+- 机理与改动：补齐实际观察到的锚定系统提示及最终成功格式；只收无sender系统消息，仍按连接一次/进程五分钟三次限制，不输出凭据、不注册或绕过二步认证。密码通过、认证通过、世界spawn分开记录。
+- 可证伪预测：新连接收到真实LOGIN提示会自动提交一次，成功提示可被识别并等待世界spawn；伪造玩家文本不触发。旧代码新增回归2失败/12通过，修复后14通过；语法及空白检查通过。部署和自然入服另记，不以submitted代替成功。
+

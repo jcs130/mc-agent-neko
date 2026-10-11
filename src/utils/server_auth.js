@@ -3,8 +3,10 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 
 const installed = new WeakMap(), attempts = new Map();
-const challenge = /^请先\s*\/login\s+.*\[MC_AUTH_(?:DENIED|REQUIRED)\]\s*$/u;
-const success = /\[MC_AUTH_OK\]|^登录成功/u;
+// Both formats were observed from this gateway. Keep the prefix and command
+// anchored so a player-name/public-line wrapper cannot become a login request.
+const challenge = /(?:^请先\s*\/login\s+.*\[MC_AUTH_(?:DENIED|REQUIRED)\]\s*$|^\[MC_AUTH_LOGIN\]\s*请先登录[:：]\s*\/login(?:\s+|$))/u;
+const success = /\[MC_AUTH_OK\]|^登录成功|^\[MC_AUTH_SUCCESS\]\s*登录成功/u;
 const rejected = /\[MC_AUTH_(?:FAILED|INVALID_PASSWORD)\]|^(?:密码错误|Wrong password|Incorrect password)/iu;
 
 function privateConfig(file, connection) {

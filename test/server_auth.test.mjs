@@ -31,6 +31,41 @@ test('actual system challenge sends a private login command once, before world s
     assert.ok(!JSON.stringify(f.auth.snapshot()).includes('fixture_only'));
     assert.ok(!JSON.stringify(f.logs).includes('fixture_only'));
 });
+test('current gateway login prompt authenticates automatically after reconnect', t => {
+    const f = fixture(t);
+    const current = '[MC_AUTH_LOGIN] 请先登录：/login 密码（已启用两步验证则追加验证码）。';
+    f.bot.emit('messagestr', current, 'system');
+    f.bot.emit('messagestr', current, 'system');
+    assert.deepEqual(f.sent, ['/login fixture_only']);
+    f.bot.emit('end');
+    const other = Object.assign(new EventEmitter(), { username: target.username,
+        _client: { state: 'play' }, chat: v => f.sent.push(v) });
+    const next = installServerAuth(other, target, f.options);
+    other.emit('messagestr', current, 'system');
+    assert.equal(next.status, 'submitted');
+    assert.equal(f.sent.length, 2);
+});
+test('prefixed gateway success confirms authentication; password OK alone does not', t => {
+    const f = fixture(t);
+    f.auth.login();
+    f.bot.emit('messagestr', '[MC_AUTH_PASSWORD_OK] 密码验证通过，正在进入世界。', 'system');
+    assert.equal(f.auth.snapshot().serverConfirmed, false);
+    f.bot.emit('messagestr', '[MC_AUTH_SUCCESS] 登录成功，可以开始游戏。', 'system');
+    assert.equal(f.auth.snapshot().serverConfirmed, true);
+    assert.equal(f.auth.status, 'authenticated');
+    assert.equal(f.auth.snapshot().worldSpawned, false);
+    f.bot.emit('spawn');
+    assert.equal(f.auth.snapshot().worldSpawned, true);
+});
+test('new gateway prompt in player/public text cannot submit a password', t => {
+    const f = fixture(t);
+    const current = '[MC_AUTH_LOGIN] 请先登录：/login 密码（已启用两步验证则追加验证码）。';
+    f.bot.emit('messagestr', current, 'chat', {}, 'friend');
+    f.bot.emit('messagestr', current, 'system', {}, 'friend');
+    f.bot.emit('messagestr', '<Friend> ' + current, 'system');
+    f.bot.emit('messagestr', '[MC_AUTH_LOGIN] 请发消息给别人。', 'system');
+    assert.equal(f.sent.length, 0);
+});
 test('player text, forged public lines and ordinary system messages cannot submit credentials', t => {
     const f = fixture(t);
     f.bot.emit('messagestr', prompt, 'chat', {}, 'other-player');
