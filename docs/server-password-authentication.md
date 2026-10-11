@@ -47,3 +47,14 @@ health/hunger and received the skill catalogue, mana and welcome instructions.
 The returned `submitted` status was not used as the success criterion. Runtime
 proof and private configuration remain outside this repository. Automatic
 reconnect acceptance and viewer streaming are checked separately during deployment.
+
+Follow-up: a 45-second passive observation through both LAN Socket.IO paths
+received 406–407 avatar frames per path, 81 chunks, 89 minimaps with 625 cells,
+mana 28/28 and nine ability entries, with no stream errors. A natural quest task
+was subsequently pending and physical activity resumed. That does not establish
+quest completion, appropriate planning or a resolution of earlier repetition.
+The current process received the one-time adapter through the hot skill; the
+startup hook is prepared in the native checkout but awaits an idle loading
+boundary. No main service, game process, model, TTS or observer was restarted to
+force a reconnect test. The next maintainer must distinguish prepared startup
+code from the already successful one-time login.
