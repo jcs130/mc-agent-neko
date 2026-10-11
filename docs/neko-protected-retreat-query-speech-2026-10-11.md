@@ -199,3 +199,38 @@ native autonomous mode retains its ordinary committed goal.
 **Validation:** the three new idle/movement/mission cases failed before repair;
 all 15 related status, kernel-ownership and WS-lifecycle cases then passed.
 Gameplay and actual deployment must be assessed independently.
+
+At 10:51 Beijing time the owned native child loaded source
+`f56560de63ee538b56e9969509f184c4dbce74e5`, matching fork
+`f4913fa79e940479180f57d49002df5710ac75b4` for this repair. An earlier
+idle-boundary attempt aborted before reloading because new work arrived.
+Main 15892, plugin 38140, model 37292, MindServer 37492 and VoxCPM2 6619
+(zero restarts) were preserved. Live NL now has null kind/skill and idle=true,
+and the plugin reports body_busy=false. Full native regression passed 746.
+
+Both real LAN paths again delivered 183 avatar frames, 81 chunks, 28/28 mana
+and nine abilities without errors. The rendered dungeon page showed the mana
+bar and skill list, with old readings explicitly marked as awaiting server
+update. Missing skill costs remain unknown; reception does not verify every
+spell's execution.
+
+The next 95 seconds/96 frames still had no displacement, no running skill and
+unchanged inventory, with health/food 20. Earlier short movement and two small
+pickups within the building did not establish escape or a completed trade.
+Mixed-host routing is deployed; this last observation verifies only the status
+repair, not productive autonomous play or the absence of every repeated final
+reply. The separate speech-play-end watchdog remains unverified.
+
+NEKO Live had lost its ingest connection following the host lifecycle. Its
+existing Bilibili login was still valid; the regular connect entry restored
+room 272191 to connected/listening/receiving. No test message was sent, and
+idle/warmup hosting remains disabled. No confirmed server fault was found:
+village-building protection and a Fletcher's two non-buying offers are normal
+restrictions, not proof of a server outage.
+
+Local evidence: `external-status-red.log`, `external-status-green.log`,
+`external-status-full-regression.log`, `external-status-native-deployment.json`,
+`natural-game-observation.json` and `viewer-stream-proof.json` under
+`runtime/repair-20261011-0915`. DSH receipts retain phase `deployed`; a changed
+occurrence baseline leaves writeback pending rather than claiming the broad
+freeze/churn tickets are repaired or closed.

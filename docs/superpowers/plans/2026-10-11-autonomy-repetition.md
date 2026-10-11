@@ -40,7 +40,7 @@
 - [x] Reproduce three query preludes in one decision; suppress only autonomous read-only query preludes using actual receipts, preserving results, actions, final replies and cancellation.
 - [x] Run complete native regression (743 final cases), host tool/cancellation/proactive suites (175 cases), and verify all 78 companion hashes plus full scoped replay.
 - [x] Deploy confirmed native and host repairs through owned lifecycle flows at a safe idle boundary; observe natural action and speech metadata.
-- [ ] Record observed recovery and remaining limitations; commit and push authorized fork changes without claiming unobserved task completion.
+- [x] Record observed recovery and remaining limitations; commit and push authorized fork changes without claiming unobserved task completion. Physical escape and productive survival remain unresolved; completed diagnostic repairs are separately recorded below.
 
 ### Task 2: Preserve measured handoffs through the host plugin
 
@@ -90,4 +90,4 @@ observer's commitment remains a proposal, not a body action.
 
 - [x] Reproduce this with externally owned idle, moving and mission cases; all three new tests failed before repair.
 - [x] Ignore only the paused kernel commitment; preserve real live skills, movement, reflexes and mission text. Fifteen related status/ownership/lifecycle cases pass.
-- [ ] Run full native regression, deploy at an idle boundary and compare actual status and gameplay without claiming completed escape.
+- [x] Full native regression passed 746 cases. One idle-boundary attempt correctly aborted when work changed; the next loaded only the owned native child at 10:51, preserving host/plugin/model/TTS/MindServer. Live NL now reports null kind/skill and idle=true; the plugin busy gate is false. Both LAN streams carry mana 28/28 and nine abilities. The subsequent 95-second/96-frame sample had no displacement or inventory progress: status accuracy is verified, autonomous escape is still unresolved.

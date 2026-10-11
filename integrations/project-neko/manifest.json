@@ -1034,7 +1034,10 @@
     "foreignSourcesDoNotReceiveGameExecutionScope": true,
     "stopAndTaskAuthorizationUnchanged": true,
     "extraModelCalls": 0,
-    "deploymentPhase": "prepared",
-    "fullReplayMatchesSource": true
+    "deploymentPhase": "deployed",
+    "fullReplayMatchesSource": true,
+    "deploymentEvidence": "runtime/repair-20261011-0915/mixed-host-deployment.json",
+    "runtimeAcceptance": "Host loaded with native session/model/TTS preserved; first 95 seconds had no displacement. Later local movement does not prove completed escape or trade.",
+    "aggregateTimingCannotIdentifyExecutionSubtype": true
   }
 }
