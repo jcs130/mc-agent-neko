@@ -1,3 +1,5 @@
+# Neko 改动台账（科学家模式）
+
 ## 2026-10-11 OBS minimap and YSM availability (local viewer)
 
 - Evidence: the deployed renderer was 79ddc629; upstream OBS now retains the 2D minimap. Real LAN state for ag_NEKO was available=false / YSM_WORKER_STATE_UNAVAILABLE, with no model asset and no captured browser error.
@@ -5,8 +7,6 @@
 - Change: pin shared main 595a3a0e plus published diagnostic fix b71e0f56; import the reviewed host, rebuild the existing Java 1.20.6 generic/sounds profile, preserve unavailable reasons and display stage-specific notices. No gameplay/inference/server change.
 - Prediction: OBS paints the existing map without a world renderer; stale subjects clear; both LAN socket paths preserve the actual YSM reason. Absent server state must not trigger asset requests or claim YSM rendering success.
 - Observed: 73 shared regressions and 16 contribution / 13 native consumer regressions passed. Viewer-only refresh at 17:43:54 kept PID/entity/session and all related service PIDs. Both LAN paths delivered 212–213 avatar frames, 81 chunks, 46 maps and 9 abilities in 22s; served bundle hash matched. Browser OBS map/transparent body and explicit YSM notice were observed. Server appearance remains unavailable; model/Worker assignment needs server-side verification. Details: docs/obs-minimap-ysm-update-2026-10-11.md.
-
-# Neko 改动台账（科学家模式）
 
 ## 2026-10-11：外部主脑夜间所有权与保护区恢复
 
