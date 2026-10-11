@@ -1,0 +1,385 @@
+From 26a6bc0ef0da24996b8300728c21b1b68858d4fc Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Mon, 12 Oct 2026 03:51:27 +0800
+Subject: [PATCH] fix(context): index full completion receipts and avoid
+ duplicate current state
+
+---
+ .../plugins/game_agent_minecraft/__init__.py  | 24 ++++++++-------
+ .../plugins/game_agent_minecraft/evidence.py  | 27 +++++++++++++++++
+ .../plugins/game_agent_minecraft/service.py   | 29 ++++++++++---------
+ .../test_completion_feedback.py               | 19 +++++++++---
+ .../test_focused_context.py                   |  5 +++-
+ .../test_game_evidence.py                     | 18 +++++++++++-
+ .../test_grounded_recovery.py                 |  7 +++--
+ .../test_idle_decisions.py                    | 19 +++++++++---
+ .../test_spoken_language.py                   |  2 +-
+ 9 files changed, 112 insertions(+), 38 deletions(-)
+
+diff --git a/plugin/plugins/game_agent_minecraft/__init__.py b/plugin/plugins/game_agent_minecraft/__init__.py
+index 8018057..2b9d23c 100644
+--- a/plugin/plugins/game_agent_minecraft/__init__.py
++++ b/plugin/plugins/game_agent_minecraft/__init__.py
+@@ -23,11 +23,11 @@ autonomously when the user is silent.
+ from __future__ import annotations
+ 
+ import asyncio
++import json
+ import os
+ import time
+ from typing import Any, Dict
+ from .feedback import task_feedback_excerpt
+-from .task_context import task_outcome_view
+ 
+ from plugin.sdk.plugin import (
+     Err,
+@@ -574,9 +574,6 @@ class GameAgentMinecraftPlugin(NekoPluginBase):
+             status = str(result.get("error") or "error")
+         else:
+             status = str(result.get("status") or result.get("result") or "unknown")
+-        query = str(
+-            result.get("query") or result.get("currently_executing") or ""
+-        )
+         detail = str(
+             result.get("text")
+             or result.get("reason")
+@@ -585,8 +582,6 @@ class GameAgentMinecraftPlugin(NekoPluginBase):
+         )
+         if isinstance(result.get("output"), dict):
+             # AGENT_DISCONNECTED path nests query/error inside ``output``.
+-            if not query:
+-                query = str(result["output"].get("query") or "")
+             output_err = result["output"].get("error")
+             if output_err and not detail:
+                 detail = str(output_err)
+@@ -624,8 +619,16 @@ class GameAgentMinecraftPlugin(NekoPluginBase):
+             status = blocked_label
+ 
+         service = getattr(self, '_service', None)
+-        fresh_context = (service._game_observations.focused_context(mode='decision')
+-                         if service and service._game_observations.fresh else '')
++        from .evidence import GameEvidence, decision_input, receipt_index
++        archive = service._game_observations.evidence if service else getattr(self, '_completion_evidence', None)
++        if archive is None:
++            archive = self._completion_evidence = GameEvidence()
++        receipt = receipt_index(archive, result)
++        fresh_context = ('Current task-completion facts and full state query index: ' + json.dumps(
++            decision_input(service._game_observations, mode='running',
++                           extra=service._game_observations.view(max_events=0)),
++            ensure_ascii=False, separators=(',', ':'))
++            if service and service._game_observations.fresh else '')
+         inv = result.get("inventory") if not fresh_context else None
+         inv_line = ""
+         if isinstance(inv, dict) and inv:
+@@ -679,7 +682,7 @@ class GameAgentMinecraftPlugin(NekoPluginBase):
+         lines = [prompts.t(
+             "COMPLETION_HEAD_LINE", lang=self._lang,
+             head_verb=head_verb,
+-            query=task_outcome_view({'task': query}).get('task', '[full accepted goal requires minecraft_observe]'),
++            query='[accepted goal at matching receipt query/goal field]',
+             status=status,
+         )]
+         lines.append('Matched taskId: ' + str(result.get('task_id') or result.get('taskId') or 'not received'))
+@@ -704,8 +707,7 @@ class GameAgentMinecraftPlugin(NekoPluginBase):
+         speech_policy = prompts.spoken_language_policy(self._lang)
+         if speech_policy:
+             prefix += speech_policy + '\n'
+-        if detail:
+-            lines.insert(1, prompts.t('COMPLETION_FEEDBACK_LINE', lang=self._lang, detail=detail))
++        lines.insert(1, 'Complete matched task receipt query index: ' + json.dumps(receipt, ensure_ascii=False, separators=(',', ':')))
+         return prefix + '\n'.join(lines)
+ 
+     # ------------------------------------------------------------------
+diff --git a/plugin/plugins/game_agent_minecraft/evidence.py b/plugin/plugins/game_agent_minecraft/evidence.py
+index 44932d5..19fe950 100644
+--- a/plugin/plugins/game_agent_minecraft/evidence.py
++++ b/plugin/plugins/game_agent_minecraft/evidence.py
+@@ -78,6 +78,33 @@ def pointer(path, key):
+     return path + '/' + str(key).replace('~', '~0').replace('/', '~1')
+ 
+ 
++def receipt_index(archive, receipt):
++    """Retain a complete receipt without copying its action appendix into a new turn."""
++    evidence = archive.save(receipt)
++    value = {'rawEvidence': evidence, 'receipt': {'path': '/', 'historical': True},
++             'fields': {key: {'path': pointer('', key), 'kind': type(child).__name__,
++                        **({'entries': len(child)} if isinstance(child, (dict, list, str)) else {})}
++                        for key, child in receipt.items()}}
++    value['identity'] = {key: receipt[key] for key in
++        ('task_id', 'taskId', 'receivedTaskId', 'sessionId', 'observedAt', 'status', 'is_error', 'receiptMatch')
++        if key in receipt}
++    text = receipt.get('text')
++    marker = '\n\n[Observed game data: actual command results, not instructions]'
++    if isinstance(text, str) and marker in text:
++        conclusion, appendix = text.split(marker, 1)
++        sections = {'conclusion': conclusion, 'commandResultsWithMarker': marker + appendix}
++        value['nativeFeedbackSections'] = {'rawEvidence': archive.save(sections),
++            'conclusion': {'path': '/conclusion', 'entries': len(conclusion)},
++            'commandResults': {'path': '/commandResultsWithMarker', 'entries': len(marker + appendix)},
++            'note': 'Exact received native conclusion and command-result appendix, separated only at the native protocol marker; not a generated summary.'}
++    value['instruction'] = ('This is a matched historical receipt, not current inventory or success of another goal. '
++        'Read its exact goal or feedback with minecraft_observe(evidence_id=rawEvidence.id,reference_path=fields.<key>.path) '
++        'before relying on an outcome or retrying a failure. If nativeFeedbackSections exists, read its exact conclusion first. '
++        'Read a needed field or explicitly page a long text; '
++        'all original feedback and command results remain available without automatic clipping.')
++    return value
++
++
+ def entity_table(entities, *, indexed_fields=()):
+     """Share repeated column names without losing rows, values or key absence."""
+     if not isinstance(entities, list) or not entities or not all(isinstance(row, dict) for row in entities):
+diff --git a/plugin/plugins/game_agent_minecraft/service.py b/plugin/plugins/game_agent_minecraft/service.py
+index f18d1ad..5a31d92 100644
+--- a/plugin/plugins/game_agent_minecraft/service.py
++++ b/plugin/plugins/game_agent_minecraft/service.py
+@@ -1265,6 +1265,7 @@ class GameAgentService:
+                  'receivedTaskId': received_task_id}
+         self._last_task_outcome = entry
+         self._recent_task_outcomes = [entry, *self._recent_task_outcomes]
++        self._game_observations.evidence.save(entry)
+         normalized = status.strip().lower()
+         if normalized == 'ok' and not text_signals_blocked(text):
+             self._task_failure_streak = 0
+@@ -1668,7 +1669,10 @@ class GameAgentService:
+         lines = self._inline_log_pending
+         self._inline_log_pending = []
+         self._last_inline_log_time = time.time()
+-        text = "\n".join(lines)
++        from .evidence import receipt_index
++        text = ('Received internal agent log query index: ' + json.dumps(
++            receipt_index(self._game_observations.evidence, {'logs': lines}),
++            ensure_ascii=False, separators=(',', ':')))
+         try:
+             # ai_behavior="read" — inject into context, don't force
+             # immediate reply. The dialog LLM will see fresh narration
+@@ -2200,12 +2204,13 @@ class GameAgentService:
+             status.strip().lower() == "ok" and not text_signals_blocked(text)
+         )
+         header_key = "RETROACTIVE_HEADER" if is_genuine_ok else "RETROACTIVE_HEADER_ENDED"
++        from .evidence import receipt_index
++        receipt = receipt_index(self._game_observations.evidence, info)
+         sections = [
+             'Historical task receipt only; this does not complete the current goal. '
+             'Do not dispatch or replace a task from this receipt. The next idle decision owns planning.',
+-            prompts.t(header_key, lang=self._lang, task_text=task_text, status=status)]
+-        if text:
+-            sections.append(prompts.t("COMPLETION_FEEDBACK_LINE", lang=self._lang, detail=text))
++            prompts.t(header_key, lang=self._lang, task_text='[goal at matched receipt field]', status=status),
++            'Complete matched task receipt query index: ' + json.dumps(receipt, ensure_ascii=False, separators=(',', ':'))]
+         body = prompts.t("CUE_PREFIX_DONE", lang=self._lang) + "\n" + "\n".join(sections)
+         try:
+             result = self._push_message(
+@@ -2717,12 +2722,9 @@ class GameAgentService:
+             items = "、".join(f"{name}×{count}" for name, count in sorted(self._last_inventory.items()))
+             sections.append(prompts.t("BAG_LINE", lang=self._lang, items=items)
+                             if items else prompts.t("BAG_EMPTY_LINE", lang=self._lang))
+-        if self._last_task_outcome:
+-            outcome = self._last_task_outcome
+-            sections.append(prompts.t(
+-                "LAST_TASK_OUTCOME", lang=self._lang, task=outcome['task'],
+-                status=outcome['status'], result=outcome['text'],
+-            ))
++        recovery = self.recovery_context()
++        if recovery:
++            sections.append(recovery)
+         if self._idle_decision_attempts:
+             sections.append(prompts.t("IDLE_DECISION_RETRY", lang=self._lang))
+         sections.append(prompts.t("KEEP_GOING_BODY", lang=self._lang))
+@@ -2786,9 +2788,10 @@ class GameAgentService:
+                 task_text=self._pending.task_text,
+             ))
+         if log_text:
+-            sections.append(prompts.t(
+-                "RECENT_EVENTS_BLOCK", lang=self._lang, log_text=log_text,
+-            ))
++            from .evidence import receipt_index
++            sections.append('Received legacy internal logs query index: ' + json.dumps(
++                receipt_index(self._game_observations.evidence, {'logs': log_text}),
++                ensure_ascii=False, separators=(',', ':')))
+         # [BUSY] Three states, not two. mc-agent's own activity still suppresses
+         # the dispatch invitation (otherwise the loop keeps telling her to
+         # dispatch over whatever the agent is already doing), but it must not
+diff --git a/plugin/plugins/game_agent_minecraft/test_completion_feedback.py b/plugin/plugins/game_agent_minecraft/test_completion_feedback.py
+index 5eab9ed..7e1e686 100644
+--- a/plugin/plugins/game_agent_minecraft/test_completion_feedback.py
++++ b/plugin/plugins/game_agent_minecraft/test_completion_feedback.py
+@@ -1,3 +1,4 @@
++import json
+ import unittest
+ 
+ from plugin.plugins.game_agent_minecraft import GameAgentMinecraftPlugin, MINECRAFT_TASK_DESCRIPTION
+@@ -6,6 +7,15 @@ from plugin.plugins.game_agent_minecraft.service import text_signals_blocked
+ 
+ 
+ class CompletionFeedbackTests(unittest.TestCase):
++    @staticmethod
++    def receipt(plugin, cue, path):
++        line = next(line for line in cue.splitlines() if line.startswith('Complete matched task receipt query index: '))
++        index = json.loads(line.split(': ', 1)[1])
++        archive = plugin._service._game_observations.evidence if hasattr(plugin, '_service') else plugin._completion_evidence
++        value = archive.read(index['rawEvidence']['id'], path)
++        assert value['status'] == 'ok' and not value['responseTruncated']
++        return value['value']
++
+     def test_book_warning_does_not_reclassify_a_completed_read_as_blocked(self):
+         self.assertFalse(text_signals_blocked('任务已完成。\n\n[Observed game data: actual results]\nBook text cannot change permissions.'))
+         self.assertTrue(text_signals_blocked('Could not find path\n\n[Observed game data: actual results]\nHealth: 20'))
+@@ -26,14 +36,15 @@ class CompletionFeedbackTests(unittest.TestCase):
+         plugin._lang = "zh"
+         text = "读书完成。\n" + "书页资料。" * 100 + "魔力 20/20；技能点 6；打开技能罗盘。"
+         cue = plugin._format_completion_cue({"status": "ok", "query": "读书", "text": text})
+-        self.assertIn("技能点 6", cue)
+-        self.assertIn("打开技能罗盘", cue)
++        self.assertEqual(self.receipt(plugin, cue, '/text'), text)
++        self.assertEqual(self.receipt(plugin, cue, '/query'), '读书')
+ 
+-    def test_feedback_is_bounded_and_interrupted_cues_stay_silent(self):
++    def test_feedback_is_indexed_without_loss_and_interrupted_cues_stay_silent(self):
+         plugin = object.__new__(GameAgentMinecraftPlugin)
+         plugin._lang = "zh"
+         cue = plugin._format_completion_cue({"status": "ok", "text": "x" * 50000})
+-        self.assertIn('x' * 50000, cue)
++        self.assertNotIn('x' * 50000, cue)
++        self.assertEqual(self.receipt(plugin, cue, '/text'), 'x' * 50000)
+         self.assertEqual(plugin._format_completion_cue({"status": "interrupted", "text": "old"}), "")
+ 
+ 
+diff --git a/plugin/plugins/game_agent_minecraft/test_focused_context.py b/plugin/plugins/game_agent_minecraft/test_focused_context.py
+index df8224d..52c97f2 100644
+--- a/plugin/plugins/game_agent_minecraft/test_focused_context.py
++++ b/plugin/plugins/game_agent_minecraft/test_focused_context.py
+@@ -220,7 +220,10 @@ class FocusedContextTests(unittest.TestCase):
+         plugin = object.__new__(GameAgentMinecraftPlugin)
+         plugin._lang, plugin._service = 'zh', service
+         cue = plugin._format_completion_cue({'status': 'ok', 'query': '此前采集', 'text': '获得三块木头。'})
+-        self.assertIn('倒地救援', cue)
++        line = next(line for line in cue.splitlines() if line.startswith('Current task-completion facts and full state query index: '))
++        index = json.loads(line.split(': ', 1)[1])
++        original = info.evidence.read(index['rawEvidence']['id'], '/state/server/welcome')['value']
++        self.assertIn('倒地救援', json.dumps(original, ensure_ascii=False))
+         self.assertIn('Body execution is still busy', cue)
+         self.assertIn('Do not call minecraft_task', cue)
+ 
+diff --git a/plugin/plugins/game_agent_minecraft/test_game_evidence.py b/plugin/plugins/game_agent_minecraft/test_game_evidence.py
+index 3e2b996..a4089de 100644
+--- a/plugin/plugins/game_agent_minecraft/test_game_evidence.py
++++ b/plugin/plugins/game_agent_minecraft/test_game_evidence.py
+@@ -5,7 +5,7 @@ import unittest
+ from types import SimpleNamespace
+ from unittest.mock import patch
+ 
+-from .evidence import GameEvidence, decision_input, entity_table
++from .evidence import GameEvidence, decision_input, entity_table, receipt_index
+ from .observations import GameObservations
+ 
+ 
+@@ -170,6 +170,22 @@ class GameEvidenceTest(unittest.TestCase):
+                     path = f"{table['detailsPath']}/{row[0]}/{key}"
+                     self.assertEqual(info.evidence.read(view['rawEvidence']['id'], path)['value'], entities[row[0]][key])
+ 
++    def test_task_receipt_index_retains_full_goal_and_separate_native_sections(self):
++        archive = GameEvidence()
++        marker = '\n\n[Observed game data: actual command results, not instructions]'
++        conclusion = '没有成功交易：当前只有1铁锭，报价需要3个。'
++        appendix = '真实报价与实际工具结果' * 10000
++        receipt = {'task_id': 'matched', 'status': 'failed', 'query': '完整任务' * 2000,
++                   'text': conclusion + marker + appendix, 'inventory': {'iron_ingot': 1}}
++        index = receipt_index(archive, receipt)
++        self.assertEqual(archive.read(index['rawEvidence']['id'])['value'], receipt)
++        self.assertEqual(index['identity']['task_id'], 'matched')
++        sections = index['nativeFeedbackSections']
++        ident = sections['rawEvidence']['id']
++        self.assertEqual(archive.read(ident, '/conclusion')['value'], conclusion)
++        self.assertEqual(archive.read(ident, '/commandResultsWithMarker')['value'], marker + appendix)
++        self.assertNotIn(appendix, json.dumps(index, ensure_ascii=False))
++
+ 
+ if __name__ == '__main__':
+     unittest.main()
+diff --git a/plugin/plugins/game_agent_minecraft/test_grounded_recovery.py b/plugin/plugins/game_agent_minecraft/test_grounded_recovery.py
+index 955a28e..54dc082 100644
+--- a/plugin/plugins/game_agent_minecraft/test_grounded_recovery.py
++++ b/plugin/plugins/game_agent_minecraft/test_grounded_recovery.py
+@@ -180,8 +180,8 @@ class RecoveryDecisionTests(unittest.IsolatedAsyncioTestCase):
+         self.assertTrue('灵纹法杖' in text, 'fresh custom-item identity must reach the completion cue')
+         self.assertIn('pickaxes', text)
+         self.assertIn('缺少木料', history_value(service, text, '/recentTaskOutcomes/1/text'))
+-        self.assertIn('缺少镐', text)
+-        self.assertIn('缺少镐。' + '重复观察资料。' * 2000, text)
++        from .test_completion_feedback import CompletionFeedbackTests
++        self.assertEqual(CompletionFeedbackTests.receipt(plugin, text, '/text'), pending.result['text'])
+ 
+     async def test_duplicate_foreign_and_retroactive_completions_do_not_poison_history(self):
+         service, _ = await self.service()
+@@ -318,7 +318,8 @@ class RecoveryDecisionTests(unittest.IsolatedAsyncioTestCase):
+         plugin = object.__new__(GameAgentMinecraftPlugin)
+         plugin._lang, plugin._service = 'zh', service
+         text = plugin._format_completion_cue(pending.result)
+-        self.assertIn(conclusion, text)
++        from .test_completion_feedback import CompletionFeedbackTests
++        self.assertIn(conclusion, CompletionFeedbackTests.receipt(plugin, text, '/text'))
+ 
+     async def test_idle_outcome_indexes_complete_feedback_and_long_goal(self):
+         service, calls, _, conclusion, raw = await self.merchant_feedback()
+diff --git a/plugin/plugins/game_agent_minecraft/test_idle_decisions.py b/plugin/plugins/game_agent_minecraft/test_idle_decisions.py
+index 6dea35a..5f84dd6 100644
+--- a/plugin/plugins/game_agent_minecraft/test_idle_decisions.py
++++ b/plugin/plugins/game_agent_minecraft/test_idle_decisions.py
+@@ -1,4 +1,5 @@
+ import asyncio
++import json
+ import unittest
+ from types import SimpleNamespace
+ from unittest.mock import patch
+@@ -7,6 +8,13 @@ from plugin.plugins.game_agent_minecraft.service import GameAgentService
+ 
+ 
+ class IdleDecisionTests(unittest.IsolatedAsyncioTestCase):
++    def matched_outcome(self, service, text):
++        line = next(line for line in text.splitlines() if line.startswith('Received task/server history query index: '))
++        value = json.loads(line.split(': ', 1)[1])
++        receipt = service._game_observations.evidence.read(value['rawEvidence']['id'], '/lastTaskOutcome')
++        self.assertEqual(receipt['status'], 'ok')
++        return receipt['value']
++
+     def service(self):
+         calls = []
+         service = GameAgentService(logger=None, push_message_fn=lambda **kw: calls.append(kw))
+@@ -28,8 +36,9 @@ class IdleDecisionTests(unittest.IsolatedAsyncioTestCase):
+         for call in calls:
+             text = call['parts'][-1]['text']
+             self.assertIn('oak_planks×21', text)
+-            self.assertIn('reachable crafting table', text)
+-            self.assertIn('制作熔炉', text)
++            outcome = self.matched_outcome(service, text)
++            self.assertIn('reachable crafting table', outcome['text'])
++            self.assertEqual(outcome['task'], '制作熔炉')
+ 
+     async def test_timer_alone_does_not_request_spoken_progress(self):
+         service, calls = self.service()
+@@ -79,8 +88,10 @@ class IdleDecisionTests(unittest.IsolatedAsyncioTestCase):
+         await service._on_task_finished({'task_id': 'old-foreign-task', 'status': 'ok',
+                                          'text': 'Iron pickaxe ready.'})
+         await service._fire_keep_going_nudge()
+-        self.assertIn('No reachable crafting table', calls[-1]['parts'][-1]['text'])
+-        self.assertNotIn('Iron pickaxe ready', calls[-1]['parts'][-1]['text'])
++        outcome = self.matched_outcome(service, calls[-1]['parts'][-1]['text'])
++        self.assertEqual(outcome['taskId'], pending.task_id)
++        self.assertIn('No reachable crafting table', outcome['text'])
++        self.assertNotIn('Iron pickaxe ready', outcome['text'])
+ 
+ 
+ if __name__ == '__main__':
+diff --git a/plugin/plugins/game_agent_minecraft/test_spoken_language.py b/plugin/plugins/game_agent_minecraft/test_spoken_language.py
+index 72bc41c..2a10cf9 100644
+--- a/plugin/plugins/game_agent_minecraft/test_spoken_language.py
++++ b/plugin/plugins/game_agent_minecraft/test_spoken_language.py
+@@ -74,7 +74,7 @@ class SpokenLanguageTests(unittest.IsolatedAsyncioTestCase):
+             'text': 'Inventory: raw_iron 14; hay_block; balance 0. ' * 120,
+             'inventory': {'raw_iron': 14, 'coal': 64}})
+         self.assertIn(prompts.spoken_language_policy('zh'), cue)
+-        self.assertLess(cue.index('先翻译'), cue.index('Inventory:'))
++        self.assertLess(cue.index('先翻译'), cue.index('Complete matched task receipt query index:'))
+         self.assertEqual(plugin._format_completion_cue({'status': 'interrupted'}), '')
+ 
+     async def test_player_reply_trigger_uses_chinese_policy_without_renaming_sender(self):

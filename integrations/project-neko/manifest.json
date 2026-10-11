@@ -1,9 +1,9 @@
 {
   "upstreamRepository": "https://github.com/Project-N-E-K-O/N.E.K.O",
   "baseCommit": "fb2a2e731a8c954478d08678b0c8cf40e8145a54",
-  "sourceCommit": "c2a80fe2b4331701d659b48ef766db4403621f6f",
+  "sourceCommit": "26a6bc0ef0da24996b8300728c21b1b68858d4fc",
   "scope": "plugin/plugins/game_agent_minecraft",
-  "resultPluginTree": "e54caa85205f663281664c3337158e5c4adf2ab2",
+  "resultPluginTree": "cdfd7e42a639a89226d6334b54760c026fd07c57",
   "patches": [
     {
       "file": "0001-chore-configure-text-only-local-Qwen-Minecraft-trial.patch",
@@ -332,6 +332,10 @@
     {
       "file": "0082-fix-context-expose-exact-entity-coordinate-and-proto.patch",
       "sha256": "b08c80e7bbaafe8506cb1c66e3c8ae861b5fa01d9ccc49af984773ae6e45a611"
+    },
+    {
+      "file": "0083-fix-context-index-full-completion-receipts-and-avoid.patch",
+      "sha256": "12148b27948e2abfd82fe5141f9f056eaee82db160e328aa87f8c7f60410fc64"
     }
   ],
   "verification": {
@@ -681,6 +685,14 @@
       "scopePaths": [
         "main_logic/omni_offline_client/_tools.py",
         "tests/unit/test_tool_calling.py"
+      ]
+    },
+    {
+      "file": "host-patches/0031-fix-context-index-full-completion-receipts-and-avoid.patch",
+      "sha256": "8778ea737605224d1b0c7f302e8cea69bf7c4579767b7cc94ed36f2f2da74fc6",
+      "scopePaths": [
+        "utils/llm_client/timing.py",
+        "tests/unit/test_llm_client_timing.py"
       ]
     }
   ],
@@ -1578,7 +1590,7 @@
   },
   "completeInformationVerification": {
     "date": "2026-10-12",
-    "sourceCommit": "c2a80fe2b4331701d659b48ef766db4403621f6f",
+    "sourceCommit": "26a6bc0ef0da24996b8300728c21b1b68858d4fc",
     "nativeCommit": "7c8c278ea92138d2aa2fca71a70779c294fbb111",
     "runtimeCommit": "be808d311619b331fcb44e9ab5a771bde3eecde6",
     "nativeRelatedPassed": 243,
@@ -1615,7 +1627,7 @@
       "maxContext": 32768,
       "result": "rejected_context_overflow"
     },
-    "runtimeAcceptance": "pending natural continuation acceptance after entity detail indexing",
+    "runtimeAcceptance": "pending natural continuation acceptance after completion/log evidence indexing",
     "explicitExecutionDecision": true,
     "explicitWaitWithoutGameplayForcing": true,
     "persistentEvidenceUsesRuntimeDataRoot": true,
@@ -1634,6 +1646,11 @@
     "entityProtocolReferencesShareEvidenceId": true,
     "entityIndexRegressionPassed": 261,
     "entityIndexSubtestsPassed": 44,
-    "allEntitiesRemainVisible": true
+    "allEntitiesRemainVisible": true,
+    "callbackPluginRegressionPassed": 262,
+    "callbackHostRegressionPassed": 166,
+    "callbackSubtestsPassed": 44,
+    "allCallbackReceiptsQueryable": true,
+    "requestMessageShapesContainNoContent": true
   }
 }

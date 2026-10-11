@@ -1,0 +1,42 @@
+From 26a6bc0ef0da24996b8300728c21b1b68858d4fc Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Mon, 12 Oct 2026 03:51:27 +0800
+Subject: [PATCH] fix(context): index full completion receipts and avoid
+ duplicate current state
+
+---
+ tests/unit/test_llm_client_timing.py | 1 +
+ utils/llm_client/timing.py           | 8 ++++++++
+ 2 files changed, 9 insertions(+)
+
+diff --git a/tests/unit/test_llm_client_timing.py b/tests/unit/test_llm_client_timing.py
+index 1784446..604d9d3 100644
+--- a/tests/unit/test_llm_client_timing.py
++++ b/tests/unit/test_llm_client_timing.py
+@@ -170,6 +170,7 @@ async def test_real_stream_keeps_tool_fragments_and_provider_body_unchanged(monk
+     assert record['outcome'] == 'completed'
+     assert record['new_input_tokens'] == 50
+     assert record['tool_count'] == 1
++    assert record['message_shapes'] == [{'role': 'user', 'content_chars': len('PRIVATE_PROMPT'), 'tool_calls': 0}]
+     assert record['first_effective_content_at'] is not None
+     assert record['command_validated_at'] is None
+     assert 'PRIVATE' not in json.dumps(records)
+diff --git a/utils/llm_client/timing.py b/utils/llm_client/timing.py
+index 7d357b5..9f4438b 100644
+--- a/utils/llm_client/timing.py
++++ b/utils/llm_client/timing.py
+@@ -189,6 +189,14 @@ def dispatch(body):
+         effort = extra.get('reasoning_effort', body.get('reasoning_effort'))
+         # Body inspection supplies numbers/flags only, never copies text or schemas.
+         trace.body_metadata = {'message_count': len(messages), 'tool_count': len(body.get('tools') or []),
++            'message_shapes': [{'role': message.get('role') if message.get('role') in
++                {'system', 'developer', 'user', 'assistant', 'tool'} else 'other',
++                'content_chars': len(message['content']) if isinstance(message.get('content'), str) else
++                    sum(len(part.get('text', '')) for part in message.get('content', [])
++                        if isinstance(part, dict) and isinstance(part.get('text'), str))
++                    if isinstance(message.get('content'), list) else 0,
++                'tool_calls': len(message.get('tool_calls') or [])}
++                for message in messages if isinstance(message, dict)],
+             'image_count': sum(isinstance(part, dict) and part.get('type') in {'image', 'image_url', 'input_image'}
+                 for message in messages if isinstance(message, dict) and isinstance(message.get('content'), list)
+                 for part in message['content']),
