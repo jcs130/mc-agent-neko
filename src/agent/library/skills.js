@@ -8,6 +8,7 @@ import Vec3 from 'vec3';
 import { unclimbVines } from './vine_unstick.js';
 import { describeMenu, openNpcTradingInterface } from './menus.js';
 import { tradeAtWindow } from './merchant_trades.js';
+import { openChestWindow, closeOwnedChestWindow } from './container_windows.js';
 import { threatCanReachBot } from '../combat_policy.js';
 import settings from "../../../settings.js";
 import path from 'path';
@@ -3762,7 +3763,9 @@ export async function putInChest(bot, itemName, num=-1) {
      * @example
      * await skills.putInChest(bot, "oak_log");
      **/
+    const generation = bot._actionGeneration;
     let chest = await world.getNearestBlockAsync(bot, 'chest', 64);   // ★B定点32→64(0714)
+    if (bot.interrupt_code || bot.health <= 0 || bot._actionGeneration !== generation) return false;
     if (!chest) {
         log(bot, `Could not find a chest nearby.`);
         return false;
@@ -3773,10 +3776,19 @@ export async function putInChest(bot, itemName, num=-1) {
         return false;
     }
     let to_put = num === -1 ? item.count : Math.min(num, item.count);
-    await goToPosition(bot, chest.position.x, chest.position.y, chest.position.z, 2);
-    const chestContainer = await bot.openContainer(chest);
-    await chestContainer.deposit(item.type, null, to_put);
-    await chestContainer.close();
+    if (!await goToPosition(bot, chest.position.x, chest.position.y, chest.position.z, 2)) {
+        log(bot, 'Chest not reached; no container interaction attempted.');
+        return false;
+    }
+    let chestContainer;
+    try {
+        chestContainer = await openChestWindow(bot, chest, { generation });
+        if (bot.interrupt_code || bot.health <= 0 || bot._actionGeneration !== generation || bot.currentWindow !== chestContainer) return false;
+        await chestContainer.deposit(item.type, null, to_put);
+    } catch (error) {
+        log(bot, `Chest storage failed: ${error.message}`);
+        return false;
+    } finally { if (chestContainer) closeOwnedChestWindow(bot, chestContainer, generation); }
     log(bot, `Successfully put ${to_put} ${itemName} in the chest.`);
     return true;
 }
@@ -3791,40 +3803,51 @@ export async function takeFromChest(bot, itemName, num=-1) {
      * @example
      * await skills.takeFromChest(bot, "oak_log");
      * **/
+    const generation = bot._actionGeneration;
     let chest = await world.getNearestBlockAsync(bot, 'chest', 64);   // ★B定点32→64(0714)
+    if (bot.interrupt_code || bot.health <= 0 || bot._actionGeneration !== generation) return false;
     if (!chest) {
         log(bot, `Could not find a chest nearby.`);
         return false;
     }
-    await goToPosition(bot, chest.position.x, chest.position.y, chest.position.z, 2);
-    const chestContainer = await bot.openContainer(chest);
-    
-    // Find all matching items in the chest
-    let matchingItems = chestContainer.containerItems().filter(item => item.name === itemName);
-    if (matchingItems.length === 0) {
-        log(bot, `Could not find any ${itemName} in the chest.`);
-        await chestContainer.close();
+    if (!await goToPosition(bot, chest.position.x, chest.position.y, chest.position.z, 2)) {
+        log(bot, 'Chest not reached; no container interaction attempted.');
         return false;
     }
-    
-    let totalAvailable = matchingItems.reduce((sum, item) => sum + item.count, 0);
-    let remaining = num === -1 ? totalAvailable : Math.min(num, totalAvailable);
-    let totalTaken = 0;
-    
-    // Take items from each slot until we've taken enough or run out
-    for (const item of matchingItems) {
-        if (remaining <= 0) break;
-        
-        let toTakeFromSlot = Math.min(remaining, item.count);
-        await chestContainer.withdraw(item.type, null, toTakeFromSlot);
-        
-        totalTaken += toTakeFromSlot;
-        remaining -= toTakeFromSlot;
-    }
-    
-    await chestContainer.close();
-    log(bot, `Successfully took ${totalTaken} ${itemName} from the chest.`);
-    return totalTaken > 0;
+    let chestContainer;
+    try {
+        chestContainer = await openChestWindow(bot, chest, { generation });
+        if (bot.interrupt_code || bot.health <= 0 || bot._actionGeneration !== generation || bot.currentWindow !== chestContainer) return false;
+
+        // Find all matching items in the chest
+        let matchingItems = chestContainer.containerItems().filter(item => item.name === itemName);
+        if (matchingItems.length === 0) {
+            log(bot, `Could not find any ${itemName} in the chest.`);
+            return false;
+        }
+
+        let totalAvailable = matchingItems.reduce((sum, item) => sum + item.count, 0);
+        let remaining = num === -1 ? totalAvailable : Math.min(num, totalAvailable);
+        let totalTaken = 0;
+
+        // Take items from each slot until we've taken enough or run out
+        for (const item of matchingItems) {
+            if (remaining <= 0) break;
+            if (bot.interrupt_code || bot.health <= 0 || bot._actionGeneration !== generation || bot.currentWindow !== chestContainer) break;
+
+            let toTakeFromSlot = Math.min(remaining, item.count);
+            await chestContainer.withdraw(item.type, null, toTakeFromSlot);
+
+            totalTaken += toTakeFromSlot;
+            remaining -= toTakeFromSlot;
+        }
+
+        log(bot, `Successfully took ${totalTaken} ${itemName} from the chest.`);
+        return totalTaken > 0;
+    } catch (error) {
+        log(bot, `Chest withdrawal failed: ${error.message}`);
+        return false;
+    } finally { if (chestContainer) closeOwnedChestWindow(bot, chestContainer, generation); }
 }
 
 export async function viewChest(bot) {
@@ -3835,25 +3858,36 @@ export async function viewChest(bot) {
      * @example
      * await skills.viewChest(bot);
      * **/
+    const generation = bot._actionGeneration;
     let chest = await world.getNearestBlockAsync(bot, 'chest', 64);   // ★B定点32→64(0714)
+    if (bot.interrupt_code || bot.health <= 0 || bot._actionGeneration !== generation) return false;
     if (!chest) {
         log(bot, `Could not find a chest nearby.`);
         return false;
     }
-    await goToPosition(bot, chest.position.x, chest.position.y, chest.position.z, 2);
-    const chestContainer = await bot.openContainer(chest);
-    let items = chestContainer.containerItems();
-    if (items.length === 0) {
-        log(bot, `The chest is empty.`);
+    if (!await goToPosition(bot, chest.position.x, chest.position.y, chest.position.z, 2)) {
+        log(bot, 'Chest not reached; no container interaction attempted.');
+        return false;
     }
-    else {
-        log(bot, `The chest contains:`);
-        for (let item of items) {
-            log(bot, `${item.count} ${item.name}`);
+    let chestContainer;
+    try {
+        chestContainer = await openChestWindow(bot, chest, { generation });
+        if (bot.interrupt_code || bot.health <= 0 || bot._actionGeneration !== generation || bot.currentWindow !== chestContainer) return false;
+        let items = chestContainer.containerItems();
+        if (items.length === 0) {
+            log(bot, `The chest is empty.`);
         }
-    }
-    await chestContainer.close();
-    return true;
+        else {
+            log(bot, `The chest contains:`);
+            for (let item of items) {
+                log(bot, `${item.count} ${item.name}`);
+            }
+        }
+        return true;
+    } catch (error) {
+        log(bot, `Chest inspection failed: ${error.message}`);
+        return false;
+    } finally { if (chestContainer) closeOwnedChestWindow(bot, chestContainer, generation); }
 }
 
 export async function consume(bot, itemName="") {

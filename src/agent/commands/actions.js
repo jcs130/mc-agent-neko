@@ -447,7 +447,7 @@ export const actionsList = [
         description: 'View the items/counts of the nearest chest.',
         params: { },
         perform: runAsAction(async (agent) => {
-            await skills.viewChest(agent.bot);
+            return await skills.viewChest(agent.bot);
         })
     },
     {

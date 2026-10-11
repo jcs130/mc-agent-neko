@@ -157,3 +157,42 @@ files. Live deployment and actual productive gameplay remain separate gates.
   confirmed a `deployed` receipt. This records deployment without closing the
   ticket or asserting full runtime recovery. Private evidence and the hourly
   comparison baseline retain both productive and unsuccessful windows.
+
+## 回归报告 / Regression Report: interrupted chest opening
+
+**Trigger and mechanism:** Beijing 2026-10-11 20:26:36, 20:34:47 and 20:43:28
+showed `action:viewChest` preempted by `mode:self_preservation`, then an
+`action-refused-stop` self-initiated reconnect. Mineflayer 4.37.1's
+`openContainer → openBlock` waits up to 20 seconds for `windowOpen`, without
+observing the action interrupt; ActionManager escalates after 15 seconds.
+Chest skills also ignored failed navigation. An absent window alone does not
+establish a server fault, protection denial or empty container.
+
+**Change:** the three chest skills wait directly for Mineflayer's initialized
+`windowOpen` event with a six-second deadline, 100 ms interruption polling,
+death/disconnect handling and captured action-generation ownership. The
+event's window already has Mineflayer's transfer/close methods and slot data;
+no hidden `openContainer` waiter is left behind. Owned timers/listeners are
+removed on settlement. A different menu, carried cursor or pending opening
+refuses interaction. Failed navigation does not open anything. Cleanup closes
+only the same current window and action generation. `!viewChest` now returns
+its skill's false result through the existing action wrapper, giving the
+planner an explicit failed command instead of apparently successful execution.
+
+**Validation:** the initial eight behavioural reproductions all failed before
+the fix. Separate regressions exposed the discarded command result and retired
+generation cleanup; their pre-fix failures are saved privately. The final
+focused container, reconnect-backstop, combat-window, collection-cancellation
+and menu suites pass 64 tests. A real Mineflayer inventory injection consumes
+1.20.6 open-window/slot packets, reads four bread, preserves deposit/withdraw
+methods and sends the correct close-window packet. Counts overlap.
+
+**Risks and limits:** a slow server may legitimately need more than six seconds;
+the result then remains "contents unknown" and the planner must reobserve.
+The protocol supplies no request ID that identifies a delayed window with a
+particular block. Retired waits do not close late windows or continue transfers.
+Existing transfer internals, chest target selection and terminal reconnect
+protection remain unchanged. This improves execution continuity for local LLM
+deployment without extra model calls, context changes or decision frequency.
+Unit proof is separate from deployment and a naturally successful container
+operation; no completed commission or long-term survival result is implied.

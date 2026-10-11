@@ -3221,3 +3221,19 @@
   kept its full goal and matched received ID; it still timed out. Speech ticket
   baseline 436 writeback accepted as deployed; continuity baseline 352 advanced,
   so that receipt remains pending. Audio continuity and productive play stay open.
+
+### 2026-10-11 — Yield chest opening to safety before the reconnect watchdog
+- Evidence: three real viewChest preemptions at Beijing 20:26:36, 20:34:47 and
+  20:43:28 ended in action-refused-stop self-reconnects and interrupted tasks.
+- Mechanism: the dependency's 20-second window wait cannot observe the action
+  interrupt before the 15-second terminal watchdog; navigation failure was
+  ignored, and the viewChest command discarded its skill's false result.
+- Change: owned initialized-window wait, six-second deadline, 100 ms interrupt
+  polling, death/end/generation checks and scoped cleanup; gate interactions
+  on successful navigation, preserve foreign menus/cursors and propagate failure.
+- Falsifiable prediction: an absent window or interrupted opening ends without
+  this wait causing a forced reconnect; no unopened container is called empty.
+  Normal transfers, target selection and terminal watchdog remain in place.
+- Validation: eight original reproductions fail before the change; the final
+  focused suites pass 64 cases, including real Mineflayer slot initialization.
+  Deployment and a natural successful opening remain separate acceptance gates.
