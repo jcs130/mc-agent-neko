@@ -1,5 +1,11 @@
 # Neko 改动台账（科学家模式）
 
+## 2026-10-11 本地慢语音串轮与结束回执
+
+- 实证：主动回复中确有一次完整哈希重复，不能把全部重复归于播放器；17:00 后 25 次播放结束看门狗。四个独立失败回归复现旧音频被标成新轮、错误确认回退账本、新文本清理旧音频收尾、长句仍出声时提前超时。
+- 改动：本地 Vox 传递源 speech ID，音频头明确 turn ID；只确认所属回退账本；前端保留独立音频生命周期及幂等结束。长本地播报从最近实际音频获得有界超时余量。诊断只存 ID/时间/计数/哈希，不静音同句、不新增模型调用或改上下文。
+- 预测：慢旧句不会串轮或释放新轮的账本，迟到结束可回执且不重置新文本；正常重复回答和取消保留。相关 2126 项、Ruff/语法/空白通过；一个日志捕获断言经原版本独立归档复现后排除。92 补丁回放与 55 宿主文件匹配。当前 prepared，自然播报及听感另验，未关闭广泛游戏空转工单。详见 docs/local-speech-ownership.md。
+
 ## 2026-10-11 OBS minimap and YSM availability (local viewer)
 
 - Evidence: the deployed renderer was 79ddc629; upstream OBS now retains the 2D minimap. Real LAN state for ag_NEKO was available=false / YSM_WORKER_STATE_UNAVAILABLE, with no model asset and no captured browser error.

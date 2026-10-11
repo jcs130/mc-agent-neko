@@ -1,0 +1,643 @@
+From b390fc7ed6ce57e3ced324cfda87c88df14b235b Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Sun, 11 Oct 2026 18:22:58 +0800
+Subject: [PATCH] fix(tts): preserve slow local speech ownership across reply
+ turns
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+回归报告 / Regression Report
+
+Slow local VoxCPM2 audio was emitted without its source speech ID, so the
+host could assign an older sentence to a newer reply. Keep source identity
+through worker output, audio headers, replay acknowledgement and frontend
+completion after a text turn advances. A duplicate terminal notice must not
+finish the next turn. Preserve cancellation epochs and legitimate repeated
+sentences instead of muting by text.
+
+Extend the existing bounded local playback watchdog from the last actual
+audio delivery while long speech continues. Other providers keep the old
+timeout. Add hashes/counts and playback boundary metadata without saving
+speech text, PCM, prompts or credentials.
+
+Validation: source-owner, fallback-ledger, frontend late-completion and
+long-playback regressions failed before their fixes. Related regression:
+2126 passed, one unchanged logger-capture test deselected after reproducing
+its failure on the original 02c325c revision. Ruff, Node syntax and diff
+checks passed. Risks covered include interrupts, provider fallback, audio
+framing, late chunks and legitimate repeated replies. Native listening
+acceptance is recorded separately; unit success is not audible acceptance.
+---
+ main_logic/core/manager.py                    |   2 +
+ main_logic/core/proactive.py                  |  20 +++-
+ main_logic/core/tts_runtime.py                |  43 ++++++-
+ main_logic/tts_client/local_primary.py        |   1 +
+ main_logic/tts_client/workers/openai.py       |   5 +-
+ main_routers/debug_router.py                  |   2 +
+ static/app/app-audio-playback.js              |  47 +++++++-
+ .../test_assistant_speech_finalize_static.py  |  23 ++++
+ tests/unit/test_local_voxcpm_primary.py       |   9 +-
+ tests/unit/test_openai_compatible_tts.py      |   1 +
+ tests/unit/test_slow_tts_speech_ownership.py  | 112 ++++++++++++++++++
+ tests/unit/test_tts_audio_done_forward.py     |   9 +-
+ tests/unit/test_tts_handoff_ownership.py      |   2 +-
+ 13 files changed, 254 insertions(+), 22 deletions(-)
+ create mode 100644 tests/unit/test_slow_tts_speech_ownership.py
+
+diff --git a/main_logic/core/manager.py b/main_logic/core/manager.py
+index 9ab324d..1a252e6 100644
+--- a/main_logic/core/manager.py
++++ b/main_logic/core/manager.py
+@@ -148,6 +148,8 @@ class LLMSessionManager(
+         # speech.  Cleared with audio_done, interruption, or TTS teardown.
+         self._game_speech_correlation: tuple[str, str] | None = None
+         self._speech_output_total = 0  # diagnostic: chunks actually sent to frontend playback
++        self._last_speech_delivery = {}
++        self._last_voice_playback_signal = {}
+         self._last_speech_output_time = 0.0
+         self._last_speech_output_bytes = 0
+         # 只在「用户/前端主动结束启动」时递增（end_session 的 not by_server +
+diff --git a/main_logic/core/proactive.py b/main_logic/core/proactive.py
+index 2e2f956..e09733d 100644
+--- a/main_logic/core/proactive.py
++++ b/main_logic/core/proactive.py
+@@ -28,6 +28,7 @@ from main_logic.omni_realtime_client import (
+     RealtimeImagePayloadTooLargeError,
+ )
+ from main_logic.omni_offline_client import OmniOfflineClient
++from main_logic.tts_client.local_primary import LOCAL_PRIMARY_PROVIDER
+ from utils.llm_client import AIMessage
+ from main_logic.session_state import SessionEvent, ProactivePhase, session_reply_in_progress
+ from main_logic.proactive_delivery import (
+@@ -2961,6 +2962,13 @@ class ProactiveMixin:
+         ``trigger_agent_callbacks`` on end so a cue deferred mid-playback is
+         delivered promptly rather than waiting for the next response.done.
+         """
++        self._last_voice_playback_signal = {
++            "action": "voice_play_start" if playing else "voice_play_end",
++            "turn_id": str(meta.get("turn_id") or ""), "at": time.time(),
++        }
++        logger.info("[voice-chain] stage=%s speech_id=%s",
++                    self._last_voice_playback_signal["action"],
++                    self._last_voice_playback_signal["turn_id"])
+         self._voice_playback_active = bool(playing)
+         if playing:
+             self._voice_playback_started_ts = time.monotonic()
+@@ -2993,12 +3001,18 @@ class ProactiveMixin:
+ 
+     def _is_voice_playing(self) -> bool:
+         """Time-bounded read of the playback gate. Auto-clears a stuck
+-        ``_voice_playback_active`` when no voice_play_end has arrived within
+-        ``_VOICE_PLAYBACK_STALE_S`` (frontend disconnect/refresh mid-playback),
+-        so the voice inject gate can never wedge proactive delivery forever."""
++        ``_voice_playback_active`` after ``_VOICE_PLAYBACK_STALE_S`` without
++        voice_play_end. Long local speech gets the same bounded grace from
++        its last delivered audio, rather than timing out while still speaking.
++        A frontend disconnect/refresh cannot wedge proactive delivery forever.
++        """
+         if not self._voice_playback_active:
+             return False
+         if time.monotonic() - self._voice_playback_started_ts > self._VOICE_PLAYBACK_STALE_S:
++            if getattr(self, '_tts_active_provider_key', None) == LOCAL_PRIMARY_PROVIDER:
++                audio_age = time.time() - float(getattr(self, '_last_speech_output_time', 0) or 0)
++                if 0 <= audio_age < self._VOICE_PLAYBACK_STALE_S:
++                    return True
+             logger.warning(
+                 "[%s] voice playback gate watchdog: no voice_play_end after %.0fs; clearing stuck flag",
+                 self.lanlan_name, self._VOICE_PLAYBACK_STALE_S,
+diff --git a/main_logic/core/tts_runtime.py b/main_logic/core/tts_runtime.py
+index d0a8772..ad5daea 100644
+--- a/main_logic/core/tts_runtime.py
++++ b/main_logic/core/tts_runtime.py
+@@ -2355,7 +2355,8 @@ class TtsRuntimeMixin:
+     def _audio_chunk_header(self, effective_speech_id: str) -> dict:
+         header = {
+             "type": "audio_chunk",
+-            "speech_id": effective_speech_id
++            "speech_id": effective_speech_id,
++            "turn_id": effective_speech_id,
+         }
+         correlation_id = self._game_speech_correlation_for(effective_speech_id)
+         if correlation_id:
+@@ -2549,6 +2550,23 @@ class TtsRuntimeMixin:
+             notified_error_keys = set()
+             self._tts_notified_error_keys = notified_error_keys
+         logger.info(f"🎧 tts_response_handler started (queue id={id(q):#x})")
++        audio_delivery = {}
++
++        def record_delivery(speech_id, payload):
++            sid = str(speech_id or "")
++            if not sid or not isinstance(payload, (bytes, bytearray)):
++                return
++            if sid not in audio_delivery:
++                audio_delivery[sid] = {"frames": 0, "bytes": 0, "hash": hashlib.sha256()}
++                logger.info("[voice-chain] stage=tts_audio_first speech_id=%s matches_current=%s",
++                            sid, sid == getattr(self, "current_speech_id", None))
++                while len(audio_delivery) > 64:
++                    audio_delivery.pop(next(iter(audio_delivery)))
++            stats = audio_delivery[sid]
++            stats["frames"] += 1
++            stats["bytes"] += len(payload)
++            stats["hash"].update(payload)
++
+         pending_get = None
+         while True:
+             if not self._tts_runtime_is_current(runtime) or q is not self.tts_response_queue:
+@@ -2577,6 +2595,9 @@ class TtsRuntimeMixin:
+                     and data[0] in {"__tts_sentence_done__", "__tts_sentence_failed__"}
+                 ):
+                     _, speech_id, sentence = data
++                    logger.info("[voice-chain] stage=%s speech_id=%s text_chars=%d text_sha256=%s",
++                                data[0].strip('_'), speech_id, len(str(sentence)),
++                                hashlib.sha256(str(sentence).encode('utf8')).hexdigest())
+                     if data[0] == "__tts_sentence_failed__":
+                         # Sentence workers put this marker immediately before the
+                         # matching ``__error__`` item.  Keep the speech identity so
+@@ -2606,11 +2627,22 @@ class TtsRuntimeMixin:
+                         if not done_sent:
+                             self._mark_game_speech_delivery_failed(speech_id)
+                         delivered = self._game_speech_delivery_succeeded(speech_id)
++                        stats = audio_delivery.pop(str(speech_id or ""), None)
++                        self._last_speech_delivery = {
++                            "speech_id": speech_id, "at": time.time(),
++                            "frames": stats["frames"] if stats else 0,
++                            "bytes": stats["bytes"] if stats else 0,
++                            "audio_sha256": stats["hash"].hexdigest() if stats else None,
++                            "done_sent": bool(done_sent), "delivered": bool(delivered),
++                        }
+                         logger.info(
+-                            "[voice-chain] stage=tts_done speech_id=%s sent=%s delivered=%s",
++                            "[voice-chain] stage=tts_done speech_id=%s sent=%s delivered=%s frames=%s bytes=%s audio_sha256=%s",
+                             speech_id,
+                             done_sent,
+                             delivered,
++                            self._last_speech_delivery["frames"],
++                            self._last_speech_delivery["bytes"],
++                            self._last_speech_delivery["audio_sha256"],
+                         )
+                         if delivered:
+                             GAME_SPEECH_AUDIO_CACHE.complete_capture(
+@@ -2938,9 +2970,11 @@ class TtsRuntimeMixin:
+                     if not self._tts_runtime_is_current(runtime):
+                         return
+                     if sent:
++                        record_delivery(speech_id, audio_payload)
+                         GAME_SPEECH_AUDIO_CACHE.append_capture(self, speech_id, audio_payload)
+-                        self._tts_replay_audio_emitted = True
+-                        self._tts_replay_sentence_audio_emitted = True
++                        if speech_id == getattr(self, "_tts_replay_speech_id", None):
++                            self._tts_replay_audio_emitted = True
++                            self._tts_replay_sentence_audio_emitted = True
+                         self._confirm_pending_ai_voice_echo(speech_id)
+                         # Telemetry：音频成功投递 = 用户听到了角色的声音。配合
+                         # note_core_loop_completed 的"用户已开口"前置，构成 D1
+@@ -2965,6 +2999,7 @@ class TtsRuntimeMixin:
+                 if not self._tts_runtime_is_current(runtime):
+                     return
+                 if sent:
++                    record_delivery(implicit_speech_id, data)
+                     GAME_SPEECH_AUDIO_CACHE.append_unscoped_capture(
+                         self, implicit_speech_id, data
+                     )
+diff --git a/main_logic/tts_client/local_primary.py b/main_logic/tts_client/local_primary.py
+index 2999801..c710cf0 100644
+--- a/main_logic/tts_client/local_primary.py
++++ b/main_logic/tts_client/local_primary.py
+@@ -74,6 +74,7 @@ def voxcpm_primary_worker(request_queue, response_queue, api_key, voice_id, *,
+         request_timeout=60.0, max_retries=0, pcm_sample_rate=48000,
+         text_transform=styled_queue.transform,
+         buffer_sentence_audio=True,
++        scoped_audio=True,
+     )
+ 
+ 
+diff --git a/main_logic/tts_client/workers/openai.py b/main_logic/tts_client/workers/openai.py
+index a924de1..0ef3203 100644
+--- a/main_logic/tts_client/workers/openai.py
++++ b/main_logic/tts_client/workers/openai.py
+@@ -97,6 +97,7 @@ def openai_tts_worker(
+     pcm_sample_rate=OPENAI_TTS_PCM_SAMPLE_RATE,
+     text_transform=None,
+     buffer_sentence_audio=False,
++    scoped_audio=False,
+ ):
+     """OpenAI-compatible TTS: sentence input with a streamed PCM response."""
+ 
+@@ -186,7 +187,7 @@ def openai_tts_worker(
+                         audio_array, pcm_sample_rate, 48000, resampler,
+                     )
+                     if len(resampled):
+-                        response_queue.put(resampled)
++                        response_queue.put(("__audio__", speech_id, resampled) if scoped_audio else resampled)
+ 
+                 async for chunk in response.iter_bytes(chunk_size=4096):
+                     if chunk:
+@@ -222,7 +223,7 @@ def openai_tts_worker(
+                     last=True,
+                 )
+                 if len(tail):
+-                    response_queue.put(tail)
++                    response_queue.put(("__audio__", speech_id, tail) if scoped_audio else tail)
+ 
+         return synthesize, client.close
+ 
+diff --git a/main_routers/debug_router.py b/main_routers/debug_router.py
+index 2b61b6a..56cf14c 100644
+--- a/main_routers/debug_router.py
++++ b/main_routers/debug_router.py
+@@ -392,6 +392,8 @@ def _safe_session_lifecycle():
+             'asr_dispatcher': task_state(getattr(dispatcher, '_worker', None)),
+             'asr_pending_delivery': getattr(dispatcher, 'has_pending_delivery', None),
+             'speech_output_total': getattr(manager, '_speech_output_total', None),
++            'last_speech_delivery': dict(getattr(manager, '_last_speech_delivery', {}) or {}),
++            'last_playback_signal': dict(getattr(manager, '_last_voice_playback_signal', {}) or {}),
+             'connections_live': sum(not r.closed for r in getattr(manager, '_connection_records', ())),
+             'tts_live': sum(bool(r.thread and r.thread.is_alive()) for r in getattr(manager, '_tts_runtimes', ())),
+         }
+diff --git a/static/app/app-audio-playback.js b/static/app/app-audio-playback.js
+index c077b0c..1f95812 100644
+--- a/static/app/app-audio-playback.js
++++ b/static/app/app-audio-playback.js
+@@ -20,6 +20,9 @@
+     let audioPlayerContextSetupPromise = null;
+     let speakerTransitionPromise = Promise.resolve();
+     let localSpeakerPreferenceRevision = 0;
++    // Text turns may advance before slow local TTS arrives. Audio ownership
++    // survives a text turn-start; only cancellation/epoch changes invalidate it.
++    const assistantAudioStreams = new Map();
+ 
+     function normalizeAssistantPlaybackGain(value) {
+         var gain = Number(value);
+@@ -889,6 +892,10 @@
+         if (!normalizedTurnId) {
+             return false;
+         }
++        var streams = Array.from(assistantAudioStreams.values()).filter(function (stream) {
++            return stream.epoch === S.incomingAudioEpoch && stream.turnId === normalizedTurnId;
++        });
++        if (streams.length) return streams.every(function (stream) { return stream.closed; });
+         // 打断会推 epoch。此后才到达的 audio_done 属于上一世代，作废——
+         // 否则它会去收尾一个已经被取消的轮（#1566 的镜像 bug）。
+         if (S.assistantAudioStreamClosedEpoch !== S.incomingAudioEpoch) {
+@@ -905,6 +912,14 @@
+         if (!sid || !normalizedTurnId) {
+             return;
+         }
++        assistantAudioStreams.forEach(function (stream, key) {
++            if (stream.epoch !== S.incomingAudioEpoch || stream.finished) assistantAudioStreams.delete(key);
++        });
++        assistantAudioStreams.set(sid, {
++            turnId: normalizedTurnId, epoch: S.incomingAudioEpoch, closed: false, finished: false
++        });
++        // Metadata only; queued audio is retained if a broken sender floods IDs.
++        while (assistantAudioStreams.size > 128) assistantAudioStreams.delete(assistantAudioStreams.keys().next().value);
+         if (!S.assistantAudioTurnBySpeechId || typeof S.assistantAudioTurnBySpeechId !== 'object') {
+             S.assistantAudioTurnBySpeechId = {};
+         }
+@@ -916,7 +931,8 @@
+         // response.audio.done 是 per-response 的，而一轮里可能有第二个带音频
+         // 的 response（工具调用后的续答）。作废后重新等下一条 audio_done，
+         // 等不到就走 give-up。
+-        if (isAssistantAudioStreamClosed(normalizedTurnId)) {
++        if (normalizeAssistantTurnId(S.assistantAudioStreamClosedTurnId) === normalizedTurnId &&
++            S.assistantAudioStreamClosedEpoch === S.incomingAudioEpoch) {
+             logAudioLifecycle('rememberAssistantAudioSpeechTurn:reopen_after_close', {
+                 speechId: sid,
+                 turnId: normalizedTurnId
+@@ -929,7 +945,9 @@
+     // 后端权威信号：该 speech_id 的音频流已关闭，之后不会再有属于它的 chunk。
+     function noteAssistantAudioStreamClosed(speechId) {
+         var sid = normalizeAssistantTurnId(speechId);
+-        var mapped = (sid && S.assistantAudioTurnBySpeechId)
++        var stream = sid ? assistantAudioStreams.get(sid) : null;
++        if (stream && (stream.epoch !== S.incomingAudioEpoch || stream.finished)) return false;
++        var mapped = stream ? stream.turnId : (sid && S.assistantAudioTurnBySpeechId)
+             ? S.assistantAudioTurnBySpeechId[sid]
+             : null;
+         var turnId = normalizeAssistantTurnId(mapped);
+@@ -946,6 +964,7 @@
+ 
+         S.assistantAudioStreamClosedTurnId = turnId;
+         S.assistantAudioStreamClosedEpoch = S.incomingAudioEpoch;
++        if (stream) stream.closed = true;
+         logAudioLifecycle('noteAssistantAudioStreamClosed', {
+             speechId: sid,
+             turnId: turnId,
+@@ -1236,7 +1255,10 @@
+             requestedTurnId: normalizedTurnId,
+             force: force
+         });
+-        if (!normalizedTurnId || S.assistantTurnCompletedId !== normalizedTurnId) {
++        var ownsTextCompletion = S.assistantTurnCompletedId === normalizedTurnId;
++        var ownsLateAudio = S.assistantSpeechActiveTurnId === normalizedTurnId &&
++            S.assistantTurnId !== normalizedTurnId && isAssistantAudioStreamClosed(normalizedTurnId);
++        if (!normalizedTurnId || (!ownsTextCompletion && !ownsLateAudio)) {
+             logAudioLifecycle('maybeFinalizeAssistantSpeech:skip_completion_mismatch', {
+                 requestedTurnId: normalizedTurnId
+             });
+@@ -1263,9 +1285,21 @@
+             return false;
+         }
+ 
+-        stopActiveLipSync();
+-        S.isPlaying = false;
++        // pendingDecoderReset is an interrupt intent, not queued sound.
++        if (!S.scheduledSources.length && !S.audioBufferQueue.length &&
++            !S.pendingAudioChunkMetaQueue.some(function (item) { return item && !item.shouldSkip; }) &&
++            !S.incomingAudioBlobQueue.length && !S.isProcessingIncomingAudioBlob) {
++            stopActiveLipSync();
++            S.isPlaying = false;
++        }
+         dispatchAssistantSpeechEnd(normalizedTurnId);
++        assistantAudioStreams.forEach(function (stream) {
++            if (stream.epoch === S.incomingAudioEpoch && stream.turnId === normalizedTurnId) stream.finished = true;
++        });
++        if (!ownsTextCompletion) {
++            logAudioLifecycle('maybeFinalizeAssistantSpeech:late_audio_completed', { requestedTurnId: normalizedTurnId });
++            return true;
++        }
+         var completionSource = S.assistantTurnCompletionSource;
+         clearAssistantTurnCompletion();
+         // 这一轮已干净收尾。clearAssistantTurnCompletion 刚把 completedId 清成 null，
+@@ -1335,6 +1369,7 @@
+         });
+ 
+         window.addEventListener('neko-assistant-speech-cancel', function () {
++            assistantAudioStreams.clear();
+             clearAssistantTurnCompletion();
+             clearStuckSpeakingFallback();
+             // [BUGFIX] 切换猫娘后语音模式 mic 永远 skip=focus 的根因：
+@@ -1381,6 +1416,7 @@
+      */
+     async function clearAudioQueue() {
+         dispatchAssistantSpeechCancel('clear_audio_queue');
++        assistantAudioStreams.clear();
+         clearAssistantTurnCompletion();
+         clearPendingAudioMetaStallTimer();
+         clearScheduleAudioChunksTimer();
+@@ -1415,6 +1451,7 @@
+      */
+     function clearAudioQueueWithoutDecoderReset() {
+         dispatchAssistantSpeechCancel('clear_audio_queue_without_decoder_reset');
++        assistantAudioStreams.clear();
+         clearAssistantTurnCompletion();
+         clearPendingAudioMetaStallTimer();
+         clearScheduleAudioChunksTimer();
+diff --git a/tests/unit/test_assistant_speech_finalize_static.py b/tests/unit/test_assistant_speech_finalize_static.py
+index 8191c4b..92fe315 100644
+--- a/tests/unit/test_assistant_speech_finalize_static.py
++++ b/tests/unit/test_assistant_speech_finalize_static.py
+@@ -159,6 +159,23 @@ function createHarness() {
+ 
+ const report = {};
+ 
++// A's synthesis/playback can outlive its text. Starting B must not orphan A.
++{
++  const h = createHarness();
++  h.primeSpeakingTurn('late-A');
++  h.mod.rememberAssistantAudioSpeechTurn('late-A', 'late-A');
++  h.turnEnd('late-A');
++  h.S.assistantTurnId = 'new-B';
++  h.win.dispatchEvent(new CustomEventLike('neko-assistant-turn-start', {
++    detail: { turnId: 'new-B' },
++  }));
++  h.mod.noteAssistantAudioStreamClosed('late-A');
++  h.mod.noteAssistantAudioStreamClosed('late-A'); // duplicate terminal notice is harmless
++  report.late_previous_speech_ends = h.speechEnds();
++  report.late_keeps_current_text_turn = h.S.assistantTurnId;
++  report.late_no_playing_flag = !h.S.isPlaying;
++}
++
+ // 阵间空档：turn-end 落在队列瞬时为空的时刻，audio_done 还没到 → 不许收尾。
+ {
+   const h = createHarness();
+@@ -401,3 +418,9 @@ def test_audio_done_for_never_played_speech_is_ignored(report):
+     assert report["unknown_sid_speech_ends"] == []
+     assert report["unknown_sid_closed_turn"] is None
+     assert report["unknown_sid_then_real"] == ["TB"]
++
++
++def test_new_text_turn_does_not_orphan_old_audio_or_duplicate_end(report):
++    assert report['late_previous_speech_ends'] == ['late-A']
++    assert report['late_keeps_current_text_turn'] == 'new-B'
++    assert report['late_no_playing_flag'] is True
+diff --git a/tests/unit/test_local_voxcpm_primary.py b/tests/unit/test_local_voxcpm_primary.py
+index 9bc1f00..1ff369f 100644
+--- a/tests/unit/test_local_voxcpm_primary.py
++++ b/tests/unit/test_local_voxcpm_primary.py
+@@ -71,6 +71,7 @@ def test_native_http_worker_streams_48khz_and_never_forwards_online_identity(con
+     assert options['pcm_sample_rate'] == 48000
+     assert options['max_retries'] == 0
+     assert options['buffer_sentence_audio'] is True
++    assert options['scoped_audio'] is True
+     assert options['base_url'] == config['base_url']
+     assert options['safe_error_provider'] == LOCAL_PRIMARY_PROVIDER
+     assert options['text_transform']('你好。', 'sid') == '你好。'
+@@ -185,8 +186,9 @@ def test_local_pcm_waits_for_complete_sentence_and_preserves_every_sample(monkey
+         audio = []
+         while True:
+             item = responses.get(timeout=5)
+-            if isinstance(item, bytes):
+-                audio.append(item)
++            if isinstance(item, tuple) and item[0] == '__audio__':
++                assert item[1] == 's1'
++                audio.append(item[2])
+             elif item == ('__audio_done__', 's1'):
+                 break
+         assert b''.join(audio) == pcm
+@@ -216,7 +218,8 @@ def test_local_truncated_sentence_never_leaks_partial_audio_before_fallback(monk
+         items = []
+         while not responses.empty():
+             items.append(responses.get_nowait())
+-        assert not any(isinstance(item, bytes) for item in items)
++        assert not any(isinstance(item, bytes) or
++                       (isinstance(item, tuple) and item[0] == '__audio__') for item in items)
+         assert ('__tts_sentence_failed__', 'broken', '不应播放残缺片段。') in items
+         assert ('__tts_sentence_done__', 'broken', '不应播放残缺片段。') not in items
+     finally:
+diff --git a/tests/unit/test_openai_compatible_tts.py b/tests/unit/test_openai_compatible_tts.py
+index 3c7878f..eae4b5c 100644
+--- a/tests/unit/test_openai_compatible_tts.py
++++ b/tests/unit/test_openai_compatible_tts.py
+@@ -999,6 +999,7 @@ async def test_tts_handler_marks_audio_before_runtime_fallback(audio_message):
+     mgr.tts_cache_lock = asyncio.Lock()
+     mgr.tts_ready = True
+     mgr._tts_replay_audio_emitted = False
++    mgr._tts_replay_speech_id = 'speech-1'
+     mgr._last_tts_error_code = ""
+     mgr._tts_retry_notify_count = 0
+     observed = []
+diff --git a/tests/unit/test_slow_tts_speech_ownership.py b/tests/unit/test_slow_tts_speech_ownership.py
+new file mode 100644
+index 0000000..dd6660a
+--- /dev/null
++++ b/tests/unit/test_slow_tts_speech_ownership.py
+@@ -0,0 +1,112 @@
++"""Slow local sentence audio must retain its origin across later replies."""
++import asyncio
++import queue
++import threading
++import time
++
++import pytest
++
++from main_logic.tts_client.local_primary import LOCAL_PRIMARY_PROVIDER, voxcpm_primary_worker
++from main_logic.core import LLMSessionManager
++from tests.unit.test_openai_compatible_tts import _install_fake_openai, _wait_for_item
++from tests.unit.test_tts_audio_done_forward import (
++    _RecordingWebsocket, _make_mgr, _start_handler, _stop, _wait_for,
++)
++
++
++@pytest.mark.asyncio
++async def test_slow_local_audio_keeps_source_turn_and_identical_new_reply_is_not_lost(monkeypatch):
++    gate = threading.Event()
++    started = threading.Event()
++    pcm = b'\x01\x00' * 4800
++
++    async def chunks():
++        started.set()
++        while not gate.is_set():
++            await asyncio.sleep(0.005)
++        yield pcm
++
++    clients = _install_fake_openai(monkeypatch, chunks)
++    requests, responses = queue.Queue(), queue.Queue()
++    worker = threading.Thread(target=voxcpm_primary_worker,
++        args=(requests, responses, '', 'ignored'),
++        kwargs={'base_url': 'http://127.0.0.1:18041/v1', 'local_voice': 'test-local'}, daemon=True)
++    worker.start()
++    handler = None
++    try:
++        await asyncio.to_thread(_wait_for_item, responses, lambda item: item == ('__ready__', True))
++        requests.put(('reply-a', '收到。'))
++        requests.put((None, None))
++        assert await asyncio.to_thread(started.wait, 3)
++        # A later model turn is already current while A's HTTP audio is pending.
++        requests.put(('reply-b', '收到。'))
++        requests.put((None, None))
++        ws = _RecordingWebsocket()
++        manager = _make_mgr(ws)
++        manager.current_speech_id = 'reply-b'
++        manager.tts_response_queue = responses
++        handler = await _start_handler(manager)
++        gate.set()
++        assert await _wait_for(lambda: sum(kind == 'json' and value.get('type') == 'audio_done'
++            for kind, value in ws.calls) == 2, timeout=5)
++        headers = [value for kind, value in ws.calls if kind == 'json' and value['type'] == 'audio_chunk']
++        assert {header['speech_id'] for header in headers} == {'reply-a', 'reply-b'}
++        assert all(header['turn_id'] == header['speech_id'] for header in headers)
++        by_speech = {'reply-a': bytearray(), 'reply-b': bytearray()}
++        active = None
++        for kind, value in ws.calls:
++            if kind == 'json' and value['type'] == 'audio_chunk':
++                active = value['speech_id']
++            elif kind == 'bytes':
++                by_speech[active].extend(value)
++        assert bytes(by_speech['reply-a']) == bytes(by_speech['reply-b']) == pcm
++        assert [call['input'] for call in clients[0].create_calls] == ['收到。', '收到。']
++    finally:
++        gate.set()
++        if handler:
++            await _stop(handler)
++        requests.put(('__shutdown__', None))
++        await asyncio.to_thread(worker.join, 5)
++        assert not worker.is_alive()
++
++
++@pytest.mark.asyncio
++async def test_old_audio_cannot_acknowledge_the_new_turn_fallback_ledger():
++    ws = _RecordingWebsocket()
++    manager = _make_mgr(ws)
++    manager.current_speech_id = 'reply-b'
++    manager._tts_replay_speech_id = 'reply-b'
++    manager._tts_replay_sent_chunks = [('reply-b', '新答复。')]
++    handler = await _start_handler(manager,
++        ('__audio__', 'reply-a', b'\x01\x00'),
++        ('__tts_sentence_done__', 'reply-a', '旧答复。'),
++        ('__tts_sentence_done__', 'reply-b', '新答复。'),
++        ('__audio_done__', 'reply-a'))
++    try:
++        assert await _wait_for(lambda: ws.audio_done_seen.is_set())
++        assert manager._tts_replay_sent_chunks == [('reply-b', '新答复。')]
++        assert manager._tts_replay_audio_emitted is False
++    finally:
++        await _stop(handler)
++
++
++def test_long_local_utterance_does_not_timeout_while_new_audio_is_delivered():
++    manager = LLMSessionManager.__new__(LLMSessionManager)
++    manager.lanlan_name = 'test'
++    manager._voice_playback_active = True
++    manager._voice_playback_started_ts = time.monotonic() - manager._VOICE_PLAYBACK_STALE_S - 5
++    manager._tts_active_provider_key = LOCAL_PRIMARY_PROVIDER
++    manager._last_speech_output_time = time.time() - 1
++    assert manager._is_voice_playing() is True
++    manager._last_speech_output_time = time.time() - manager._VOICE_PLAYBACK_STALE_S - 5
++    assert manager._is_voice_playing() is False
++
++
++def test_other_providers_keep_existing_playback_watchdog():
++    manager = LLMSessionManager.__new__(LLMSessionManager)
++    manager.lanlan_name = 'test'
++    manager._voice_playback_active = True
++    manager._voice_playback_started_ts = time.monotonic() - manager._VOICE_PLAYBACK_STALE_S - 5
++    manager._tts_active_provider_key = 'test-online'
++    manager._last_speech_output_time = time.time() - 1
++    assert manager._is_voice_playing() is False
+diff --git a/tests/unit/test_tts_audio_done_forward.py b/tests/unit/test_tts_audio_done_forward.py
+index 9ea8afc..542a4db 100644
+--- a/tests/unit/test_tts_audio_done_forward.py
++++ b/tests/unit/test_tts_audio_done_forward.py
+@@ -167,7 +167,7 @@ async def test_per_speech_gain_is_forwarded_and_released_when_stream_closes():
+     assert await mgr.send_audio_done("sid-boost") is True
+ 
+     assert ws.calls == [
+-        ("json", {"type": "audio_chunk", "speech_id": "sid-boost", "playback_gain": 2.0}),
++        ("json", {"type": "audio_chunk", "speech_id": "sid-boost", "turn_id": "sid-boost", "playback_gain": 2.0}),
+         ("bytes", b"pcm"),
+         ("json", {"type": "audio_done", "speech_id": "sid-boost"}),
+     ]
+@@ -186,6 +186,7 @@ async def test_game_speech_correlation_is_forwarded_and_released_with_stream():
+         ("json", {
+             "type": "audio_chunk",
+             "speech_id": "sid-game",
++            "turn_id": "sid-game",
+             "sdk_speech_correlation_id": "sdk-speech-correlation-1",
+         }),
+         ("bytes", b"pcm"),
+@@ -227,9 +228,9 @@ async def test_audio_done_is_emitted_after_the_last_audio_chunk():
+     await _stop(task)
+ 
+     assert ws.calls == [
+-        ("json", {"type": "audio_chunk", "speech_id": "sid-1"}),
++        ("json", {"type": "audio_chunk", "speech_id": "sid-1", "turn_id": "sid-1"}),
+         ("bytes", b"pcm-first"),
+-        ("json", {"type": "audio_chunk", "speech_id": "sid-1"}),
++        ("json", {"type": "audio_chunk", "speech_id": "sid-1", "turn_id": "sid-1"}),
+         ("bytes", b"pcm-last"),
+         ("json", {"type": "audio_done", "speech_id": "sid-1"}),
+     ]
+@@ -326,7 +327,7 @@ async def test_handler_awaits_the_send_instead_of_scheduling_it():
+ 
+     assert ws.calls == [
+         ("json", {"type": "audio_done", "speech_id": "sid-1"}),
+-        ("json", {"type": "audio_chunk", "speech_id": "sid-2"}),
++        ("json", {"type": "audio_chunk", "speech_id": "sid-2", "turn_id": "sid-2"}),
+         ("bytes", b"pcm-next"),
+     ]
+ 
+diff --git a/tests/unit/test_tts_handoff_ownership.py b/tests/unit/test_tts_handoff_ownership.py
+index f4a7251..68a3b7e 100644
+--- a/tests/unit/test_tts_handoff_ownership.py
++++ b/tests/unit/test_tts_handoff_ownership.py
+@@ -711,7 +711,7 @@ async def test_retirement_during_audio_frame_keeps_header_and_payload_together()
+     with pytest.raises(asyncio.CancelledError):
+         await sending
+     assert manager.websocket.calls == [
+-        ("json", {"type": "audio_chunk", "speech_id": "old"}),
++        ("json", {"type": "audio_chunk", "speech_id": "old", "turn_id": "old"}),
+         ("bytes", b"pcm"),
+     ]
+     assert not manager._ensure_audio_frame_send_lock().locked()

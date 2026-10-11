@@ -1,7 +1,7 @@
 {
   "upstreamRepository": "https://github.com/Project-N-E-K-O/N.E.K.O",
   "baseCommit": "fb2a2e731a8c954478d08678b0c8cf40e8145a54",
-  "sourceCommit": "02c325c228bc85fedf8d31b6c049bda2de4fa44e",
+  "sourceCommit": "b390fc7ed6ce57e3ced324cfda87c88df14b235b",
   "scope": "plugin/plugins/game_agent_minecraft",
   "resultPluginTree": "51bcc254ea91d7be6bf26026b50ee7eeff16aa48",
   "patches": [
@@ -522,6 +522,26 @@
         "plugin/server/messaging/proactive_bridge.py",
         "tests/unit/test_minecraft_proactive_budget.py",
         "utils/game_execution_context.py"
+      ]
+    },
+    {
+      "file": "host-patches/0020-fix-tts-preserve-slow-local-speech-ownership-across-.patch",
+      "sha256": "f6ee2eb8c1daab00657fe153d580c707c35dec35c8bda0a5b5105056c1565e7f",
+      "sourceCommit": "b390fc7ed6ce57e3ced324cfda87c88df14b235b",
+      "scopePaths": [
+        "main_logic/core/manager.py",
+        "main_logic/core/proactive.py",
+        "main_logic/core/tts_runtime.py",
+        "main_logic/tts_client/local_primary.py",
+        "main_logic/tts_client/workers/openai.py",
+        "main_routers/debug_router.py",
+        "static/app/app-audio-playback.js",
+        "tests/unit/test_assistant_speech_finalize_static.py",
+        "tests/unit/test_local_voxcpm_primary.py",
+        "tests/unit/test_openai_compatible_tts.py",
+        "tests/unit/test_slow_tts_speech_ownership.py",
+        "tests/unit/test_tts_audio_done_forward.py",
+        "tests/unit/test_tts_handoff_ownership.py"
       ]
     }
   ],
@@ -1264,5 +1284,22 @@
     "otherOwnedServicesPreserved": true,
     "broadGameplayAcceptance": "open",
     "audioContinuityAcceptance": "open"
+  },
+  "localSpeechOwnershipVerification": {
+    "date": "2026-10-11",
+    "sourceCommit": "b390fc7ed6ce57e3ced324cfda87c88df14b235b",
+    "relatedPassed": 2126,
+    "baselineLoggerCaptureFailureExcluded": 1,
+    "sourceIdentityAndFallbackLedgerPreserved": true,
+    "lateFrontendCompletionPreserved": true,
+    "duplicateTerminalNoticeIsIdempotent": true,
+    "longLocalSpeechUsesLastActualAudioWatchdog": true,
+    "otherProviderDefaultsUnchanged": true,
+    "diagnostics": "IDs, timestamps, counts and SHA-256 only",
+    "extraModelCalls": 0,
+    "textDeduplication": false,
+    "fullReplayMatchesSource": true,
+    "deploymentPhase": "prepared",
+    "audibleLiveAcceptance": "open"
   }
 }
