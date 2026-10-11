@@ -1,0 +1,68 @@
+From bb10462b1aaf0eae6fa7309b3989a5a6d3801a2c Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Mon, 12 Oct 2026 03:21:38 +0800
+Subject: [PATCH] fix(runtime): hand off accepted game tasks without
+ overlapping replanning
+
+---
+ plugin/plugins/game_agent_minecraft/__init__.py    |  2 ++
+ plugin/plugins/game_agent_minecraft/evidence.py    |  7 ++++++-
+ .../game_agent_minecraft/test_game_evidence.py     | 14 ++++++++++++++
+ 3 files changed, 22 insertions(+), 1 deletion(-)
+
+diff --git a/plugin/plugins/game_agent_minecraft/__init__.py b/plugin/plugins/game_agent_minecraft/__init__.py
+index 43a2af8..8018057 100644
+--- a/plugin/plugins/game_agent_minecraft/__init__.py
++++ b/plugin/plugins/game_agent_minecraft/__init__.py
+@@ -398,6 +398,8 @@ class GameAgentMinecraftPlugin(NekoPluginBase):
+         )
+         detached.add_done_callback(self._on_detached_task_done)
+         return {
++            "status": "accepted", "task_id": claimed.task_id,
++            "pending": True, "completion": "asynchronous",
+             "summary": prompts.t("TASK_DISPATCHED_ACK", lang=self._lang),
+         }
+ 
+diff --git a/plugin/plugins/game_agent_minecraft/evidence.py b/plugin/plugins/game_agent_minecraft/evidence.py
+index 7ce3ac1..3c1777d 100644
+--- a/plugin/plugins/game_agent_minecraft/evidence.py
++++ b/plugin/plugins/game_agent_minecraft/evidence.py
+@@ -165,7 +165,12 @@ def decision_input(info, *, mode='decision', sections=None, extra=None):
+             if isinstance(entity.get('droppedItem'), dict):
+                 entity['droppedItem'] = item(entity['droppedItem'], f'/state/nearby/entities/{index}/droppedItem')
+             if 'metadata' in entity:
+-                entity['metadata'] = ref(entity['metadata'], f'/state/nearby/entities/{index}/metadata')
++                # The enclosing snapshot already supplies the evidence ID;
++                # repeating its label/type/count for every entity costs input
++                # without adding a current gameplay fact. Keep an exact path.
++                raw_metadata = entity['metadata']
++                entity['metadata'] = ({'path': f'/state/nearby/entities/{index}/metadata'}
++                                      if isinstance(raw_metadata, (dict, list, str)) else raw_metadata)
+         if 'entities' in nearby:
+             nearby['entities'] = entity_table(nearby['entities'])
+         server = state.get('server') or {}
+diff --git a/plugin/plugins/game_agent_minecraft/test_game_evidence.py b/plugin/plugins/game_agent_minecraft/test_game_evidence.py
+index d706e3e..68444a1 100644
+--- a/plugin/plugins/game_agent_minecraft/test_game_evidence.py
++++ b/plugin/plugins/game_agent_minecraft/test_game_evidence.py
+@@ -153,6 +153,20 @@ class GameEvidenceTest(unittest.TestCase):
+         self.assertNotIn('health', recovered[301])
+         self.assertEqual(entity_table([None, {'id': 1}]), [None, {'id': 1}])
+ 
++    def test_entity_protocol_paths_retrieve_each_complete_original_metadata(self):
++        info = self.observations()
++        entities = [{'id': index, 'name': 'villager', 'position': {'x': index, 'y': 70, 'z': -4},
++                     'metadata': {'description': '完整实体协议' * 1000}} for index in range(200)]
++        info.state['nearby'] = {'entities': entities}
++        view = decision_input(info)
++        table = view['state']['nearby']['entities']
++        self.assertEqual(table['entries'], 200)
++        for group in table['groups']:
++            for row in group['rows']:
++                entity = dict(zip(group['columns'], row[1:]))
++                self.assertEqual(info.evidence.read(view['rawEvidence']['id'], entity['metadata']['path'])['value'],
++                                 entities[row[0]]['metadata'])
++
+ 
+ if __name__ == '__main__':
+     unittest.main()

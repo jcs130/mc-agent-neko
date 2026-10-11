@@ -1,0 +1,98 @@
+From bb10462b1aaf0eae6fa7309b3989a5a6d3801a2c Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Mon, 12 Oct 2026 03:21:38 +0800
+Subject: [PATCH] fix(runtime): hand off accepted game tasks without
+ overlapping replanning
+
+---
+ main_logic/omni_offline_client/_tools.py | 23 ++++++++++++++++
+ tests/unit/test_tool_calling.py          | 35 ++++++++++++++++++++++++
+ 2 files changed, 58 insertions(+)
+
+diff --git a/main_logic/omni_offline_client/_tools.py b/main_logic/omni_offline_client/_tools.py
+index 649aaa3..21f34ee 100644
+--- a/main_logic/omni_offline_client/_tools.py
++++ b/main_logic/omni_offline_client/_tools.py
+@@ -118,6 +118,22 @@ def _minecraft_query_only_round(messages):
+     return True
+ 
+ 
++def _minecraft_async_task_accepted(messages):
++    """A structured handoff ends this execution turn; completion arrives later."""
++    for message in messages:
++        if not isinstance(message, dict) or message.get('role') != 'tool' or message.get('name') != 'minecraft_task':
++            continue
++        try:
++            receipt = json.loads(message.get('content', ''))
++        except (TypeError, ValueError):
++            continue
++        if (isinstance(receipt, dict) and receipt.get('status') == 'accepted'
++                and receipt.get('pending') is True and receipt.get('completion') == 'asynchronous'
++                and isinstance(receipt.get('task_id'), str) and receipt['task_id']):
++            return True
++    return False
++
++
+ def _minecraft_action_followup_tools(messages, tools):
+     """Give known-query-only idle turns an optional, bounded action opportunity.
+ 
+@@ -1424,6 +1440,13 @@ class _ToolingMixin:
+                     # 发了会让这段文本既不在 tool_calls 行、又被 final
+                     # AIMessage 跳过，从历史里彻底消失。
+                     yield _LLMStreamChunk(content="", tool_round_persisted=True)
++                    if minecraft_execution_turn and _minecraft_async_task_accepted(messages[receipt_start:]):
++                        # Ownership has moved to the native executor. Another
++                        # planning request can only race its asynchronous
++                        # result or append redundant state; wait for the
++                        # actual task/state callback instead. Keep the complete
++                        # call/receipt pair already appended above.
++                        return
+                 elif (
+                     streamed_text_buffer
+                     and getattr(self, "on_tool_round_start", None) is None
+diff --git a/tests/unit/test_tool_calling.py b/tests/unit/test_tool_calling.py
+index 59fb7df..6cad34b 100644
+--- a/tests/unit/test_tool_calling.py
++++ b/tests/unit/test_tool_calling.py
+@@ -3462,6 +3462,41 @@ async def test_execution_decision_has_explicit_wait_opt_out_without_forcing_a_ga
+     assert llm.calls[1][1].get('tool_choice') != 'required'
+ 
+ 
++@pytest.mark.asyncio
++@pytest.mark.parametrize('execution,accepted', [(True, True), (True, False), (False, True)])
++async def test_async_game_handoff_waits_for_real_completion_without_replanning(execution, accepted):
++    from utils.llm_client import LLMStreamChunk
++    from main_logic.tool_calling import ToolDefinition, ToolResult
++    receipt = ({'status': 'accepted', 'task_id': 'owned-task', 'pending': True, 'completion': 'asynchronous'}
++               if accepted else {'status': 'busy', 'summary': 'Existing action is still running.'})
++    llm = _FakeLLM([
++        [LLMStreamChunk(content='', tool_call_deltas=[{'index': 0, 'id': 'handoff',
++            'type': 'function', 'function': {'name': 'minecraft_task', 'arguments': '{}'}}],
++            finish_reason='tool_calls')],
++        [LLMStreamChunk(content='Follow-up only when no execution handoff occurred.', finish_reason='stop')]])
++    async def handler(call):
++        return ToolResult(call_id=call.call_id, name=call.name, output=receipt)
++    client = _bare_tool_client(llm, ToolDefinition(name='minecraft_task', description=''), handler, cap=3)
++    messages = [{'role': 'user', 'content': 'Authorized current goal'}]
++    chunks = [chunk async for chunk in client._astream_with_tools(messages, _minecraft_execution_turn=execution)]
++    assert len(llm.calls) == (1 if execution and accepted else 2)
++    tool_receipts = [message for message in messages if isinstance(message, dict) and message.get('role') == 'tool']
++    assert len(tool_receipts) == 1
++    assert json.loads(tool_receipts[0]['content']) == receipt
++    assert any(chunk.tool_round_persisted for chunk in chunks)
++
++
++@pytest.mark.parametrize('name,receipt', [
++    ('other_tool', {'status': 'accepted', 'task_id': 'owned', 'pending': True, 'completion': 'asynchronous'}),
++    ('minecraft_task', {'status': 'accepted', 'summary': 'accepted'}),
++    ('minecraft_task', {'status': 'failed', 'task_id': 'owned', 'pending': True, 'completion': 'asynchronous'}),
++    ('minecraft_task', {'status': 'accepted', 'task_id': 'owned', 'pending': 'true', 'completion': 'asynchronous'}),
++])
++def test_game_handoff_never_infers_acceptance_from_prose_or_partial_receipts(name, receipt):
++    from main_logic.omni_offline_client._tools import _minecraft_async_task_accepted
++    assert not _minecraft_async_task_accepted([{'role': 'tool', 'name': name, 'content': json.dumps(receipt)}])
++
++
+ @pytest.mark.asyncio
+ @pytest.mark.parametrize("scope,delivered", [("minecraft_execution", True), ("minecraft", False), (None, False)])
+ async def test_silent_minecraft_execution_tool_turn_is_not_requeued(scope, delivered, monkeypatch):
