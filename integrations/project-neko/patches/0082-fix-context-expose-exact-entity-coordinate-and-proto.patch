@@ -1,0 +1,94 @@
+From c2a80fe2b4331701d659b48ef766db4403621f6f Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Mon, 12 Oct 2026 03:33:20 +0800
+Subject: [PATCH] fix(context): expose exact entity coordinate and protocol
+ detail indexes
+
+---
+ .../plugins/game_agent_minecraft/evidence.py  | 24 ++++++++++---------
+ .../test_game_evidence.py                     |  7 ++++--
+ .../test_npc_decision_context.py              |  3 +++
+ 3 files changed, 21 insertions(+), 13 deletions(-)
+
+diff --git a/plugin/plugins/game_agent_minecraft/evidence.py b/plugin/plugins/game_agent_minecraft/evidence.py
+index 3c1777d..44932d5 100644
+--- a/plugin/plugins/game_agent_minecraft/evidence.py
++++ b/plugin/plugins/game_agent_minecraft/evidence.py
+@@ -78,17 +78,20 @@ def pointer(path, key):
+     return path + '/' + str(key).replace('~', '~0').replace('/', '~1')
+ 
+ 
+-def entity_table(entities):
++def entity_table(entities, *, indexed_fields=()):
+     """Share repeated column names without losing rows, values or key absence."""
+     if not isinstance(entities, list) or not entities or not all(isinstance(row, dict) for row in entities):
+         return entities
+     groups = {}
+     for index, entity in enumerate(entities):
+         columns = tuple(sorted(entity))
+-        group = groups.setdefault(columns, {'columns': list(columns), 'rows': []})
+-        group['rows'].append([index, *[entity[key] for key in columns]])
++        visible = [key for key in columns if key not in indexed_fields]
++        indexed = [key for key in columns if key in indexed_fields]
++        group = groups.setdefault(columns, {'columns': visible, 'rows': [],
++                                            **({'indexedColumns': indexed} if indexed else {})})
++        group['rows'].append([index, *[entity[key] for key in visible]])
+     return {'encoding': 'columns_with_snapshot_index', 'entries': len(entities),
+-            'rowFormat': 'First cell is the original snapshot array index; remaining cells match columns exactly. Groups preserve distinct key sets: missing keys are not null.',
++            'rowFormat': 'First cell is the original snapshot array index; remaining cells match columns exactly. Read indexedColumns at detailsPath/<snapshotIndex>/<column> using rawEvidence.id. Groups preserve distinct key sets: missing keys are not null.',
+             'groups': list(groups.values()),
+             'detailsPath': '/state/nearby/entities'}
+ 
+@@ -165,14 +168,13 @@ def decision_input(info, *, mode='decision', sections=None, extra=None):
+             if isinstance(entity.get('droppedItem'), dict):
+                 entity['droppedItem'] = item(entity['droppedItem'], f'/state/nearby/entities/{index}/droppedItem')
+             if 'metadata' in entity:
+-                # The enclosing snapshot already supplies the evidence ID;
+-                # repeating its label/type/count for every entity costs input
+-                # without adding a current gameplay fact. Keep an exact path.
+-                raw_metadata = entity['metadata']
+-                entity['metadata'] = ({'path': f'/state/nearby/entities/{index}/metadata'}
+-                                      if isinstance(raw_metadata, (dict, list, str)) else raw_metadata)
++                entity['metadata'] = ref(entity['metadata'], f'/state/nearby/entities/{index}/metadata')
+         if 'entities' in nearby:
+-            nearby['entities'] = entity_table(nearby['entities'])
++            # Every identity, received name, distance, health, equipment and
++            # dropped item remains current. Exact per-entity coordinates and
++            # opaque protocol data are explicit, unlimited detail queries;
++            # native navigation still uses the live world coordinates.
++            nearby['entities'] = entity_table(nearby['entities'], indexed_fields=('position', 'metadata'))
+         server = state.get('server') or {}
+         for key in ('advancements', 'recipeBook', 'teams'):
+             if key in server:
+diff --git a/plugin/plugins/game_agent_minecraft/test_game_evidence.py b/plugin/plugins/game_agent_minecraft/test_game_evidence.py
+index 68444a1..3e2b996 100644
+--- a/plugin/plugins/game_agent_minecraft/test_game_evidence.py
++++ b/plugin/plugins/game_agent_minecraft/test_game_evidence.py
+@@ -164,8 +164,11 @@ class GameEvidenceTest(unittest.TestCase):
+         for group in table['groups']:
+             for row in group['rows']:
+                 entity = dict(zip(group['columns'], row[1:]))
+-                self.assertEqual(info.evidence.read(view['rawEvidence']['id'], entity['metadata']['path'])['value'],
+-                                 entities[row[0]]['metadata'])
++                self.assertEqual(entity['id'], entities[row[0]]['id'])
++                for key in ('metadata', 'position'):
++                    self.assertIn(key, group['indexedColumns'])
++                    path = f"{table['detailsPath']}/{row[0]}/{key}"
++                    self.assertEqual(info.evidence.read(view['rawEvidence']['id'], path)['value'], entities[row[0]][key])
+ 
+ 
+ if __name__ == '__main__':
+diff --git a/plugin/plugins/game_agent_minecraft/test_npc_decision_context.py b/plugin/plugins/game_agent_minecraft/test_npc_decision_context.py
+index 8fba6a8..714060d 100644
+--- a/plugin/plugins/game_agent_minecraft/test_npc_decision_context.py
++++ b/plugin/plugins/game_agent_minecraft/test_npc_decision_context.py
+@@ -101,6 +101,9 @@ class NpcDecisionContextTests(unittest.TestCase):
+             for group in table['groups']:
+                 for row in group['rows']:
+                     recovered[row[0]] = dict(zip(group['columns'], row[1:]))
++                    for key in group.get('indexedColumns', []):
++                        path = f"{table['detailsPath']}/{row[0]}/{key}"
++                        recovered[row[0]][key] = observations.evidence.read(view['rawEvidence']['id'], path)['value']
+             self.assertEqual(recovered, data['state']['nearby']['entities'])
+             self.assertEqual(observations.evidence.read(view['rawEvidence']['id'], table['detailsPath'])['value'],
+                              data['state']['nearby']['entities'])
