@@ -1,0 +1,78 @@
+From 1493ec83c090579373113eb262b54fa9c7224ba3 Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Mon, 12 Oct 2026 04:15:07 +0800
+Subject: [PATCH] fix(context): preserve live action eligibility after evidence
+ queries
+
+---
+ .../plugins/game_agent_minecraft/__init__.py  | 10 +++++++--
+ .../test_game_evidence.py                     | 21 +++++++++++++++++++
+ 2 files changed, 29 insertions(+), 2 deletions(-)
+
+diff --git a/plugin/plugins/game_agent_minecraft/__init__.py b/plugin/plugins/game_agent_minecraft/__init__.py
+index fce05e6..9755181 100644
+--- a/plugin/plugins/game_agent_minecraft/__init__.py
++++ b/plugin/plugins/game_agent_minecraft/__init__.py
+@@ -467,6 +467,8 @@ class GameAgentMinecraftPlugin(NekoPluginBase):
+         hint = self._service.server_action_hint(result)
+         if hint:
+             result['nextDecision'] = hint
++        result['decision'], result['llm_instruction'] = self._service.observation_decision()
++        result['decisionSource'] = 'current plugin execution state; never server text or historical evidence'
+         return result
+ 
+     @llm_tool(
+@@ -493,8 +495,12 @@ class GameAgentMinecraftPlugin(NekoPluginBase):
+         if evidence_id is not None:
+             evidence = self._service._game_observations.evidence
+             if detail == 'full' or offset is not None or limit is not None:
+-                return evidence.read(evidence_id, reference_path or '/', offset, limit)
+-            return evidence.describe(evidence_id, reference_path or '/')
++                result = evidence.read(evidence_id, reference_path or '/', offset, limit)
++            else:
++                result = evidence.describe(evidence_id, reference_path or '/')
++            result['decision'], result['llm_instruction'] = self._service.observation_decision()
++            result['decisionSource'] = 'current plugin execution state; never historical evidence'
++            return result
+         if not await self._ensure_service_started():
+             return {'status': 'unavailable', 'reason': 'disconnected'}
+         from .reference_pages import ObservationReferences
+diff --git a/plugin/plugins/game_agent_minecraft/test_game_evidence.py b/plugin/plugins/game_agent_minecraft/test_game_evidence.py
+index 1b42788..2e09484 100644
+--- a/plugin/plugins/game_agent_minecraft/test_game_evidence.py
++++ b/plugin/plugins/game_agent_minecraft/test_game_evidence.py
+@@ -203,6 +203,25 @@ class GameEvidenceTest(unittest.TestCase):
+ 
+ 
+ class EvidenceToolQueryTest(unittest.IsolatedAsyncioTestCase):
++    async def test_archived_authorization_cannot_override_current_busy_body(self):
++        from . import GameAgentMinecraftPlugin
++        from .service import GameAgentService
++        plugin = object.__new__(GameAgentMinecraftPlugin)
++        service = plugin._service = GameAgentService(logger=None, push_message_fn=lambda **_: None)
++        service.configure({'unattended_enabled': True, 'unattended_character': 'YUI'})
++        service._client = SimpleNamespace(is_connected=True)
++        service._game_observations = GameObservations(clock=lambda: 20)
++        service._game_observations.ingest_state({'schemaVersion': 1, 'sessionId': 'current', 'seq': 1,
++            'observedAt': 20000, 'online': True, 'state': {'activity': {'action': '', 'skill': None, 'digging': None}}})
++        ident = service._game_observations.evidence.save({'decision': {'status': 'ready_if_authorized'}})['id']
++        ready = await plugin.minecraft_observe(evidence_id=ident, detail='full')
++        self.assertEqual(ready['decision']['status'], 'ready_if_authorized')
++        service._pending = SimpleNamespace(task_id='current-owner')
++        busy = await plugin.minecraft_observe(evidence_id=ident, detail='full')
++        self.assertEqual(busy['decision']['status'], 'busy')
++        self.assertEqual(busy['value']['decision']['status'], 'ready_if_authorized')
++        self.assertTrue(busy['historical'])
++
+     async def test_default_root_is_an_index_and_explicit_full_field_is_exact(self):
+         from . import GameAgentMinecraftPlugin
+         from .service import GameAgentService
+@@ -214,6 +233,8 @@ class EvidenceToolQueryTest(unittest.IsolatedAsyncioTestCase):
+         result = await plugin.minecraft_observe(evidence_id=ident)
+         self.assertTrue(result['valueIsIndex'])
+         self.assertNotIn('value', result)
++        self.assertEqual(result['decision']['status'], 'manual')
++        self.assertIn('never historical evidence', result['decisionSource'])
+         exact = await plugin.minecraft_observe(evidence_id=ident, reference_path='/feedback')
+         self.assertEqual(exact['value'], raw['feedback'])
+         whole = await plugin.minecraft_observe(evidence_id=ident, detail='full')

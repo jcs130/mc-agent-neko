@@ -1,0 +1,97 @@
+From 1493ec83c090579373113eb262b54fa9c7224ba3 Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Mon, 12 Oct 2026 04:15:07 +0800
+Subject: [PATCH] fix(context): preserve live action eligibility after evidence
+ queries
+
+---
+ main_logic/omni_offline_client/_tools.py | 13 +++++---
+ tests/unit/test_tool_calling.py          | 40 ++++++++++++++++++++++++
+ 2 files changed, 48 insertions(+), 5 deletions(-)
+
+diff --git a/main_logic/omni_offline_client/_tools.py b/main_logic/omni_offline_client/_tools.py
+index 21f34ee..eef63f8 100644
+--- a/main_logic/omni_offline_client/_tools.py
++++ b/main_logic/omni_offline_client/_tools.py
+@@ -152,14 +152,16 @@ def _minecraft_action_followup_tools(messages, tools):
+             return []
+         if not isinstance(output, dict):
+             return []
+-        if message.get("name") == "minecraft_observe":
+-            decision = output.get("decision")
+-        elif message.get("name") != "minecraft_server" or output.get("readOnly") is not True:
++        if message.get("name") != "minecraft_observe" and (
++                message.get("name") != "minecraft_server" or output.get("readOnly") is not True):
+             return []
++        current = output.get('decision')
++        if isinstance(current, dict):
++            decision = current
+     if not seen or not isinstance(decision, dict) or decision.get("status") != "ready_if_authorized":
+         return []
+     return [tool for tool in tools or [] if tool.get("function", {}).get("name") in
+-            {"minecraft_task", "minecraft_server", "minecraft_chat"}]
++            {"minecraft_task", "minecraft_server", "minecraft_chat", "minecraft_wait"}]
+ 
+ 
+ class _ToolingMixin:
+@@ -1520,7 +1522,8 @@ class _ToolingMixin:
+         }
+         if action_tools:
+             final_overrides["tools"] = action_tools
+-            final_overrides["tool_choice"] = "auto"
++            final_overrides["tool_choice"] = ('required' if any(
++                tool.get('function', {}).get('name') == 'minecraft_wait' for tool in action_tools) else 'auto')
+             messages.append({"role": "user", "content": (
+                 "Minecraft execution follow-up: this is the last tool opportunity in this idle decision. "
+                 "Latest human stop/pause overrides all cues. If still authorized and idle, use a feasible short "
+diff --git a/tests/unit/test_tool_calling.py b/tests/unit/test_tool_calling.py
+index 6cad34b..3a9931c 100644
+--- a/tests/unit/test_tool_calling.py
++++ b/tests/unit/test_tool_calling.py
+@@ -3497,6 +3497,46 @@ def test_game_handoff_never_infers_acceptance_from_prose_or_partial_receipts(nam
+     assert not _minecraft_async_task_accepted([{'role': 'tool', 'name': name, 'content': json.dumps(receipt)}])
+ 
+ 
++@pytest.mark.parametrize('last_status,available', [('ready_if_authorized', True), ('busy', False), ('stopped', False)])
++def test_evidence_and_server_queries_keep_the_latest_live_decision_for_terminal_choice(last_status, available):
++    from main_logic.omni_offline_client._tools import _minecraft_action_followup_tools
++    names = ['minecraft_task', 'minecraft_server', 'minecraft_chat', 'minecraft_wait', 'minecraft_observe']
++    tools = [{'function': {'name': name}} for name in names]
++    messages = [{'role': 'tool', 'name': 'minecraft_observe', 'content': json.dumps({
++        'historical': True, 'valueIsIndex': True, 'decision': {'status': 'ready_if_authorized'}})},
++        {'role': 'tool', 'name': 'minecraft_server', 'content': json.dumps({
++            'readOnly': True, 'decision': {'status': last_status}})},
++        {'role': 'tool', 'name': 'minecraft_observe', 'content': json.dumps({'historical': True, 'value': 'exact old text'})}]
++    result = _minecraft_action_followup_tools(messages, tools)
++    assert {tool['function']['name'] for tool in result} == (set(names[:-1]) if available else set())
++
++
++@pytest.mark.asyncio
++async def test_capped_evidence_queries_can_choose_explicit_wait_instead_of_forced_plan_speech():
++    from utils.llm_client import LLMStreamChunk
++    from main_logic.tool_calling import ToolDefinition, ToolResult
++    llm = _FakeLLM([
++        [LLMStreamChunk(content='', tool_call_deltas=[{'index': 0, 'id': 'evidence', 'type': 'function',
++            'function': {'name': 'minecraft_observe', 'arguments': '{}'}}], finish_reason='tool_calls')],
++        [LLMStreamChunk(content='', tool_call_deltas=[{'index': 0, 'id': 'wait', 'type': 'function',
++            'function': {'name': 'minecraft_wait', 'arguments': '{"reason":"latest user stop"}'}}], finish_reason='tool_calls')]])
++    called = []
++    async def handler(call):
++        called.append(call.name)
++        return ToolResult(call_id=call.call_id, name=call.name, output=(
++            {'historical': True, 'valueIsIndex': True, 'decision': {'status': 'ready_if_authorized'}}
++            if call.name == 'minecraft_observe' else {'status': 'waiting'}))
++    client = _bare_tool_client(llm, ToolDefinition(name='minecraft_observe', description=''), handler, cap=1)
++    client._tool_definitions.extend([ToolDefinition(name='minecraft_task', description=''),
++                                      ToolDefinition(name='minecraft_wait', description='')])
++    async for _ in client._astream_with_tools([], _minecraft_execution_turn=True):
++        pass
++    assert called == ['minecraft_observe', 'minecraft_wait']
++    assert len(llm.calls) == 2, 'Reuse the existing final request, without an extra model call'
++    assert llm.calls[-1][1]['tool_choice'] == 'required'
++    assert {tool['function']['name'] for tool in llm.calls[-1][1]['tools']} == {'minecraft_task', 'minecraft_wait'}
++
++
+ @pytest.mark.asyncio
+ @pytest.mark.parametrize("scope,delivered", [("minecraft_execution", True), ("minecraft", False), (None, False)])
+ async def test_silent_minecraft_execution_tool_turn_is_not_requeued(scope, delivered, monkeypatch):

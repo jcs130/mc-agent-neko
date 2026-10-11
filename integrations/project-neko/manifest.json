@@ -1,9 +1,9 @@
 {
   "upstreamRepository": "https://github.com/Project-N-E-K-O/N.E.K.O",
   "baseCommit": "fb2a2e731a8c954478d08678b0c8cf40e8145a54",
-  "sourceCommit": "3640d57e5d1ed76bdb7792606495113d4cb562d6",
+  "sourceCommit": "1493ec83c090579373113eb262b54fa9c7224ba3",
   "scope": "plugin/plugins/game_agent_minecraft",
-  "resultPluginTree": "b2603c3694055fcc96baa2afd4960202640213ea",
+  "resultPluginTree": "0d320757aab151a7049dacf4d8d3ea86fec6edc8",
   "patches": [
     {
       "file": "0001-chore-configure-text-only-local-Qwen-Minecraft-trial.patch",
@@ -340,6 +340,10 @@
     {
       "file": "0084-fix-context-make-evidence-container-reads-explicit-a.patch",
       "sha256": "32dc5e7cc81e708257e48aa13a527db07c83f7af8ddb1d202bf070ba74c5601f"
+    },
+    {
+      "file": "0085-fix-context-preserve-live-action-eligibility-after-e.patch",
+      "sha256": "e9fa7229a9569f1182ec37053fa6bf890ec1905fde14203667988839609bf233"
     }
   ],
   "verification": {
@@ -697,6 +701,14 @@
       "scopePaths": [
         "utils/llm_client/timing.py",
         "tests/unit/test_llm_client_timing.py"
+      ]
+    },
+    {
+      "file": "host-patches/0032-fix-context-preserve-live-action-eligibility-after-e.patch",
+      "sha256": "3a4f86f3a45e8854f6190a8aa17ae0b2f02f446ed430547a6a0f1a968630bd57",
+      "scopePaths": [
+        "main_logic/omni_offline_client/_tools.py",
+        "tests/unit/test_tool_calling.py"
       ]
     }
   ],
@@ -1594,9 +1606,9 @@
   },
   "completeInformationVerification": {
     "date": "2026-10-12",
-    "sourceCommit": "3640d57e5d1ed76bdb7792606495113d4cb562d6",
-    "nativeCommit": "7c8c278ea92138d2aa2fca71a70779c294fbb111",
-    "runtimeCommit": "be808d311619b331fcb44e9ab5a771bde3eecde6",
+    "sourceCommit": "1493ec83c090579373113eb262b54fa9c7224ba3",
+    "nativeCommit": "4dc0fcf8daf86e8ac0417068e5a5129b8ed93bc6",
+    "runtimeCommit": "bd35b7cd8307a5e0dc4370f7eb65d26d2c7e87b4",
     "nativeRelatedPassed": 243,
     "pythonRelatedPassed": 348,
     "pythonSubtestsPassed": 42,
@@ -1631,7 +1643,7 @@
       "maxContext": 32768,
       "result": "rejected_context_overflow"
     },
-    "runtimeAcceptance": "pending natural continuation acceptance after default evidence container indexing",
+    "runtimeAcceptance": "pending natural continuation after query/action handoff repair",
     "explicitExecutionDecision": true,
     "explicitWaitWithoutGameplayForcing": true,
     "persistentEvidenceUsesRuntimeDataRoot": true,
@@ -1657,6 +1669,10 @@
     "allCallbackReceiptsQueryable": true,
     "requestMessageShapesContainNoContent": true,
     "evidenceReadRegressionPassed": 265,
-    "evidenceReadSubtestsPassed": 44
+    "evidenceReadSubtestsPassed": 44,
+    "queryActionRegressionPassed": 436,
+    "queryActionSubtestsPassed": 44,
+    "historicalEvidenceNeverGrantsCurrentAuthority": true,
+    "explicitFinalActionOrWait": true
   }
 }
