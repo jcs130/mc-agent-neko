@@ -1,0 +1,187 @@
+From b218194ea8d3e4fff87e1a04fe395a6da9363814 Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Sun, 11 Oct 2026 09:35:13 +0800
+Subject: [PATCH] fix(minecraft): avoid speaking repeated query preludes
+
+---
+ main_logic/omni_offline_client/_tools.py | 44 ++++++++++++++-
+ tests/unit/test_tool_calling.py          | 69 ++++++++++++++++++++++++
+ 2 files changed, 111 insertions(+), 2 deletions(-)
+
+diff --git a/main_logic/omni_offline_client/_tools.py b/main_logic/omni_offline_client/_tools.py
+index f7f52d6..7cfef1a 100644
+--- a/main_logic/omni_offline_client/_tools.py
++++ b/main_logic/omni_offline_client/_tools.py
+@@ -75,6 +75,25 @@ _TOOLS_REFUSAL_REQUEST_QUALIFIERS = (
+ )
+ 
+ 
++def _minecraft_query_only_round(messages):
++    """Classify actual tool receipts, never a spoken plan or command guess."""
++    replies = [message for message in messages if isinstance(message, dict) and message.get('role') == 'tool']
++    if not replies:
++        return False
++    for message in replies:
++        try:
++            output = json.loads(message.get('content', ''))
++        except (TypeError, ValueError):
++            return False
++        if not isinstance(output, dict):
++            return False
++        if message.get('name') == 'minecraft_observe':
++            continue
++        if message.get('name') != 'minecraft_server' or output.get('readOnly') is not True:
++            return False
++    return True
++
++
+ def _minecraft_action_followup_tools(messages, tools):
+     """Give known-query-only idle turns an optional, bounded action opportunity.
+ 
+@@ -1184,6 +1203,10 @@ class _ToolingMixin:
+             # 一 turn 既有 content 又有 tool_calls；某些兼容 provider 真会
+             # 先吐文字再进 tool_calls。和 Gemini 路径完全对偶。
+             streamed_text_buffer = ""
++            # Autonomous game queries often repeat the same inspection prelude
++            # in every tool round. Delay only this scope until actual receipts
++            # distinguish a query from an action; normal chat still streams.
++            buffered_visible = [] if minecraft_execution_turn else None
+             # Thinking 模型本轮的推理链：finish_reason=tool_calls 时必须随
+             # assistant tool_calls turn 一起回填，否则部分 provider 下一轮报
+             # 400（reasoning_content must be passed back）。普通端点恒为空。
+@@ -1262,7 +1285,10 @@ class _ToolingMixin:
+                     continue
+                 # 永远 yield 文本 chunk —— 即便是 tool-only turn 也可能在
+                 # finish_reason=tool_calls 之前 emit usage chunk 和空 content。
+-                yield chunk
++                if buffered_visible is None:
++                    yield chunk
++                else:
++                    buffered_visible.append(chunk)
+             if not generation_is_active():
+                 return
+             # 记录本次 attempt 的最终 finish_reason，供上层 empty-completion
+@@ -1303,7 +1329,10 @@ class _ToolingMixin:
+                         streamed_text_buffer += tail
+                         tail_chunk = LLMStreamChunk(content=tail)
+                         setattr(tail_chunk, "_tool_leak_filtered", True)
+-                        yield tail_chunk
++                        if buffered_visible is None:
++                            yield tail_chunk
++                        else:
++                            buffered_visible.append(tail_chunk)
+                     tool_leak_filter.reset()
+                 # 本轮已确认是 tool 轮：先给缓冲型调用方（QQ 插件）一个丢弃
+                 # pre-tool 文本的锚点。必须在执行器之前、且不依赖 handler 被
+@@ -1315,6 +1344,7 @@ class _ToolingMixin:
+                 from utils.llm_client import ChatOpenAI as _ChatOpenAI
+                 from utils.llm_client import LLMStreamChunk as _LLMStreamChunk
+                 calls = _ChatOpenAI.collect_tool_calls(deltas_per_chunk)
++                receipt_start = len(messages)
+                 executed_this_round = await self._execute_and_append_openai_tool_calls(
+                     messages, calls,
+                     # Strip any leaked <think> CoT before it lands in history:
+@@ -1337,6 +1367,11 @@ class _ToolingMixin:
+                     if executed_this_round:
+                         yield _LLMStreamChunk(content="", tool_round_persisted=True)
+                     return
++                if buffered_visible is not None and not _minecraft_query_only_round(messages[receipt_start:]):
++                    for visible_chunk in buffered_visible:
++                        if not generation_is_active():
++                            return
++                        yield visible_chunk
+                 executed_tool_calls += executed_this_round
+                 if executed_this_round:
+                     # 通知上游 ``stream_text``：本轮的 pre-tool text + tool_calls
+@@ -1367,6 +1402,11 @@ class _ToolingMixin:
+                     zero_exec_break = True
+                     break
+                 continue
++            if buffered_visible is not None:
++                for visible_chunk in buffered_visible:
++                    if not generation_is_active():
++                        return
++                    yield visible_chunk
+             return
+         if not generation_is_active():
+             return
+diff --git a/tests/unit/test_tool_calling.py b/tests/unit/test_tool_calling.py
+index b439d7e..785cf65 100644
+--- a/tests/unit/test_tool_calling.py
++++ b/tests/unit/test_tool_calling.py
+@@ -3231,6 +3231,75 @@ def _bare_tool_client(fake_llm, tool_def, handler, *, cap):
+     return client
+ 
+ 
++@pytest.mark.asyncio
++@pytest.mark.parametrize('scope,tool_name,read_only,prelude_count', [
++    (True, 'minecraft_observe', None, 0),
++    (True, 'minecraft_server', True, 0),
++    (False, 'minecraft_observe', None, 3),
++    (True, 'minecraft_server', False, 3),
++    (True, 'minecraft_server', None, 3),
++    (True, 'minecraft_chat', None, 3),
++])
++async def test_minecraft_query_preludes_are_not_repeated_as_spoken_reply(
++    scope, tool_name, read_only, prelude_count,
++):
++    from utils.llm_client import LLMStreamChunk
++    from main_logic.tool_calling import ToolDefinition, ToolResult
++
++    prelude = '本喵先看下是什么情况。'
++    script = [[LLMStreamChunk(content=prelude), LLMStreamChunk(content='', tool_call_deltas=[{
++        'index': 0, 'id': f'query-{i}', 'type': 'function',
++        'function': {'name': tool_name, 'arguments': '{}'},
++    }], finish_reason='tool_calls')] for i in range(3)]
++    script.append([LLMStreamChunk(content='确认箱子中有木头。', finish_reason='stop')])
++    llm = _FakeLLM(script)
++    executed = []
++
++    async def handler(call):
++        executed.append(call.name)
++        return ToolResult(call_id=call.call_id, name=call.name,
++                          output={'status': 'received', 'readOnly': read_only})
++
++    client = _bare_tool_client(llm, ToolDefinition(name=tool_name, description=''), handler, cap=3)
++    messages = [{'role': 'user', 'content': 'Continue the authorized game if idle.'}]
++    chunks = [c async for c in client._astream_with_tools(messages, _minecraft_execution_turn=scope)]
++    visible = ''.join(c.content or '' for c in chunks)
++    assert visible.count(prelude) == prelude_count
++    assert visible.endswith('确认箱子中有木头。')
++    assert len(executed) == 3 and len(llm.calls) == 4, 'speech policy must not add or remove tool/model calls'
++    assert len([m for m in messages if isinstance(m, dict) and m.get('role') == 'tool']) == 3
++    assert len([c for c in chunks if getattr(c, 'tool_round_persisted', False)]) == 3
++
++
++@pytest.mark.asyncio
++async def test_minecraft_query_buffer_keeps_final_reply_and_cancels_stale_preludes(monkeypatch):
++    from main_logic.omni_offline_client import _tools
++    from utils.llm_client import LLMStreamChunk
++    from main_logic.tool_calling import ToolDefinition, ToolResult
++
++    for cancel in (False, True):
++        active = True
++        monkeypatch.setattr(_tools, '_generation_check', lambda *_: lambda: active)
++        script = [[LLMStreamChunk(content='看下是什么情况'), LLMStreamChunk(content='', tool_call_deltas=[{
++            'index': 0, 'id': 'only-query', 'type': 'function',
++            'function': {'name': 'minecraft_observe', 'arguments': '{}'},
++        }], finish_reason='tool_calls')],
++            [LLMStreamChunk(content='出口在已有的门旁边。', finish_reason='stop')]]
++        llm = _FakeLLM(script)
++
++        async def handler(call):
++            nonlocal active
++            if cancel:
++                active = False
++            return ToolResult(call_id=call.call_id, name=call.name, output={'online': True})
++
++        client = _bare_tool_client(llm, ToolDefinition(name='minecraft_observe', description=''), handler, cap=3)
++        messages = [{'role': 'user', 'content': 'Continue if idle and authorized.'}]
++        chunks = [c async for c in client._astream_with_tools(messages, _minecraft_execution_turn=True)]
++        assert ''.join(c.content or '' for c in chunks) == ('' if cancel else '出口在已有的门旁边。')
++        assert len(llm.calls) == (1 if cancel else 2)
++
++
+ @pytest.mark.asyncio
+ @pytest.mark.parametrize("scope,ready,server_read_only,expect_action", [
+     (True, True, True, True),

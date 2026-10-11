@@ -3052,3 +3052,19 @@
 - Falsifiable prediction: a catalogue alone cannot make the last mana reading
   fresh; a real state packet can. All 13 viewer/adapter tests pass after the
   failing regression. Runtime acceptance is recorded in the viewer report.
+
+### 2026-10-11 — Measured protected retreat and quiet query preludes
+- Evidence: repeated floor excavation was explicitly denied in village_house_7;
+  the open room did not meet the existing enclosed-trap handoff. Seventeen
+  observation samples did not reproduce appearance-driven decision revisions.
+  Three query rounds reproduced three spoken inspection preludes in one turn.
+- Change: exact denied floor plus 15 seconds of measured no progress can yield
+  the reflex for 60 seconds to the authorized planner; real emergencies retain
+  priority. Host patch 0011 suppresses only autonomous read-only query preludes,
+  preserving actual results, final replies, actions, ordinary chat and cancel.
+- Falsifiable prediction: a measured futile retreat releases the body without
+  inventing an escape; query rounds stop generating repeated spoken inspection
+  phrases. This does not guarantee a feasible trade or successful survival.
+- Validation: 740 native tests and 175 host tests passed; all 78 companion
+  hashes and the plugin/41-host-file replay match source. Runtime acceptance
+  and remaining playback/production limits are recorded in the repair report.

@@ -23,6 +23,7 @@ import { chooseHealingPotion, shouldAutoEat } from './framework/healing_reflex.j
 import { observeStallContext, recoveryMovedEnough } from './stall_recovery.js';
 import { protectedSurfaceSwimHandoff, protectedWaterExitRoute } from './surface_swim_recovery.js';
 import { hasMeleeWeapon, threatCanReachBot } from './combat_policy.js';
+import { protectedRetreatHandoff } from './protected_retreat_recovery.js';
 
 const FAMINE_FOOD_RE = /cooked_|_bread|^bread$|apple|golden_apple|carrot|potato|beef|porkchop|chicken|mutton|cod|salmon|melon_slice|sweet_berries|_stew|rabbit|baked_|rotten_flesh|spider_eye/;
 const NORMAL_FOOD_RE = /cooked_|_bread|^bread$|apple|golden_apple|carrot|potato|beef|porkchop|chicken|mutton|cod|salmon|melon_slice|sweet_berries|_stew|rabbit|baked_/;
@@ -1362,13 +1363,19 @@ const modes_list = [
         // eventually gets cornered/killed — digging down + capping is the only reliable
         // escape. Robust at a water edge (dig 4 to get below the water table into solid
         // rock; cap the head; seal open sides; blockless L-niche fallback when naked).
+        yieldProtectedRetreat: function (agent) {
+            if (!agent.hasExternalAutonomyOwner?.()) return false;
+            return protectedRetreatHandoff(agent.bot, { externalOwner: true,
+                emergency: arbiterVitalNow(agent.bot), now: Date.now() });
+        },
         bunkerDown: async function (agent) {
             const bot = agent.bot;
             // The retreat may become boxed after shouldFlee admitted it. Reuse
             // its non-damaging unreachable-threat handoff before digging and
             // inside the running kite, so recovery can regain the body. Actual
             // recent damage and close creepers must retain emergency priority.
-            const yieldBlockedRetreat = () => Date.now() - (bot.lastDamageTime || 0) >= 4000
+            const yieldBlockedRetreat = () => this.yieldProtectedRetreat(agent)
+                || Date.now() - (bot.lastDamageTime || 0) >= 4000
                 && !this.nearestCreeper(bot, 8) && rangedUnreachableTrap(bot);
             if (yieldBlockedRetreat()) return;
             // ★OSCILLATION BREAKER (the 300ms "securing ↔ Can't seal ↔ running" thrash,
@@ -2811,6 +2818,7 @@ const modes_list = [
                 execute(this, agent, () => this.bunkerDown(agent));
             }
             else if (this.shouldFlee(bot)) {
+                if (this.yieldProtectedRetreat(agent)) return;
                 // ★svnActive 压制(评审): 同上 — dig-in 墙封/逃跑枝在灰区指挥官持体时让树拍板
                 // (树的 FIGHT/RELOCATE/DEATH 自会处理), 否则 mexican-standoff 复发。
                 // THREAT RETREAT — "judge you can't win, then run." Count nearby

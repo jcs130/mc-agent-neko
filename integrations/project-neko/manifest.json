@@ -1,7 +1,7 @@
 {
   "upstreamRepository": "https://github.com/Project-N-E-K-O/N.E.K.O",
   "baseCommit": "fb2a2e731a8c954478d08678b0c8cf40e8145a54",
-  "sourceCommit": "62d44c0dcc397608b1ad0b4fbbb65c2c9cd54c68",
+  "sourceCommit": "b218194ea8d3e4fff87e1a04fe395a6da9363814",
   "scope": "plugin/plugins/game_agent_minecraft",
   "resultPluginTree": "64e86f90898b728c71bc50c9d84ea078b1b979e3",
   "patches": [
@@ -411,6 +411,15 @@
         "tests/unit/test_joint_reply_emotion.py",
         "tests/unit/test_local_voxcpm_primary.py",
         "utils/joint_reply_emotion.py"
+      ]
+    },
+    {
+      "file": "host-patches/0011-fix-minecraft-avoid-speaking-repeated-query-preludes.patch",
+      "sha256": "d700a08255833db6f88ed6e815768d7e8a5e0896ac2cc670d1ed16bd525c0728",
+      "sourceCommit": "b218194ea8d3e4fff87e1a04fe395a6da9363814",
+      "scopePaths": [
+        "main_logic/omni_offline_client/_tools.py",
+        "tests/unit/test_tool_calling.py"
       ]
     }
   ],
@@ -928,5 +937,18 @@
     "nativeAndModelProcessesPreserved": true,
     "audioArrivalCasesPassed": 5,
     "localVoiceAsPrimaryDeployed": true
+  },
+  "queryPreludeVerification": {
+    "date": "2026-10-11",
+    "sourceCommit": "b218194ea8d3e4fff87e1a04fe395a6da9363814",
+    "pythonCasesPassed": 175,
+    "queryOnlyPreludesSuppressed": true,
+    "ordinaryChatStreamingPreserved": true,
+    "mixedActionAndUnknownReceiptsPreserved": true,
+    "staleGenerationCancelled": true,
+    "toolResultsAndFinalReplyPreserved": true,
+    "extraModelCalls": 0,
+    "fullReplayMatchesSource": true,
+    "deploymentPhase": "prepared"
   }
 }
