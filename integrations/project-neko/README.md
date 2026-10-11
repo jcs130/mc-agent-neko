@@ -7,6 +7,12 @@ configuration, one-RTX-3090 measurements, caller/thinking boundaries and feature
 that remain experimental. Private provider configuration and model weights are
 not included.
 
+The [player conversation/action companion](../../docs/player-action-coupling.md)
+lets an idle player interaction dispatch its chosen physical goal and reply in
+one decision. Plugin patch 0087 and host patch 0034 wait for the matching native
+task acceptance before sending a linked reply; failed dispatches do not release
+their pre-tool action promises. Acceptance means planning, not movement or completion.
+
 The [private authentication context companion](../../docs/server-password-authentication.md#login-receipts-in-the-main-brain-context)
 delivers current credential-free login receipts to the main brain, keeps them
 through focused context budgets and retires gateway control notices from social

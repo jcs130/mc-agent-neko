@@ -1,0 +1,217 @@
+From 7e15b51800b57374eac9877d289107577ad71a71 Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Mon, 12 Oct 2026 05:23:48 +0800
+Subject: [PATCH] fix(minecraft): bind player agreements to accepted body tasks
+ and actual receipts
+
+---
+ main_logic/core/callback_render.py            |  5 +--
+ main_logic/core/proactive.py                  |  3 +-
+ main_logic/omni_offline_client/_tools.py      | 25 +++++++++++++--
+ .../test_minecraft_execution_rendering.py     | 14 +++++++-
+ tests/unit/test_proactive_sm_integration.py   |  1 +
+ tests/unit/test_tool_calling.py               | 32 +++++++++++++++++++
+ utils/game_execution_context.py               |  8 ++++-
+ 7 files changed, 81 insertions(+), 7 deletions(-)
+
+diff --git a/main_logic/core/callback_render.py b/main_logic/core/callback_render.py
+index 429cde6..7907315 100644
+--- a/main_logic/core/callback_render.py
++++ b/main_logic/core/callback_render.py
+@@ -191,6 +191,7 @@ def _build_callback_instruction(
+     if not callbacks:
+         return ""
+     from collections import OrderedDict
++    from utils.game_execution_context import is_minecraft_execution_key
+ 
+     lang = normalize_sys_prompt_locale(lang)
+ 
+@@ -198,7 +199,7 @@ def _build_callback_instruction(
+                      and cb.get("source_name") == "game_agent_minecraft" for cb in callbacks)
+     execution_batch = game_batch and not passive and any(
+         cb.get("origin") == "event" and cb.get("delivery_mode") != "passive"
+-        and cb.get("coalesce_key") in ("mc_keep_going", "mc_completion")
++        and is_minecraft_execution_key(cb.get("coalesce_key"))
+         for cb in callbacks
+     )
+ 
+@@ -211,7 +212,7 @@ def _build_callback_instruction(
+         # A generic "respond to the master first" wrapper conflicts with it.
+         # Attention remains a separate group; no game text grants authority.
+         execution_cue = (game_batch and not cb_passive and cb.get("origin") == "event"
+-                         and cb.get("coalesce_key") in ("mc_keep_going", "mc_completion"))
++                         and is_minecraft_execution_key(cb.get("coalesce_key")))
+         origin = cb.get("origin")
+         if origin not in ("task_result", "event"):
+             if origin:
+diff --git a/main_logic/core/proactive.py b/main_logic/core/proactive.py
+index e61bd54..8ea6968 100644
+--- a/main_logic/core/proactive.py
++++ b/main_logic/core/proactive.py
+@@ -1861,7 +1861,8 @@ class ProactiveMixin:
+                         # handling. The all-Minecraft source check stays above;
+                         # expiry/retraction was already checked at this boundary.
+                         # This scope does not authorize a task or override stop.
+-                        if any(cb.get('coalesce_key') in ('mc_keep_going', 'mc_completion')
++                        from utils.game_execution_context import is_minecraft_execution_key
++                        if any(is_minecraft_execution_key(cb.get('coalesce_key'))
+                                for cb in active_callbacks):
+                             request_options['request_scope'] = 'minecraft_execution'
+                     delivered = await self.session.prompt_ephemeral(
+diff --git a/main_logic/omni_offline_client/_tools.py b/main_logic/omni_offline_client/_tools.py
+index 3d997ea..1bd5eec 100644
+--- a/main_logic/omni_offline_client/_tools.py
++++ b/main_logic/omni_offline_client/_tools.py
+@@ -144,6 +144,27 @@ def _minecraft_async_task_accepted(messages):
+     return False
+ 
+ 
++def _minecraft_pretool_speech_allowed(messages):
++    """Gate outgoing narration on this round's actual task receipt.
++
++    Saved model history and game evidence are unchanged. A failed or
++    unconfirmed task cannot substantiate a pre-tool action promise.
++    """
++    if _minecraft_query_only_round(messages):
++        return False
++    for message in messages:
++        if not isinstance(message, dict) or message.get('role') != 'tool' or message.get('name') != 'minecraft_task':
++            continue
++        try:
++            receipt = json.loads(message.get('content', ''))
++        except (TypeError, ValueError):
++            return False
++        if (not isinstance(receipt, dict) or receipt.get('status') != 'accepted'
++                or receipt.get('nativeAccepted') is False):
++            return False
++    return True
++
++
+ def _minecraft_action_followup_tools(messages, tools):
+     """Give known-query-only idle turns an optional, bounded action opportunity.
+ 
+@@ -1435,7 +1456,7 @@ class _ToolingMixin:
+                     if executed_this_round:
+                         yield _LLMStreamChunk(content="", tool_round_persisted=True)
+                     return
+-                if buffered_visible is not None and not _minecraft_query_only_round(messages[receipt_start:]):
++                if buffered_visible is not None and _minecraft_pretool_speech_allowed(messages[receipt_start:]):
+                     for visible_chunk in _minecraft_speech_chunks(buffered_visible):
+                         if not generation_is_active():
+                             return
+@@ -1633,7 +1654,7 @@ class _ToolingMixin:
+                 tool_bus_frames=tool_bus_frames, generation_is_active=generation_is_active,
+                 tool_rounds=tool_rounds,
+             )
+-            if final_visible is not None and generation_is_active() and not _minecraft_query_only_round(messages[final_receipt_start:]):
++            if final_visible is not None and generation_is_active() and _minecraft_pretool_speech_allowed(messages[final_receipt_start:]):
+                 for visible_chunk in _minecraft_speech_chunks(final_visible):
+                     if not generation_is_active():
+                         break
+diff --git a/tests/unit/test_minecraft_execution_rendering.py b/tests/unit/test_minecraft_execution_rendering.py
+index 762f2a9..9946c9b 100644
+--- a/tests/unit/test_minecraft_execution_rendering.py
++++ b/tests/unit/test_minecraft_execution_rendering.py
+@@ -20,7 +20,7 @@ def normal_header(callback, lang):
+         source=_format_callback_source(callback, lang), name="YUI", master="Alice").strip()
+ 
+ 
+-@pytest.mark.parametrize("key", ["mc_keep_going", "mc_completion"])
++@pytest.mark.parametrize("key", ["mc_keep_going", "mc_completion", "mc_game_interaction:owned-event"])
+ @pytest.mark.parametrize("lang", ["zh", "zh-TW", "en", "ja", "ko", "ru", "es", "pt"])
+ def test_execution_decision_keeps_authorization_body_without_speech_first_header(key, lang):
+     callback = cue(key)
+@@ -74,3 +74,15 @@ def test_task_result_status_reporting_is_not_replaced_by_execution_header():
+     callback = cue(origin="task_result", status="failed")
+     without_execution_key = {**callback, "coalesce_key": None}
+     assert render([callback]) == render([without_execution_key])
++
++
++@pytest.mark.parametrize('changes', [
++    {'source_kind': 'user'}, {'source_name': 'other'}, {'channel': 'other'},
++    {'origin': 'task_result'}, {'delivery_mode': 'passive'},
++    {'coalesce_key': 'mc_game_interaction:'}, {'coalesce_key': 'mc_game_attention:peer'},
++])
++def test_player_interaction_execution_scope_requires_all_host_routing_fields(changes):
++    from utils.game_execution_context import is_minecraft_execution_callback
++    callback = {**cue('mc_game_interaction:owned'), 'channel': 'plugin:game_agent_minecraft'}
++    assert is_minecraft_execution_callback(callback)
++    assert not is_minecraft_execution_callback({**callback, **changes})
+diff --git a/tests/unit/test_proactive_sm_integration.py b/tests/unit/test_proactive_sm_integration.py
+index ebcc407..ffdd976 100644
+--- a/tests/unit/test_proactive_sm_integration.py
++++ b/tests/unit/test_proactive_sm_integration.py
+@@ -1213,6 +1213,7 @@ async def test_text_mode_resolves_delivery_ack_false_when_prompt_has_no_committe
+     (["mc_keep_going", "mc_game_attention:player"], False, False, "minecraft_execution"),
+     (["mc_game_attention:server", "mc_completion"], False, False, "minecraft_execution"),
+     (["mc_keep_going"], False, False, "minecraft_execution"),
++    (["mc_game_interaction:owned-event"], False, False, "minecraft_execution"),
+     (["mc_game_attention:player"], False, False, "minecraft"),
+     (["mc_alert", "mc_in_progress"], False, False, "minecraft"),
+     (["mc_keep_going", "mc_game_attention:player"], False, True, "minecraft"),
+diff --git a/tests/unit/test_tool_calling.py b/tests/unit/test_tool_calling.py
+index 6ca096d..6ba3722 100644
+--- a/tests/unit/test_tool_calling.py
++++ b/tests/unit/test_tool_calling.py
+@@ -3522,6 +3522,38 @@ def test_game_handoff_never_infers_acceptance_from_prose_or_partial_receipts(nam
+     assert not _minecraft_async_task_accepted([{'role': 'tool', 'name': name, 'content': json.dumps(receipt)}])
+ 
+ 
++@pytest.mark.asyncio
++@pytest.mark.parametrize('receipt,spoken', [
++    ({'status': 'failed', 'pending': False}, False),
++    ({'status': 'blocked', 'communication': {'status': 'not_sent'}}, False),
++    ({'status': 'accepted', 'pending': True, 'completion': 'asynchronous', 'task_id': 'owned',
++      'nativeAccepted': False}, False),
++    ({'status': 'accepted', 'pending': True, 'completion': 'asynchronous', 'task_id': 'owned',
++      'nativeAccepted': True}, True),
++])
++async def test_player_action_prelude_waits_for_actual_receipt_and_preserves_original_history(receipt, spoken):
++    from utils.llm_client import LLMStreamChunk
++    from main_logic.tool_calling import ToolDefinition, ToolResult
++    prelude = '我马上去入口。'
++    llm = _FakeLLM([
++        [LLMStreamChunk(content=prelude), LLMStreamChunk(content='', tool_call_deltas=[{
++            'index': 0, 'id': 'linked', 'type': 'function',
++            'function': {'name': 'minecraft_task', 'arguments': '{}'}}], finish_reason='tool_calls')],
++        [LLMStreamChunk(content='路径不可达，我还在原地。', finish_reason='stop')]])
++
++    async def handler(call):
++        return ToolResult(call_id=call.call_id, name=call.name, output=receipt)
++
++    client = _bare_tool_client(llm, ToolDefinition(name='minecraft_task', description=''), handler, cap=3)
++    messages = [{'role': 'user', 'content': 'Player cooperation'}]
++    chunks = [c async for c in client._astream_with_tools(messages, _minecraft_execution_turn=True)]
++    assert (prelude in ''.join(c.content or '' for c in chunks)) is spoken
++    assert any(m.get('role') == 'assistant' and m.get('content') == prelude for m in messages)
++    assert any(m.get('role') == 'tool' and json.loads(m['content']) == receipt for m in messages)
++    assert any(c.tool_round_persisted for c in chunks)
++    assert len(llm.calls) == (1 if receipt['status'] == 'accepted' else 2)
++
++
+ @pytest.mark.parametrize('last_status,available', [('ready_if_authorized', True), ('busy', False), ('stopped', False)])
+ def test_evidence_and_server_queries_keep_the_latest_live_decision_for_terminal_choice(last_status, available):
+     from main_logic.omni_offline_client._tools import _minecraft_action_followup_tools
+diff --git a/utils/game_execution_context.py b/utils/game_execution_context.py
+index fa49184..e8218fd 100644
+--- a/utils/game_execution_context.py
++++ b/utils/game_execution_context.py
+@@ -3,6 +3,12 @@
+ MINECRAFT_EXECUTION_CALLBACK_MAX_TOKENS = 2400
+ 
+ 
++def is_minecraft_execution_key(key) -> bool:
++    return (key in ('mc_keep_going', 'mc_completion')
++            or isinstance(key, str) and key.startswith('mc_game_interaction:')
++            and len(key) > len('mc_game_interaction:'))
++
++
+ def is_minecraft_execution_callback(callback: dict) -> bool:
+     """Use routing fields, never words or instructions in received game data."""
+     return (callback.get('source_kind') == 'plugin'
+@@ -10,4 +16,4 @@ def is_minecraft_execution_callback(callback: dict) -> bool:
+             and callback.get('channel') == 'plugin:game_agent_minecraft'
+             and callback.get('origin', 'event') == 'event'
+             and callback.get('delivery_mode') == 'proactive'
+-            and callback.get('coalesce_key') in ('mc_keep_going', 'mc_completion'))
++            and is_minecraft_execution_key(callback.get('coalesce_key')))

@@ -1,9 +1,9 @@
 {
   "upstreamRepository": "https://github.com/Project-N-E-K-O/N.E.K.O",
   "baseCommit": "fb2a2e731a8c954478d08678b0c8cf40e8145a54",
-  "sourceCommit": "972ea61fe919d64d9da5653c07d6299148cd57b3",
+  "sourceCommit": "7e15b51800b57374eac9877d289107577ad71a71",
   "scope": "plugin/plugins/game_agent_minecraft",
-  "resultPluginTree": "0e7d20653317135bebb53ad65ed1f06250c61503",
+  "resultPluginTree": "3dc374161f1c16386f507aab7da69d6ec2730e40",
   "patches": [
     {
       "file": "0001-chore-configure-text-only-local-Qwen-Minecraft-trial.patch",
@@ -348,6 +348,10 @@
     {
       "file": "0086-fix-survival-accept-fresh-idle-surface-recovery-hand.patch",
       "sha256": "aefddda89160d42b3774a92088c7ee46f0e1b35e1ed374cc481800526954ce31"
+    },
+    {
+      "file": "0087-fix-minecraft-bind-player-agreements-to-accepted-bod.patch",
+      "sha256": "1e1f5df213fc49edb41d9597547ad6c22e870e5cf81a96d8b2e9fce4014cb7be"
     }
   ],
   "verification": {
@@ -721,6 +725,19 @@
       "scopePaths": [
         "main_logic/omni_offline_client/_tools.py",
         "tests/unit/test_tool_calling.py"
+      ]
+    },
+    {
+      "file": "host-patches/0034-fix-minecraft-bind-player-agreements-to-accepted-bod.patch",
+      "sha256": "4ca0bd9571e705500b5bfb2982d538952e1edbdde9dc46c5df8aa2a078744475",
+      "scopePaths": [
+        "main_logic/core/callback_render.py",
+        "main_logic/core/proactive.py",
+        "main_logic/omni_offline_client/_tools.py",
+        "tests/unit/test_minecraft_execution_rendering.py",
+        "tests/unit/test_proactive_sm_integration.py",
+        "tests/unit/test_tool_calling.py",
+        "utils/game_execution_context.py"
       ]
     }
   ],
@@ -1750,5 +1767,24 @@
       "gameCommandsSentByMaintenance": 0,
       "modelProbes": 0
     }
+  },
+  "playerActionCouplingVerification": {
+    "sourceCommit": "7e15b51800b57374eac9877d289107577ad71a71",
+    "nativeCommit": "85191c4660fb443a231abf76f8cc39e52d9f58f1",
+    "runtimeCommit": "3deb267158e8683dc66b16cc0239b5b2af466107",
+    "pluginPatches": 87,
+    "hostPatches": 34,
+    "pluginTree": "3dc374161f1c16386f507aab7da69d6ec2730e40",
+    "replayMatchesSource": true,
+    "hostScopeFilesVerified": 61,
+    "runtimeFilesMatchNativeCommit": [
+      "src/websocket/ws_server.js",
+      "test/ws_server_lifecycle.test.mjs"
+    ],
+    "deploymentPhase": "prepared",
+    "pythonTestsPassed": 659,
+    "pythonSubtestsPassed": 47,
+    "nativeTestsPassed": 55,
+    "runtimeAcceptance": "Pending safe owned host/native load and natural player interaction; loopback is not live gameplay proof."
   }
 }
