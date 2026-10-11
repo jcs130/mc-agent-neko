@@ -3321,7 +3321,7 @@ async function startModernViewer(bot, options) {
   let latestSkills = null;
   let agentManaSeen = false;
   let agentStateSeen = false;
-  const initialSkills = options.initialSkillsPacket;
+  const initialSkills = options.getInitialSkillsPacket?.() ?? options.initialSkillsPacket;
   if (initialSkills?.channel === VIEWER_STATE_CHANNEL && Number.isFinite(initialSkills.observedAt) && initialSkills.observedAt > 0 && initialSkills.observedAt <= Date.now() + 3e4) {
     const parsed = parseSkillsPayload(initialSkills.channel, initialSkills.data);
     if (parsed) {

@@ -115,7 +115,7 @@ const result = await build({
                 source = replaceOnce(source, "  protocol.on('world_particles', onParticle);", '', 'legacy particle registration');
                 source = replaceOnce(source, "      protocol.off('world_particles', onParticle);", '', 'legacy particle cleanup');
                 source = replaceOnce(source, '  let agentStateSeen = false;', `  let agentStateSeen = false;
-  const initialSkills = options.initialSkillsPacket;
+  const initialSkills = options.getInitialSkillsPacket?.() ?? options.initialSkillsPacket;
   if (initialSkills?.channel === VIEWER_STATE_CHANNEL
       && Number.isFinite(initialSkills.observedAt) && initialSkills.observedAt > 0
       && initialSkills.observedAt <= Date.now() + 30000) {

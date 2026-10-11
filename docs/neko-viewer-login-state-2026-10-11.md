@@ -14,6 +14,12 @@ their original timestamp, carry `stale: true`, and do not claim current cooldown
 readiness. A later live packet replaces that reading normally. No new game
 login, server command, chat or model request is introduced.
 
+The live reload exposed a second race: packets can arrive during asynchronous
+asset validation, after the adapter captured a snapshot but before the host
+attached listeners. The adapter now passes a lazy lookup that the host calls
+after asset startup, immediately before its synchronous listener setup. A
+separate regression reproduced missing skillsState during that window.
+
 A server spell catalogue can enrich an ability's mana cost without measuring
 mana again. The importer also preserves the previous observation timestamp for
 that merge; its regression first failed because the catalogue made old mana

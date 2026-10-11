@@ -2,7 +2,7 @@
   "repository": "https://github.com/jcs130/Cortico",
   "revision": "f0db612ce5075287330ab3e095ffa449c6e8e71c",
   "entry": "src/worlds/minecraft/modern-viewer.ts",
-  "bundleSha256": "9c593722f77a5358971f4a8aa571d8469a65024a55537a2a737029032b1b275e",
+  "bundleSha256": "e07c1692c8abeb90ee7ebae4490ca4f5d406a414ab3dd5b10c2a83c2a9c14e5c",
   "inputs": [
     "src/worlds/minecraft/viewer-biome.ts",
     "src/worlds/minecraft/viewer-light.ts",

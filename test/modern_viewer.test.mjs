@@ -213,6 +213,25 @@ test('early skills replay rejects foreign, closed, truncated and oversized cache
     assert.equal(cachedViewerSkills(bot, cache()).observedAt, observedAt);
 });
 
+test('login state received during asynchronous asset startup is replayed at listener readiness', async t => {
+    const root = await assets(t), port = await availablePort(), bot = fakeBot();
+    let packet = null, lookups = 0;
+    const started = startModernViewer(bot, { port, assetsDir: root,
+        getInitialSkillsPacket: () => { lookups++; return packet; } });
+    const observedAt = Date.now() - 5000;
+    packet = { channel: 'mcagent:state', observedAt,
+        data: Buffer.from('{"schemaVersion":1,"mana":{"current":26,"max":26},"abilities":[{"id":"blink","name":"跃步"}]}') };
+    const handle = await started;
+    t.after(() => handle.close());
+    const socket = io(handle.url, { transports: ['websocket'], reconnection: false });
+    t.after(() => socket.close());
+    const state = await contentEvent(socket, 'skillsState');
+    assert.equal(lookups, 1);
+    assert.equal(state.observedAt, observedAt);
+    assert.equal(state.mana.current, 26);
+    assert.equal(state.abilities[0].id, 'blink');
+});
+
 test('invalid early skill schemas do not prevent startup or suppress later real packets', async t => {
     const root = await assets(t), port = await availablePort(), bot = fakeBot();
     const handle = await startModernViewer(bot, { port, assetsDir: root,

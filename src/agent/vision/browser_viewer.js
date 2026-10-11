@@ -39,7 +39,9 @@ export async function addBrowserViewer(bot, count_id = 0, { gameInformation } = 
         selfSkinPath: settings.modern_viewer_self_skin,
         selfSkinModel: settings.modern_viewer_self_skin_model ?? 'slim',
         observerState: settings.modern_viewer_observer_state === true,
-        initialSkillsPacket: cachedViewerSkills(bot, gameInformation),
+        // Asset validation is asynchronous. Read the connection cache only
+        // when the host is ready to attach its packet listeners.
+        getInitialSkillsPacket: () => cachedViewerSkills(bot, gameInformation),
         maxSessions: settings.modern_viewer_max_sessions ?? 8 });
     let lan;
     try {

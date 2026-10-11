@@ -3068,3 +3068,14 @@
 - Validation: 740 native tests and 175 host tests passed; all 78 companion
   hashes and the plugin/41-host-file replay match source. Runtime acceptance
   and remaining playback/production limits are recorded in the repair report.
+
+### 2026-10-11 — Close the asynchronous viewer asset startup window
+- Evidence: real reloaded game observations contained 26/26 mana and nine
+  abilities while the LAN page still had none. A delayed-start regression
+  reproduced Missing skillsState despite the earlier snapshot repair.
+- Change: read the same connection's cache lazily after asynchronous asset
+  startup, immediately before synchronous packet listener setup. Preserve the
+  original time and strict parser; no extra game login or command is needed.
+- Falsifiable prediction: a packet received during asset loading reaches the
+  first LAN subscriber. Isolated tests and real viewer-only acceptance are
+  recorded in the viewer report; do not infer fresh mana from a replay.
