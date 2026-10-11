@@ -15,3 +15,11 @@ User report: repeated commission inspection followed by no action.
    loaded source and preserved services; observe natural dispatch and progress.
 6. If query-only behavior persists, trace the next boundary before changing it.
    Tests passing or silence alone do not establish autonomous task progress.
+
+Native metadata fix loaded at 12:52 Beijing; the next 180 seconds failed
+productive acceptance. The host execution-event wrapper says to speak to the
+owner first despite an actionable body. Preserve the body and source/stop
+boundaries, reuse the existing neutral locale header for trusted execution
+events only, and test unrelated/mixed attention and task results. Export host
+patch 0014, then reload only the host at the measured idle boundary and repeat
+natural observation. Do not treat prepared, deployed and productive as synonyms.

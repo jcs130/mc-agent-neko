@@ -1,7 +1,7 @@
 {
   "upstreamRepository": "https://github.com/Project-N-E-K-O/N.E.K.O",
   "baseCommit": "fb2a2e731a8c954478d08678b0c8cf40e8145a54",
-  "sourceCommit": "20a8158f745f439cf9c69bbdf70299ddd199b04f",
+  "sourceCommit": "3e3b5ac4a969557661908e41c220652611c11b3c",
   "scope": "plugin/plugins/game_agent_minecraft",
   "resultPluginTree": "0eb7f71201478f5e469000d2856cf798fb987c92",
   "patches": [
@@ -446,6 +446,15 @@
       "scopePaths": [
         "main_logic/core/proactive.py",
         "tests/unit/test_proactive_sm_integration.py"
+      ]
+    },
+    {
+      "file": "host-patches/0014-fix-minecraft-preserve-execution-intent-in-autonomou.patch",
+      "sha256": "ec5b45200793566e3914dda545e70587048e6fb6ab4bac6235a428c5eaf5fb64",
+      "sourceCommit": "3e3b5ac4a969557661908e41c220652611c11b3c",
+      "scopePaths": [
+        "main_logic/core/callback_render.py",
+        "tests/unit/test_minecraft_execution_rendering.py"
       ]
     }
   ],
@@ -1039,5 +1048,20 @@
     "deploymentEvidence": "runtime/repair-20261011-0915/mixed-host-deployment.json",
     "runtimeAcceptance": "Host loaded with native session/model/TTS preserved; first 95 seconds had no displacement. Later local movement does not prove completed escape or trade.",
     "aggregateTimingCannotIdentifyExecutionSubtype": true
+  },
+  "executionHeaderVerification": {
+    "date": "2026-10-11",
+    "sourceCommit": "3e3b5ac4a969557661908e41c220652611c11b3c",
+    "pythonCasesPassed": 377,
+    "focusedCasesPassed": 24,
+    "beforeFixFailed": 17,
+    "usesExistingNeutralLocalizedHeader": true,
+    "extraModelCalls": 0,
+    "stopAndTaskAuthorizationUnchanged": true,
+    "playerAndServerMessageTextPreserved": true,
+    "taskResultStatusAndForeignCallbacksUnchanged": true,
+    "deploymentPhase": "prepared",
+    "productiveAcceptance": "pending",
+    "fullReplayMatchesSource": true
   }
 }

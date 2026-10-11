@@ -410,3 +410,15 @@ Reference audio, weights, actual voice IDs and private configuration are not
 included. Defaults remain opt-in. See [the local deployment guide](../../docs/local-index-tts-backup.md)
 for installation, the 68-second initial warmup, measured steady-state latency,
 native end-to-end limits, failure behavior and real deployment verification.
+
+## Autonomous Minecraft execution callbacks
+
+Host patch 0014 uses the existing neutral localized header for trusted active
+Minecraft execution events. The generic instruction to reply to the owner
+first otherwise conflicts with their conditional action policy. Player attention,
+task-result status, unrelated sources, stop/busy checks and received evidence
+retain their existing semantics. No inference calls or gameplay commands are
+added. Apply the complete host series and reload the host at a safe boundary;
+plugin reload alone does not load this change. See [the regression and deployment
+report](../../docs/neko-quest-query-handoff-2026-10-11.md) for the failed initial
+natural acceptance and subsequent verification limits.

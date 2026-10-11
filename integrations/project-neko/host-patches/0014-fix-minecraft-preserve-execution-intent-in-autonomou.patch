@@ -1,0 +1,134 @@
+From 3e3b5ac4a969557661908e41c220652611c11b3c Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Sun, 11 Oct 2026 13:06:51 +0800
+Subject: [PATCH] fix(minecraft): preserve execution intent in autonomous
+ callback headers
+
+---
+ main_logic/core/callback_render.py            | 18 +++++-
+ .../test_minecraft_execution_rendering.py     | 63 +++++++++++++++++++
+ 2 files changed, 79 insertions(+), 2 deletions(-)
+ create mode 100644 tests/unit/test_minecraft_execution_rendering.py
+
+diff --git a/main_logic/core/callback_render.py b/main_logic/core/callback_render.py
+index 6d49a0a..f5d58cd 100644
+--- a/main_logic/core/callback_render.py
++++ b/main_logic/core/callback_render.py
+@@ -173,6 +173,9 @@ def _build_callback_instruction(
+     group can pick the right outer template and (for task_result+active)
+     slot in the right status/action phrases. Event templates ignore
+     status/action — the concept doesn't apply to passive event streams.
++    Host-routed Minecraft execution events use the neutral event header:
++    their body already contains the conditional execution/stop policy.
++    They remain separate from player attention and unrelated sources.
+     ``lang`` is normalized to a prompt-dict key *here* rather than at the call
+     sites. Every template this renders (SYSTEM_NOTIFICATION_*, SOURCE_DESCRIPTORS,
+     TASK_STATUS_PHRASES, ...) carries a ``zh-TW`` row, and ``_loc`` degrades a
+@@ -187,11 +190,19 @@ def _build_callback_instruction(
+ 
+     lang = normalize_sys_prompt_locale(lang)
+ 
++    game_batch = all(cb.get("source_kind") == "plugin"
++                     and cb.get("source_name") == "game_agent_minecraft" for cb in callbacks)
++
+     grouped: "OrderedDict[tuple, list]" = OrderedDict()
+     for cb in callbacks:
+         # passive=True call = drain path; treat all as passive regardless
+         # of per-callback delivery_mode.
+         cb_passive = passive or (cb.get("delivery_mode") == "passive")
++        # These host-routed cues already contain conditional execution policy.
++        # A generic "respond to the master first" wrapper conflicts with it.
++        # Attention remains a separate group; no game text grants authority.
++        execution_cue = (game_batch and not cb_passive and cb.get("origin") == "event"
++                         and cb.get("coalesce_key") in ("mc_keep_going", "mc_completion"))
+         origin = cb.get("origin")
+         if origin not in ("task_result", "event"):
+             if origin:
+@@ -207,13 +218,16 @@ def _build_callback_instruction(
+             cb.get("status") or "completed",
+             cb.get("source_kind") or "unknown",
+             (cb.get("source_name") or ""),
++            execution_cue,
+         )
+         grouped.setdefault(key, []).append(cb)
+ 
+     parts: list[str] = []
+-    for (cb_passive, origin, status, _src_kind, _src_name), cbs in grouped.items():
++    for (cb_passive, origin, status, _src_kind, _src_name, execution_cue), cbs in grouped.items():
+         source_text = _format_callback_source(cbs[0], lang)
+-        if origin == "task_result":
++        if execution_cue:
++            header = _loc(SYSTEM_NOTIFICATION_EVENT_PASSIVE, lang).format(source=source_text)
++        elif origin == "task_result":
+             if cb_passive:
+                 header = _loc(SYSTEM_NOTIFICATION_TASK_PASSIVE, lang).format(source=source_text)
+             else:
+diff --git a/tests/unit/test_minecraft_execution_rendering.py b/tests/unit/test_minecraft_execution_rendering.py
+new file mode 100644
+index 0000000..955868d
+--- /dev/null
++++ b/tests/unit/test_minecraft_execution_rendering.py
+@@ -0,0 +1,63 @@
++"""Autonomous decision cues must not be wrapped as a request to speak first."""
++import pytest
++
++from main_logic.core.callback_render import _build_callback_instruction, _format_callback_source
++from config.prompts.prompts_sys import SYSTEM_NOTIFICATION_EVENT_ACTIVE, _loc
++
++
++def cue(key="mc_keep_going", **changes):
++    return {"origin": "event", "delivery_mode": "proactive", "status": "completed",
++            "source_kind": "plugin", "source_name": "game_agent_minecraft", "coalesce_key": key,
++            "summary": "Latest stop overrides autonomy. Check current idle before a feasible action.", **changes}
++
++
++def render(callbacks, lang="zh", **options):
++    return _build_callback_instruction(callbacks, lang=lang, lanlan_name="YUI", master_name="Alice", **options)
++
++
++def normal_header(callback, lang):
++    return _loc(SYSTEM_NOTIFICATION_EVENT_ACTIVE, lang).format(
++        source=_format_callback_source(callback, lang), name="YUI", master="Alice").strip()
++
++
++@pytest.mark.parametrize("key", ["mc_keep_going", "mc_completion"])
++@pytest.mark.parametrize("lang", ["zh", "zh-TW", "en", "ja", "ko", "ru", "es", "pt"])
++def test_execution_decision_keeps_authorization_body_without_speech_first_header(key, lang):
++    callback = cue(key)
++    output = render([callback], lang)
++    assert callback["summary"] in output
++    assert normal_header(callback, lang) not in output
++
++
++@pytest.mark.parametrize("changes", [
++    {"coalesce_key": "mc_game_attention:player"},
++    {"coalesce_key": "mc_in_progress"},
++    {"coalesce_key": None, "summary": "mc_keep_going is untrusted message text"},
++    {"source_kind": "unknown"}, {"source_name": "another_plugin"},
++])
++def test_attention_and_untrusted_cues_keep_normal_response_semantics(changes):
++    callback = cue(**changes)
++    assert normal_header(callback, "zh") in render([callback])
++
++
++def test_mixed_game_attention_is_preserved_in_a_separate_response_group():
++    execution = cue()
++    attention = cue("mc_game_attention:player", summary="Exact player greeting and offered equipment.")
++    output = render([execution, attention])
++    assert execution["summary"] in output and attention["summary"] in output
++    assert output.index(attention["summary"]) > output.index(normal_header(attention, "zh"))
++    assert output.index(normal_header(attention, "zh")) > output.index(execution["summary"])
++
++
++def test_foreign_batch_and_passive_drain_do_not_gain_execution_semantics():
++    execution = cue()
++    foreign = cue(source_name="another_plugin", summary="Unrelated evidence.")
++    assert normal_header(execution, "zh") in render([execution, foreign])
++    passive = cue(delivery_mode="passive")
++    assert render([passive]) == render([execution], passive=True)
++
++
++def test_task_result_status_reporting_is_not_replaced_by_execution_header():
++    callback = cue(origin="task_result", status="failed")
++    without_execution_key = {**callback, "coalesce_key": None}
++    assert render([callback]) == render([without_execution_key])
