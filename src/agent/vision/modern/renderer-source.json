@@ -1,8 +1,8 @@
 {
   "repository": "https://github.com/jcs130/mc-visual-console",
-  "revision": "79ddc629a7ba0c74ba064234e7928052be6dfc15",
+  "revision": "b71e0f567b17e433d40f3a5a7fab883e198816aa",
   "directory": "packages/modern-viewer/renderer-src",
-  "gitTree": "032446771e1551bce5a668b8517f9959e411f07b",
+  "gitTree": "75f8015ebfd7502ce69e548661aa8fb7ffd13efb",
   "minecraftVersion": "1.20.6",
   "socketProtocol": "packages/modern-viewer/renderer-src/SOCKET_PROTOCOL.md",
   "license": "MIT",

@@ -2,7 +2,7 @@
   "repository": "https://github.com/jcs130/Cortico",
   "revision": "f0db612ce5075287330ab3e095ffa449c6e8e71c",
   "entry": "src/worlds/minecraft/modern-viewer.ts",
-  "bundleSha256": "e07c1692c8abeb90ee7ebae4490ca4f5d406a414ab3dd5b10c2a83c2a9c14e5c",
+  "bundleSha256": "860d84f1a6f532a4ac0afe8650f749102aabfda151f9151f48ffb1e1c99ff88d",
   "inputs": [
     "src/worlds/minecraft/viewer-biome.ts",
     "src/worlds/minecraft/viewer-light.ts",
@@ -48,9 +48,9 @@
   ],
   "renderer": {
     "repository": "https://github.com/jcs130/mc-visual-console",
-    "revision": "79ddc629a7ba0c74ba064234e7928052be6dfc15",
+    "revision": "b71e0f567b17e433d40f3a5a7fab883e198816aa",
     "directory": "packages/modern-viewer/renderer-src",
-    "gitTree": "032446771e1551bce5a668b8517f9959e411f07b",
+    "gitTree": "75f8015ebfd7502ce69e548661aa8fb7ffd13efb",
     "minecraftVersion": "1.20.6",
     "socketProtocol": "packages/modern-viewer/renderer-src/SOCKET_PROTOCOL.md",
     "license": "MIT",

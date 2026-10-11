@@ -145,6 +145,36 @@ test('vendored host matches its recorded source hash', async () => {
     assert.equal(sha256(host), metadata.bundleSha256);
 });
 
+test('both viewer paths retain the actual unavailable YSM reason and accept later model state', async t => {
+    const root = await assets(t), bot = fakeBot();
+    const uuid = '00000000-0000-3000-8000-000000000001';
+    bot._client.uuid = uuid;
+    const port = await availablePort();
+    const handle = await startModernViewer(bot, { port, assetsDir: root });
+    t.after(() => handle.close());
+    const clients = await Promise.all(['/socket.io/', '/third/socket.io/'].map(socketPath => connect(t, `http://127.0.0.1:${port}`, socketPath)));
+    const row = { schemaVersion: 1, source: 'freesia_worker', type: 'state',
+        epoch: '00000000-0000-4000-8000-000000000001', playerUuid: uuid,
+        ysmVersion: '2.4.1', protocolVersion: '2.4.0',
+        jarSha256: 'ec51cfae84d219a45fac5098a31bfe980bcb7c2d8b413e8fffbd05a411a85680' };
+    const emit = value => bot._client.emit('custom_payload', { channel: 'mcagent:appearance', data: Buffer.from(JSON.stringify(value)) });
+    const unavailable = clients.map(({socket}) => contentEvent(socket, 'appearanceState'));
+    emit({ ...row, available: false, reason: 'YSM_WORKER_STATE_UNAVAILABLE' });
+    for (const value of await Promise.all(unavailable)) {
+        assert.equal(value.available, false);
+        assert.equal(value.renderReason, 'YSM_WORKER_STATE_UNAVAILABLE');
+        assert.equal(value.renderAvailable, false);
+    }
+    const recovery = clients.map(({socket}) => contentEvent(socket, 'appearanceState'));
+    emit({ ...row, available: true, entityId: bot.entity.id, mandatory: false,
+        modelId: 'alex', texture: 'gsl', animation: 'idle', webReason: 'YSM_SOURCE_NOT_REGISTERED' });
+    for (const value of await Promise.all(recovery)) {
+        assert.equal(value.available, true);
+        assert.equal(value.modelId, 'alex');
+        assert.equal(value.renderReason, 'YSM_SOURCE_NOT_REGISTERED');
+    }
+});
+
 test('login mana and abilities received before viewer startup reach local and LAN viewers', async t => {
     const root = await assets(t), port = await availablePort(), bot = fakeBot();
     const observedAt = Date.now() - 120000;
