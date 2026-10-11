@@ -35,3 +35,19 @@ LLM, vision, speech and observer need not restart.
 Acceptance must distinguish actual context delivery, a new task acceptance, physical
 progress and completed exam proofs. A passing test, received command, accepted task,
 changed position or monitor diagnosis alone is not completed autonomous gameplay.
+
+At 07:37 Beijing time on 2026-10-12, the official single-plugin reload completed
+at a confirmed quiet physical/main/audio boundary. An actual read-only tool result
+contained both commission and exam status plus the new scope note; eight subsequent
+natural instruction records also contained the new independent status scopes, with
+the latest action-receipt pointer present. Game session, main, native game, model,
+vision, voice and observer remained continuous. Only the owned guardian was briefly
+paused and resumed around the plugin reload. T-0035 has a confirmed `deployed`
+maintainer receipt, without automatic closure.
+
+The following 55-second window stayed online with health/food 20, showed a mobility
+mode and about 0.57 blocks of position variation, and had no new task acceptance
+receipt. This verifies information delivery, not sustained task progress or exam
+completion. A later speech check found one exact repeated-generation group among
+18 replies while all 18 audio cycles completed with no duplicate playback cycles;
+text generation recurrence remains distinct from audio replay and stays open.

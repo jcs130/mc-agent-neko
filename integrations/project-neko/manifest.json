@@ -1839,11 +1839,23 @@
     "pluginTree": "73472f5fd8da924a0d1496b564c6fb3a8f3f9fa9",
     "replayMatchesSource": true,
     "hostScopeFilesVerified": 61,
-    "phase": "prepared",
+    "phase": "deployed",
     "pluginTestsPassed": 283,
     "ruffPassed": true,
     "liveExamCompletion": "open; independent status retention is not completed physical proofs",
     "noModelParameterChange": true,
-    "noRawInformationClipping": true
+    "noRawInformationClipping": true,
+    "runtimeInputVerified": true,
+    "naturalCurrentFactsDelivered": true,
+    "naturalInstructionSamples": 8,
+    "gameSessionPreserved": true,
+    "protectedMainGameInferenceVoiceObserverPreserved": true,
+    "pluginOnlyReload": true,
+    "newTaskAcceptancesDuring55SecondObservation": 0,
+    "observedPhysicalProgressAcceptance": "open; mobility/position variation is not completed task proof",
+    "naturalCompletePlaybacks": 18,
+    "duplicatePlaybackCycles": 0,
+    "exactRepeatedReplyGroups": 1,
+    "semanticGenerationRecurrenceAcceptance": "open"
   }
 }
