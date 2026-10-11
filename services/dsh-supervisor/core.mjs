@@ -59,7 +59,8 @@ export function executionRevision(events = [], now = Date.now(), sessionId) {
 }
 
 function failureExcerpt(value, limit = 650) {
-    const text = String(value.message ?? value.error ?? '');
+    const text = [value.message, value.error, value.reason]
+        .map(item => String(item ?? '')).find(item => item.trim()) || '';
     const exception = text.match(/(?:TypeError|ReferenceError|SyntaxError|RangeError|Error):[^\n]+/g);
     // Model-authored task summaries often bury the real command exception after inventory text.
     return exception?.length ? `${text.slice(0, 220)}\nObserved exception: ${exception.slice(0, 2).join('\n')}`.slice(0, limit)
