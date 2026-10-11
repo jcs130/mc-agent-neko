@@ -31,7 +31,11 @@ ysm model set ag_NEKO neko_yui default
 2. 原生观战客户端收到模型并能显示正确外观、手持装备和动作。
 3. Web 收到 ag_NEKO 本人的 `mcagent:appearance`：`available: true`、`modelId: neko_yui`、`texture: default`；随后收到哈希匹配的原始资源，并实际渲染。包通过本地检查或网页返回 HTTP 200 都不能代替这一步。
 
-截至 2026-10-11 本次制作完成时，尚无可用的正式服 Worker 上传/管理连接；**模型包已制作，正式服安装及绑定待完成**。
+2026-10-11 20:27（北京时间）已核对正式服 **ag_NEKO → `neko_yui/default`** 生效：
+两路局域网可视化收到本人权威外观、匹配资源，`available/webAvailable/renderAvailable` 均为 `true`。
+Web 使用的四个原始资源与制作包逐项 SHA-256 一致；地下城页面已实际显示自定义造型，
+未捕获到页面渲染错误。安装由用户确认完成，本次只读验收没有重启服务。
+原生观战客户端的装备、全部动画及完整渲染一致性仍需单独验收，详见验证记录。
 
 ## 开发与复现
 
