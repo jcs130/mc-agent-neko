@@ -1635,7 +1635,7 @@
     "extraModelCalls": 0,
     "fullReplayMatchesSource": true,
     "hostFilesMatched": 61,
-    "deploymentPhase": "prepared",
+    "deploymentPhase": "deployed",
     "naturalGameplayAcceptance": "open",
     "implicitEventAgeEvictionRemoved": true,
     "dimensionRefreshRetainsPendingEvents": true,
@@ -1655,7 +1655,7 @@
       "maxContext": 32768,
       "result": "rejected_context_overflow"
     },
-    "runtimeAcceptance": "pending compact tool JSON host loading and long-round acceptance",
+    "runtimeAcceptance": "short real-request acceptance passed; sustained productive gameplay and audible acceptance open",
     "explicitExecutionDecision": true,
     "explicitWaitWithoutGameplayForcing": true,
     "persistentEvidenceUsesRuntimeDataRoot": true,
@@ -1692,6 +1692,63 @@
     "measuredNonLethalSurfaceHandoff": true,
     "compactToolJsonRegressionPassed": 445,
     "compactToolJsonSubtestsPassed": 44,
-    "toolJsonAllFieldsAndStringWhitespacePreserved": true
+    "toolJsonAllFieldsAndStringWhitespacePreserved": true,
+    "deployedCodeCommit": "ce6a4abdf123a949b007e6ebd9e3da396b0b3dec",
+    "deployedAt": 1791752002006,
+    "nativeFilesMatched": 13,
+    "protectedServicesPreserved": true,
+    "latestHostReloadPreservedNativeConnection": true,
+    "compactToolTokenMeasurement": {
+      "beforeTokens": 4607,
+      "afterTokens": 3720,
+      "savedTokens": 887,
+      "completeDataEqual": true,
+      "tokenizer": "deployed Q2_0 GGUF tokenizer"
+    },
+    "shortRuntimeAcceptance": {
+      "checkedAt": "2026-10-12T04:58:35.662273+08:00",
+      "from": 1791752002006,
+      "hostOutcomes": {
+        "completed": 11
+      },
+      "hostCompletedLatencyMs": {
+        "samples": 11,
+        "median": 6532.0,
+        "max": 12156.0
+      },
+      "maxAcceptedHostInputTokens": 25559,
+      "contextOverflowEvents": 0,
+      "nativeOutcomes": {
+        "response_returned": 2,
+        "command_ready": 3,
+        "command_rejected": 1
+      },
+      "passiveObservationSeconds": [
+        55,
+        55
+      ],
+      "allOnline": true,
+      "minHp": 20,
+      "minFood": 20,
+      "displacements": [
+        5.999598527044946,
+        1.6437256373276632
+      ],
+      "actionsObserved": [
+        "mode:self_preservation"
+      ],
+      "completeNaturalPlaybacks": 2,
+      "exactRepeatedReplyGroups": 0,
+      "duplicatePlaybackCycles": 0,
+      "privateStyleControlReplies": 0,
+      "carbonAddressReplies": 0,
+      "missingPasswordClaims": 0,
+      "longTermNaturalGameplayAcceptance": "open",
+      "semanticRepetitionAndAudibleAcceptance": "open",
+      "viewerSkillsFresh": false,
+      "latencyImprovementProven": false,
+      "gameCommandsSentByMaintenance": 0,
+      "modelProbes": 0
+    }
   }
 }
