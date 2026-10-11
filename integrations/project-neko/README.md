@@ -536,3 +536,9 @@ full-input policy and reviewed execution boundaries are documented in
 [the local deployment audit](../../docs/complete-game-information.md).
 Apply both complete series and reload only the owned processes at safe idle
 boundaries. No inference/model/TTS tuning or private persona data is included.
+
+Plugin patch 0088 retains actual exam status independently of an empty commission
+report and indexes the latest server action receipt across later queries. It follows
+the complete-retention/current-facts/query policy for local inference. Apply the full
+series, then reload only the Minecraft plugin at an idle boundary. See the
+[regression report and acceptance limits](../../docs/local-exam-progress.md).

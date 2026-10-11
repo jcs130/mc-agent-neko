@@ -1,0 +1,248 @@
+From 8571e718570b10b5a74523c9d36e48699849389c Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Mon, 12 Oct 2026 07:18:23 +0800
+Subject: [PATCH] fix(minecraft): retain exam status and latest server action
+ across idle decisions
+
+---
+ .../docs/2026-10-12-exam-progress-handoff.md  | 41 +++++++++++++
+ .../game_agent_minecraft/observations.py      | 29 +++++-----
+ .../plugins/game_agent_minecraft/service.py   | 16 ++++-
+ .../test_query_progress.py                    | 58 +++++++++++++++++++
+ 4 files changed, 130 insertions(+), 14 deletions(-)
+ create mode 100644 plugin/plugins/game_agent_minecraft/docs/2026-10-12-exam-progress-handoff.md
+
+diff --git a/plugin/plugins/game_agent_minecraft/docs/2026-10-12-exam-progress-handoff.md b/plugin/plugins/game_agent_minecraft/docs/2026-10-12-exam-progress-handoff.md
+new file mode 100644
+index 0000000..b60beee
+--- /dev/null
++++ b/plugin/plugins/game_agent_minecraft/docs/2026-10-12-exam-progress-handoff.md
+@@ -0,0 +1,41 @@
++# Guild exam and action feedback handoff
++
++## Regression report
++
++The server can have no commission while an `inventory_basic` promotion exam is
++already active. Previously each new decision retained only `/mycli guild status`;
++exam status and rejected starts were available solely through the full historical
++index. Live replies showed an active exam and `task_slot_busy`, followed by repeated
++promotion/start/status queries without a newly accepted physical task.
++
++The current-facts view now preserves the latest exact `/mycli guild exam status`
++reply independently of commission status. Catalogues cannot overwrite either.
++Each reply keeps its own observation time, age and historical label; login changes
++clear both caches. A complete tool response replaces earlier fragments for the same
++command, rather than mixing old and new status replies within two seconds.
++
++The latest explicitly non-read-only server attempt has a separate receipt pointer
++that subsequent queries do not replace. Its command, transport status and session
++remain visible; messages and structured records are exact field queries. All
++original command history and long feedback remain in immutable private evidence.
++`received` still does not establish gameplay success, and neither an index nor
++an empty commission report establishes that the exam is absent or completed.
++
++Before the fix, three regression cases failed. After the fix, the full Minecraft
++plugin suite passes 283 tests and Ruff passes for the changed Python files. Tests
++cover independent task scopes, catalogue interference, complete response replacement,
++out-of-order replies, login isolation, retained long feedback and exact readback.
++
++Only the Minecraft plugin needs reloading at an idle boundary. The native game,
++main brain, model, voice and observer can continue. Runtime acceptance must measure
++actual current-facts delivery, accepted tasks and outcomes separately: preparing
++this patch does not prove completion of the exam or sustained autonomous progress.
++
++## Local inference limits
++
++This change supports the user's complete-retention/current-facts/query policy. It
++does not truncate messages, add a periodic model call, reduce the retry interval,
++change model parameters, or reinstate generic history clipping. It also does not
++make an intentional whole-history query fit a 32K engine. Earlier capacity errors
++remain a separate issue; current successful requests and live gameplay must be
++measured rather than attributed to those older failures.
+diff --git a/plugin/plugins/game_agent_minecraft/observations.py b/plugin/plugins/game_agent_minecraft/observations.py
+index 8f285a0..ae04c54 100644
+--- a/plugin/plugins/game_agent_minecraft/observations.py
++++ b/plugin/plugins/game_agent_minecraft/observations.py
+@@ -47,13 +47,13 @@ class GameObservations:
+         self.dropped = 0
+         self.decision_revision = 0
+         self._fingerprint = None
+-        self._progress_report = None
++        self._progress_reports = {}
+         from .evidence import GameEvidence
+         self.evidence = GameEvidence()
+ 
+-    def record_server_reply(self, command, messages, observed_at=None):
++    def record_server_reply(self, command, messages, observed_at=None, *, complete=False):
+         """Keep an actual status reply separately from browsed catalogues."""
+-        if command != '/mycli guild status' or not isinstance(messages, list):
++        if command not in ('/mycli guild status', '/mycli guild exam status') or not isinstance(messages, list):
+             return
+         stamp = self.clock() if observed_at is None else observed_at
+         if type(stamp) not in (int, float) or not math.isfinite(stamp):
+@@ -61,21 +61,24 @@ class GameObservations:
+         lines = [line for line in messages if isinstance(line, str) and line.strip()]
+         if not lines:
+             return
+-        previous = self._progress_report
++        previous = self._progress_reports.get(command)
+         if previous and stamp < previous['observedAt']:
+             return
+-        if previous and stamp - previous['observedAt'] <= 2:
++        if previous and not complete and stamp - previous['observedAt'] <= 2:
+             lines = list(dict.fromkeys([*previous['messages'], *lines]))
+-        self._progress_report = {'command': command, 'observedAt': stamp,
+-                                 'messages': lines,
+-                                 'truncated': False}
++        self._progress_reports[command] = {'command': command, 'observedAt': stamp,
++                                          'messages': lines, 'truncated': False}
+ 
+     def server_progress(self):
+-        report = self._progress_report
+-        if not report or self.clock() < report['observedAt']:
++        reports = [{**report, 'ageSeconds': round(self.clock() - report['observedAt']),
++                    'historicalReply': True}
++                   for command in ('/mycli guild status', '/mycli guild exam status')
++                   if (report := self._progress_reports.get(command))
++                   and self.clock() >= report['observedAt']]
++        if not reports:
+             return None
+-        return {**report, 'ageSeconds': round(self.clock() - report['observedAt']),
+-                'historicalReply': True}
++        return {**reports[0], **({'relatedStatusReplies': reports[1:]} if len(reports) > 1 else {}),
++                'scopeNote': 'Commission status and exam status cover different task scopes. An empty commission report does not establish an empty exam. These are exact historical replies; verify current state before relying on them.'}
+ 
+     @property
+     def fresh(self):
+@@ -105,7 +108,7 @@ class GameObservations:
+             self.online = False
+             self.events.clear()
+             self._fingerprint = None
+-            self._progress_report = None
++            self._progress_reports.clear()
+         self.available = True
+         return True
+ 
+diff --git a/plugin/plugins/game_agent_minecraft/service.py b/plugin/plugins/game_agent_minecraft/service.py
+index 3869061..1308be4 100644
+--- a/plugin/plugins/game_agent_minecraft/service.py
++++ b/plugin/plugins/game_agent_minecraft/service.py
+@@ -282,6 +282,7 @@ class GameAgentService:
+         self._server_welcome_session: Optional[str] = None
+         self._server_welcome_seen: set[str] = set()
+         self._server_command_history: list[dict[str, Any]] = []
++        self._last_server_action = None
+         self._server_calls_since_task = 0
+         self._game_attention_at = 0.0
+         self._game_attention_pending = False
+@@ -886,6 +887,7 @@ class GameAgentService:
+             return
+         if previous_session != self._game_observations.session_id:
+             self._server_command_history.clear()
++            self._last_server_action = None
+             self._server_calls_since_task = 0
+             self._recent_task_outcomes.clear()
+             self._task_failure_streak = 0
+@@ -1248,7 +1250,9 @@ class GameAgentService:
+         }, 6000)
+         entry['cacheTruncated'] = clipped
+         if result.get('status') not in ('failed', 'error', 'unavailable'):
+-            self._game_observations.record_server_reply(entry['command'], result.get('messages'), entry['observedAt'])
++            self._game_observations.record_server_reply(entry['command'], result.get('messages'), entry['observedAt'], complete=True)
++        if result.get('readOnly') is False:
++            self._last_server_action = entry
+         self._server_command_history = [entry, *self._server_command_history]
+         if self._pending is None and self._task_finished:
+             self._server_calls_since_task += 1
+@@ -1296,12 +1300,22 @@ class GameAgentService:
+         full = {'lastTaskOutcome': self._last_task_outcome,
+                 'recentTaskOutcomes': self._recent_task_outcomes,
+                 'lastServerCommands': self._server_command_history}
++        action = self._last_server_action
++        if action and action.get('sessionId') == self._game_observations.session_id:
++            full['lastServerAction'] = action
+         evidence = self._game_observations.evidence.save(full)
+         value = {'rawEvidence': evidence, 'failureStreak': self._task_failure_streak,
+                  'recentTaskOutcomes': {'path': '/recentTaskOutcomes',
+                                         'entries': len(self._recent_task_outcomes)},
+                  'lastServerCommands': {'path': '/lastServerCommands',
+                                         'entries': len(self._server_command_history)}}
++        if 'lastServerAction' in full:
++            value['lastServerAction'] = {key: action[key] for key in
++                ('command', 'status', 'reason', 'observedAt', 'sessionId') if key in action}
++            value['lastServerAction'].update(historicalReply=True,
++                messages={'path': '/lastServerAction/messages', 'entries': len(action['messages'])},
++                records={'path': '/lastServerAction/records', 'entries': len(action['records'])},
++                instruction='Transport status received is not gameplay success. Read the exact messages before relying on or repeating this action; later queries do not replace its receipt.')
+         if self._last_task_outcome:
+             outcome = self._last_task_outcome
+             value['lastTaskOutcome'] = {key: outcome[key] for key in
+diff --git a/plugin/plugins/game_agent_minecraft/test_query_progress.py b/plugin/plugins/game_agent_minecraft/test_query_progress.py
+index b64a556..65698fd 100644
+--- a/plugin/plugins/game_agent_minecraft/test_query_progress.py
++++ b/plugin/plugins/game_agent_minecraft/test_query_progress.py
+@@ -91,6 +91,64 @@ class QueryProgressTests(unittest.TestCase):
+         info.ingest_state(data)
+         self.assertGreater(info.decision_revision, revision)
+ 
++    def test_exam_status_survives_an_empty_commission_report_and_catalogue(self):
++        info = self.info()
++        active = 'MC_GUILD_EXAM {"state":"active","examId":"inventory_basic","nextAction":"普通大背包存入并取回；通过木门和梯井"}'
++        info.record_server_reply('/mycli guild exam status', [active], 1000)
++        self.clock[0] += 3
++        info.record_server_reply('/mycli guild status', ['当前没有在办的委托。'], 1003)
++        info.record_server_reply('/mycli guild exam promotion', ['可开考目录，不是新任务。'], 1003)
++        progress = info.server_progress()
++        self.assertEqual(progress['messages'], ['当前没有在办的委托。'])
++        exam = progress['relatedStatusReplies'][0]
++        self.assertEqual(exam['command'], '/mycli guild exam status')
++        self.assertEqual(exam['messages'], [active])
++        self.assertEqual(exam['ageSeconds'], 3)
++        self.assertTrue(exam['historicalReply'])
++        current = json.loads(info.focused_context().split('\n', 1)[1])
++        self.assertIn(active, str(current['serverProgress']))
++        self.assertIn(active, str(current['serverPlay']['activeReport']))
++        self.data['sessionId'] = 'next-login'
++        info.ingest_state(self.data)
++        self.assertIsNone(info.server_progress())
++
++    def test_complete_status_reply_replaces_old_fragments_without_changing_other_scope(self):
++        info = self.info()
++        info.record_server_reply('/mycli guild status', ['委托进行中'], 1000)
++        info.record_server_reply('/mycli guild exam status', ['考试进行中'], 1000)
++        info.record_server_reply('/mycli guild exam status', ['考试完成'], 1001, complete=True)
++        info.record_server_reply('/mycli guild exam status', ['迟到的旧状态'], 999)
++        self.clock[0] = 1002
++        progress = info.server_progress()
++        self.assertEqual(progress['messages'], ['委托进行中'])
++        self.assertEqual(progress['relatedStatusReplies'][0]['messages'], ['考试完成'])
++
++    def test_last_server_action_receipt_survives_queries_without_clipping_or_success_inference(self):
++        from .service import GameAgentService
++        service = GameAgentService(logger=None, push_message_fn=lambda **kw: None)
++        service._game_observations = self.info()
++        refused = '未开始/未交付：task_slot_busy。先查看当前任务。' + '完整回执' * 3000
++        action = {'command': '/mycli guild exam start promotion inventory_basic',
++                  'status': 'received', 'readOnly': False, 'messages': [refused], 'records': []}
++        service.record_server_command(action)
++        service.record_server_command({'command': '/mycli guild exam status', 'status': 'received',
++            'readOnly': True, 'messages': ['考试仍进行中'], 'records': []})
++        context = json.loads(service.recovery_context().split(': ', 1)[1])
++        receipt = context['lastServerAction']
++        self.assertEqual(receipt['command'], action['command'])
++        self.assertEqual(receipt['status'], 'received')
++        exact = service._game_observations.evidence.read(
++            context['rawEvidence']['id'], receipt['messages']['path'])
++        self.assertEqual(exact['value'], [refused])
++        self.assertTrue(receipt['historicalReply'])
++        self.assertNotIn('success', receipt)
++        original = service._game_observations.evidence.read(
++            context['rawEvidence']['id'], '/lastServerCommands/1')
++        self.assertEqual(original['value']['messages'], [refused])
++        service._game_observations.session_id = 'different-login'
++        next_context = json.loads(service.recovery_context().split(': ', 1)[1])
++        self.assertNotIn('lastServerAction', next_context)
++
+ 
+ if __name__ == '__main__':
+     unittest.main()

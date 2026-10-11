@@ -1,9 +1,9 @@
 {
   "upstreamRepository": "https://github.com/Project-N-E-K-O/N.E.K.O",
   "baseCommit": "fb2a2e731a8c954478d08678b0c8cf40e8145a54",
-  "sourceCommit": "7e15b51800b57374eac9877d289107577ad71a71",
+  "sourceCommit": "8571e718570b10b5a74523c9d36e48699849389c",
   "scope": "plugin/plugins/game_agent_minecraft",
-  "resultPluginTree": "3dc374161f1c16386f507aab7da69d6ec2730e40",
+  "resultPluginTree": "73472f5fd8da924a0d1496b564c6fb3a8f3f9fa9",
   "patches": [
     {
       "file": "0001-chore-configure-text-only-local-Qwen-Minecraft-trial.patch",
@@ -352,6 +352,10 @@
     {
       "file": "0087-fix-minecraft-bind-player-agreements-to-accepted-bod.patch",
       "sha256": "1e1f5df213fc49edb41d9597547ad6c22e870e5cf81a96d8b2e9fce4014cb7be"
+    },
+    {
+      "file": "0088-fix-minecraft-retain-exam-status-and-latest-server-a.patch",
+      "sha256": "434832bc42e78055d3548842a7a384e1c9f873d9cbb260142b66132de5b96675"
     }
   ],
   "verification": {
@@ -1827,5 +1831,19 @@
     "gameCommandsSentByMaintenance": 0,
     "modelProbes": 0,
     "credentialsSaved": false
+  },
+  "examProgressHandoffVerification": {
+    "sourceCommit": "8571e718570b10b5a74523c9d36e48699849389c",
+    "pluginPatches": 88,
+    "hostPatches": 34,
+    "pluginTree": "73472f5fd8da924a0d1496b564c6fb3a8f3f9fa9",
+    "replayMatchesSource": true,
+    "hostScopeFilesVerified": 61,
+    "phase": "prepared",
+    "pluginTestsPassed": 283,
+    "ruffPassed": true,
+    "liveExamCompletion": "open; independent status retention is not completed physical proofs",
+    "noModelParameterChange": true,
+    "noRawInformationClipping": true
   }
 }
