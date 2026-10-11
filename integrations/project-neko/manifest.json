@@ -1084,8 +1084,17 @@
     "extraModelCalls": 0,
     "receiptsAndStopGenerationGuardsPreserved": true,
     "plainChatAndUnmarkedTextUnchanged": true,
-    "deploymentPhase": "prepared",
-    "productiveAcceptance": "pending",
-    "fullReplayMatchesSource": true
+    "deploymentPhase": "deployed",
+    "productiveAcceptance": "not_verified",
+    "fullReplayMatchesSource": true,
+    "deploymentEvidence": "runtime/repetition-20261011-1237/thinking-host-deployment.json",
+    "naturalTaggedReasoningCaseObserved": false,
+    "naturalObservationSeconds": 180,
+    "naturalObservationSamples": 181,
+    "naturalMaximumDisplacement": 3.190390523314126,
+    "naturalInventoryChanged": false,
+    "unmarkedLongOutputStillObserved": true,
+    "voiceEndWatchdogStillObserved": true,
+    "repairReceiptWriteback": "pending-baseline-changed"
   }
 }
