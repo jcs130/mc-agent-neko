@@ -1,9 +1,9 @@
 {
   "upstreamRepository": "https://github.com/Project-N-E-K-O/N.E.K.O",
   "baseCommit": "fb2a2e731a8c954478d08678b0c8cf40e8145a54",
-  "sourceCommit": "171b7475174644632906737e185d7f827a331689",
+  "sourceCommit": "bacca4dd521bd65c3090b2a07acc02ea4f8ee883",
   "scope": "plugin/plugins/game_agent_minecraft",
-  "resultPluginTree": "ff69b3539d477a9c06f66c7e1b69445d33ad5759",
+  "resultPluginTree": "8b8935a1168863ee22fb2b8fa52070af08ef0276",
   "patches": [
     {
       "file": "0001-chore-configure-text-only-local-Qwen-Minecraft-trial.patch",
@@ -296,6 +296,10 @@
     {
       "file": "0073-fix-minecraft-preserve-private-client-authentication.patch",
       "sha256": "922333e110954b83688bf4f17aa704ff0441c247a5bd303bbae88882dce2d59e"
+    },
+    {
+      "file": "0074-fix-minecraft-preserve-complete-received-game-contex.patch",
+      "sha256": "79c1b6fadc84d184c65b252334aac516cd23dc6f536400e6ec44e26545cb03ee"
     }
   ],
   "verification": {
@@ -599,6 +603,19 @@
         "tests/unit/test_joint_reply_emotion.py",
         "tests/unit/test_private_speech_controls.py",
         "utils/joint_reply_emotion.py"
+      ]
+    },
+    {
+      "file": "host-patches/0026-fix-local-preserve-Minecraft-facts-through-Neko-brai.patch",
+      "sha256": "4b0ee3705aaa10e7231298ebd95a893a2ec7f146db0eebc17a68e6b09f75a572",
+      "scopePaths": [
+        "main_logic/core/callback_render.py",
+        "main_logic/core/context_append.py",
+        "main_logic/core/proactive.py",
+        "main_logic/omni_offline_client/_minecraft_narration.py",
+        "plugin/server/messaging/proactive_bridge.py",
+        "tests/unit/test_minecraft_narration_context.py",
+        "tests/unit/test_minecraft_proactive_budget.py"
       ]
     }
   ],
@@ -1493,5 +1510,27 @@
     "fullReplayMatchesSource": true,
     "deploymentPhase": "prepared",
     "naturalConversationAcceptance": "open"
+  },
+  "completeInformationVerification": {
+    "date": "2026-10-12",
+    "sourceCommit": "bacca4dd521bd65c3090b2a07acc02ea4f8ee883",
+    "nativeCommit": "2c7cb2b11c6508a513ab5a1fd5929d5cbb24af04",
+    "runtimeCommit": "b9d5e1f38eb57dc2dcd02fe12f0bce27a4554a04",
+    "nativeRelatedPassed": 242,
+    "pythonRelatedPassed": 346,
+    "pythonSubtestsPassed": 42,
+    "lossyGameFactBudgetsRemoved": true,
+    "rawHistoryRetainedAfterSummary": true,
+    "allFocusedModesKeepRawFacts": true,
+    "undeliveredPlayerMessagesExpire": false,
+    "trustedHostDeliveryPreservesFullText": true,
+    "fixedGameplayPriorityRemoved": true,
+    "quickActionLoopsDoNotReconnect": true,
+    "credentialsInContext": false,
+    "extraModelCalls": 0,
+    "fullReplayMatchesSource": true,
+    "hostFilesMatched": 61,
+    "deploymentPhase": "prepared",
+    "naturalGameplayAcceptance": "open"
   }
 }

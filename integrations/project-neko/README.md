@@ -517,3 +517,16 @@ series and reload the host at a measured idle boundary. See the local speech
 report for the reproduced cancellation, 173 related checks and separate
 deployment and natural inactivity-boundary acceptance. Repeated generated
 narration remains a separate open issue.
+
+
+## Complete received game input (2026-10-12)
+
+The latest plugin/host series supersedes earlier Minecraft token budgets. It
+retains complete received game state, accepted goals, matched receipts and
+player messages through the bridge, enqueue and final render; summarization
+no longer replaces original native turns. Both legacy observation detail names
+now return complete content, with explicit selections still supported. The
+full-input policy and reviewed execution boundaries are documented in
+[the local deployment audit](../../docs/complete-game-information.md).
+Apply both complete series and reload only the owned processes at safe idle
+boundaries. No inference/model/TTS tuning or private persona data is included.
