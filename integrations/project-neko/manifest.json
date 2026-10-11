@@ -1,9 +1,9 @@
 {
   "upstreamRepository": "https://github.com/Project-N-E-K-O/N.E.K.O",
   "baseCommit": "fb2a2e731a8c954478d08678b0c8cf40e8145a54",
-  "sourceCommit": "1fbbc69c4db4d236e006e34787de96c8c6d9c660",
+  "sourceCommit": "8aad1916f9ca816293f8372f1e8fa6b37b420e7c",
   "scope": "plugin/plugins/game_agent_minecraft",
-  "resultPluginTree": "c8c7f1924a59162073622e4decc2cecde7c2943f",
+  "resultPluginTree": "aa2388ec4954f8ac8d2985eb3b86bdd1ecb218c6",
   "patches": [
     {
       "file": "0001-chore-configure-text-only-local-Qwen-Minecraft-trial.patch",
@@ -320,6 +320,10 @@
     {
       "file": "0079-fix-context-keep-complete-historical-receipts-behind.patch",
       "sha256": "d5e8f8629f75b99914041f3fdfc3932b3cb2465e0fcc5694addfbee43ab12a1f"
+    },
+    {
+      "file": "0080-fix-context-index-whole-queries-and-share-current-en.patch",
+      "sha256": "239cd96f72913beb45406ac75936c81eb90f1b6b7e05bf1c8ddc203a877c30ea"
     }
   ],
   "verification": {
@@ -1558,7 +1562,7 @@
   },
   "completeInformationVerification": {
     "date": "2026-10-12",
-    "sourceCommit": "1fbbc69c4db4d236e006e34787de96c8c6d9c660",
+    "sourceCommit": "8aad1916f9ca816293f8372f1e8fa6b37b420e7c",
     "nativeCommit": "7c8c278ea92138d2aa2fca71a70779c294fbb111",
     "runtimeCommit": "be808d311619b331fcb44e9ab5a771bde3eecde6",
     "nativeRelatedPassed": 243,
@@ -1595,7 +1599,7 @@
       "maxContext": 32768,
       "result": "rejected_context_overflow"
     },
-    "runtimeAcceptance": "pending natural continuation acceptance after historical receipt indexing",
+    "runtimeAcceptance": "pending natural continuation acceptance after query indexing and lossless entity columns",
     "explicitExecutionDecision": true,
     "explicitWaitWithoutGameplayForcing": true,
     "persistentEvidenceUsesRuntimeDataRoot": true,
@@ -1604,6 +1608,9 @@
     "historicalHeaderGrowthRemoved": true,
     "receiptIndexRegressionPassed": 258,
     "receiptIndexSubtestsPassed": 44,
-    "historicalReceiptsNeverReinlined": true
+    "historicalReceiptsNeverReinlined": true,
+    "queryIndexRegressionPassed": 260,
+    "queryIndexSubtestsPassed": 44,
+    "losslessEntityColumns": true
   }
 }

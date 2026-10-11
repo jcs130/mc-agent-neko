@@ -1,0 +1,183 @@
+From 8aad1916f9ca816293f8372f1e8fa6b37b420e7c Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Mon, 12 Oct 2026 03:15:01 +0800
+Subject: [PATCH] fix(context): index whole queries and share current entity
+ column names
+
+---
+ .../plugins/game_agent_minecraft/__init__.py  |  6 ++--
+ .../plugins/game_agent_minecraft/evidence.py  | 29 +++++++++++++++--
+ .../test_game_evidence.py                     | 31 ++++++++++++++++++-
+ .../test_npc_decision_context.py              | 11 +++++--
+ 4 files changed, 69 insertions(+), 8 deletions(-)
+
+diff --git a/plugin/plugins/game_agent_minecraft/__init__.py b/plugin/plugins/game_agent_minecraft/__init__.py
+index b0da084..43a2af8 100644
+--- a/plugin/plugins/game_agent_minecraft/__init__.py
++++ b/plugin/plugins/game_agent_minecraft/__init__.py
+@@ -469,11 +469,11 @@ class GameAgentMinecraftPlugin(NekoPluginBase):
+ 
+     @llm_tool(
+         name='minecraft_observe',
+-        description='Read current Minecraft facts without changing the action. Default summary indexes complete raw protocol/catalogue/book/log evidence by immutable ID and JSON pointer; human text and quotes stay whole. Use evidence_id plus reference_path for exact required data, or detail=full with explicit sections for raw state. No automatic text clipping. Missing/stale data is unknown. Act on reliable results and avoid repeating unchanged inspections.',
++        description='Read current Minecraft facts without changing the action. Summary returns current activity/resources/skills and exact section indexes, so full state already supplied to this decision is not duplicated. Use evidence_id plus reference_path to read the specific missing field or entity, or detail=full with explicit sections for raw state. All text and quotes remain complete in the immutable evidence; no automatic clipping. Missing/stale data is unknown. Act on reliable results and avoid repeating unchanged inspections.',
+         parameters={
+             'type': 'object',
+             'properties': {
+-                'sections': {'type': 'array', 'description': 'Optional sections to read; omission retains every received section.', 'items': {'type': 'string', 'enum': ['self', 'world', 'inventory', 'nearby', 'window', 'activity', 'server', 'coverage']}},
++                'sections': {'type': 'array', 'description': 'Optional sections to index (summary) or read whole (full); omission retains every received section.', 'items': {'type': 'string', 'enum': ['self', 'world', 'inventory', 'nearby', 'window', 'activity', 'server', 'coverage']}},
+                 'detail': {'type': 'string', 'enum': ['summary', 'full'], 'default': 'summary'},
+                 'max_events': {'type': 'integer', 'minimum': 0, 'description': 'Omit for every retained event; 0 requests no events.'},
+                 'reference_cursor': {'type': 'string', 'description': 'Returned rootCursor/nextCursor. Reads an existing immutable snapshot without refreshing the game.'},
+@@ -503,7 +503,7 @@ class GameAgentMinecraftPlugin(NekoPluginBase):
+             return result
+         from .evidence import decision_input
+         return decision_input(self._service._game_observations,
+-                              mode='running' if sections is None else 'decision', sections=sections, extra=result)
++                              mode='running', sections=sections, extra=result)
+ 
+     def _on_detached_task_done(self, task: asyncio.Task) -> None:
+         """Push a short [character status] cue when a detached
+diff --git a/plugin/plugins/game_agent_minecraft/evidence.py b/plugin/plugins/game_agent_minecraft/evidence.py
+index 0a7ae1a..7ce3ac1 100644
+--- a/plugin/plugins/game_agent_minecraft/evidence.py
++++ b/plugin/plugins/game_agent_minecraft/evidence.py
+@@ -78,6 +78,21 @@ def pointer(path, key):
+     return path + '/' + str(key).replace('~', '~0').replace('/', '~1')
+ 
+ 
++def entity_table(entities):
++    """Share repeated column names without losing rows, values or key absence."""
++    if not isinstance(entities, list) or not entities or not all(isinstance(row, dict) for row in entities):
++        return entities
++    groups = {}
++    for index, entity in enumerate(entities):
++        columns = tuple(sorted(entity))
++        group = groups.setdefault(columns, {'columns': list(columns), 'rows': []})
++        group['rows'].append([index, *[entity[key] for key in columns]])
++    return {'encoding': 'columns_with_snapshot_index', 'entries': len(entities),
++            'rowFormat': 'First cell is the original snapshot array index; remaining cells match columns exactly. Groups preserve distinct key sets: missing keys are not null.',
++            'groups': list(groups.values()),
++            'detailsPath': '/state/nearby/entities'}
++
++
+ def decision_input(info, *, mode='decision', sections=None, extra=None):
+     """Current game facts plus exact references, without numeric text budgets.
+ 
+@@ -87,7 +102,7 @@ def decision_input(info, *, mode='decision', sections=None, extra=None):
+     with an exact page pointer, rather than copying NBT and decoded pages twice.
+     """
+     from .decision_context import build_focused_view
+-    full = build_focused_view(info, mode=mode)
++    full = build_focused_view(info, mode='decision' if extra and mode == 'running' else mode)
+     if extra:
+         full.update(deepcopy(extra))
+     full.update(sessionId=info.session_id, sequence=info.seq)
+@@ -151,6 +166,8 @@ def decision_input(info, *, mode='decision', sections=None, extra=None):
+                 entity['droppedItem'] = item(entity['droppedItem'], f'/state/nearby/entities/{index}/droppedItem')
+             if 'metadata' in entity:
+                 entity['metadata'] = ref(entity['metadata'], f'/state/nearby/entities/{index}/metadata')
++        if 'entities' in nearby:
++            nearby['entities'] = entity_table(nearby['entities'])
+         server = state.get('server') or {}
+         for key in ('advancements', 'recipeBook', 'teams'):
+             if key in server:
+@@ -203,7 +220,8 @@ def decision_input(info, *, mode='decision', sections=None, extra=None):
+                  'ageSeconds', 'inputPolicy', 'rawEvidence', 'note', 'authentication') if key in value}
+         value['sections'] = list((full.get('state') or {}).keys())
+         if extra:
+-            for key in ('status', 'source', 'decision', 'llm_instruction'):
++            for key in ('status', 'source', 'decision', 'llm_instruction',
++                        'resources', 'protection', 'collision', 'serverPlay', 'serverSkills'):
+                 if key in full:
+                     value[key] = deepcopy(full[key])
+             if isinstance(full.get('lastTaskOutcome'), dict):
+@@ -215,6 +233,13 @@ def decision_input(info, *, mode='decision', sections=None, extra=None):
+                             'deferredEvents', 'deferredPlayerMessages') if key in full}
+             value['state'] = {key: deepcopy(child) for key, child in (full.get('state') or {}).items()
+                               if key in ('self', 'world', 'activity')}
++            value['sectionIndex'] = {key: ref(child, pointer('/state', key))
++                for key, child in (full.get('state') or {}).items()
++                if sections is None or key in sections}
++            value['queryInstruction'] = ('The complete current-state callback already supplies planning facts. '
++                'These are exact section pointers, not empty sections. Read only a specific missing field, '
++                'book page, offer or entity with evidence_id and reference_path; do not copy an entire '
++                'unchanged state into the same request again. Every received section remains complete.')
+     elif mode == 'social' and isinstance(value.get('state'), dict):
+         value['state'] = {key: child for key, child in value['state'].items()
+                           if key in ('self', 'world', 'activity')}
+diff --git a/plugin/plugins/game_agent_minecraft/test_game_evidence.py b/plugin/plugins/game_agent_minecraft/test_game_evidence.py
+index d960d39..d706e3e 100644
+--- a/plugin/plugins/game_agent_minecraft/test_game_evidence.py
++++ b/plugin/plugins/game_agent_minecraft/test_game_evidence.py
+@@ -5,7 +5,7 @@ import unittest
+ from types import SimpleNamespace
+ from unittest.mock import patch
+ 
+-from .evidence import GameEvidence, decision_input
++from .evidence import GameEvidence, decision_input, entity_table
+ from .observations import GameObservations
+ 
+ 
+@@ -124,6 +124,35 @@ class GameEvidenceTest(unittest.TestCase):
+                 self.assertEqual(info.evidence.read(ident, '/lastServerCommands/0/messages/0')['value'], old)
+                 self.assertEqual(info.evidence.read(ident, '/recentTaskOutcomes')['value'], extras['recentTaskOutcomes'])
+ 
++    def test_selected_query_indexes_complete_sections_instead_of_duplicate_state(self):
++        info = self.observations()
++        old = info.view()
++        view = decision_input(info, mode='running', sections=['inventory', 'server'], extra=old)
++        self.assertEqual(set(view['sectionIndex']), {'inventory', 'server'})
++        self.assertNotIn('inventory', view['state'])
++        self.assertNotIn('server', view['state'])
++        ident = view['rawEvidence']['id']
++        for section in ('inventory', 'server'):
++            value = info.evidence.read(ident, view['sectionIndex'][section]['path'])
++            self.assertEqual(value['value'], old['state'][section])
++        self.assertEqual(view['serverSkills']['abilities'][0]['name'], '闪现')
++
++    def test_entity_table_roundtrip_retains_all_rows_values_and_missing_vs_null(self):
++        entities = [{'id': index, 'name': 'zombie', 'position': {'x': index, 'y': 70, 'z': -4},
++                     'customName': '完整名称' * 100, 'health': 20} for index in range(300)]
++        entities += [{'id': 300, 'health': None}, {'id': 301}]
++        before = json.dumps(entities, ensure_ascii=False, sort_keys=True)
++        table = entity_table(entities)
++        recovered = [None] * table['entries']
++        for group in table['groups']:
++            for row in group['rows']:
++                recovered[row[0]] = dict(zip(group['columns'], row[1:]))
++        self.assertEqual(recovered, entities)
++        self.assertEqual(json.dumps(entities, ensure_ascii=False, sort_keys=True), before)
++        self.assertIsNone(recovered[300]['health'])
++        self.assertNotIn('health', recovered[301])
++        self.assertEqual(entity_table([None, {'id': 1}]), [None, {'id': 1}])
++
+ 
+ if __name__ == '__main__':
+     unittest.main()
+diff --git a/plugin/plugins/game_agent_minecraft/test_npc_decision_context.py b/plugin/plugins/game_agent_minecraft/test_npc_decision_context.py
+index 80c3dae..8fba6a8 100644
+--- a/plugin/plugins/game_agent_minecraft/test_npc_decision_context.py
++++ b/plugin/plugins/game_agent_minecraft/test_npc_decision_context.py
+@@ -88,7 +88,7 @@ class NpcDecisionContextTests(unittest.TestCase):
+         self.assertEqual(entity['position'], {'x': None, 'y': '67', 'z': None})
+         self.assertNotIn('actionTarget', entity, 'raw invalid facts do not become validated tool targets')
+ 
+-    def test_entity_detail_does_not_exceed_existing_context_limits(self):
++    def test_every_entity_is_recoverable_from_current_fact_columns(self):
+         data = self.data()
+         data['state']['nearby']['entities'] *= 10
+         observations = GameObservations()
+@@ -96,4 +96,11 @@ class NpcDecisionContextTests(unittest.TestCase):
+         for budget in (400, 700, 1200):
+             text = observations.focused_context(max_tokens=budget)
+             view = json.loads(text.split('\n', 1)[1])
+-            self.assertEqual(view['state']['nearby']['entities'], data['state']['nearby']['entities'])
++            table = view['state']['nearby']['entities']
++            recovered = [None] * table['entries']
++            for group in table['groups']:
++                for row in group['rows']:
++                    recovered[row[0]] = dict(zip(group['columns'], row[1:]))
++            self.assertEqual(recovered, data['state']['nearby']['entities'])
++            self.assertEqual(observations.evidence.read(view['rawEvidence']['id'], table['detailsPath'])['value'],
++                             data['state']['nearby']['entities'])
