@@ -4,7 +4,7 @@ import { EventEmitter } from 'node:events';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { installServerAuth } from '../src/utils/server_auth.js';
+import { installServerAuth, serverAuthentication } from '../src/utils/server_auth.js';
 
 const target = { host: 'mc.test.invalid', port: 25702, username: 'ag_NEKO' };
 const prompt = '请先 /login 密码；认证管理请联系服主。[MC_AUTH_DENIED]';
@@ -113,6 +113,22 @@ test('server success and a subsequent spawn are recorded as distinct evidence', 
     assert.equal(f.auth.status, 'authenticated');
     f.bot.emit('spawn');
     assert.equal(f.auth.snapshot().worldSpawned, true);
+});
+test('read-only authentication facts follow the current controller and never expose private configuration', t => {
+    const f = fixture(t);
+    assert.equal(serverAuthentication(f.bot).status, 'waiting_for_challenge');
+    f.auth.login();
+    assert.equal(serverAuthentication(f.bot).status, 'submitted');
+    f.bot.emit('messagestr', '[MC_AUTH_SUCCESS] 登录成功，可以开始游戏。', 'system');
+    f.bot.emit('spawn');
+    const facts = serverAuthentication(f.bot);
+    assert.deepEqual(facts, { status: 'authenticated', submitted: true, serverConfirmed: true, worldSpawned: true });
+    assert.ok(!JSON.stringify(facts).includes('fixture_only'));
+    facts.status = 'forged';
+    assert.equal(serverAuthentication(f.bot).status, 'authenticated');
+    assert.equal(serverAuthentication({ serverAuthentication: facts }), null);
+    f.bot.emit('end');
+    assert.equal(serverAuthentication(f.bot).status, 'disconnected');
 });
 test('spawn alone cannot claim explicit authentication confirmation', t => {
     const f = fixture(t);

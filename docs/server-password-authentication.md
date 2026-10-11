@@ -102,3 +102,42 @@ message and transient local socket errors retain their separate evidence; the
 generic timeout had also hidden this client authentication incompatibility.
 No current server fault is established and no owner intervention is required
 for this recovered incident. Private credentials remain outside all artifacts.
+
+## Login receipts in the main-brain context
+
+At 23:29 Beijing on 2026-10-11, a generated reply said the password was missing
+after the gateway had accepted the private automatic login. The observation
+transport had no client authentication receipt. Mineflayer's generic `[name]`
+chat parser also turned `MC_AUTH_SUCCESS` into an apparent player, and transient
+login instructions were retained beside gameplay guides. This is a client
+context defect; it does not demonstrate another server authentication failure.
+
+`server.authentication` now exposes only the current adapter's status,
+`submitted`, `serverConfirmed` and `worldSpawned`. A submission or spawn alone
+does not imply confirmed login. The N.E.K.O. companion keeps these facts in every
+focused context mode, including the 256-token fallback, and discards them when
+the frame is stale or the connection changes. Authentication transitions update
+one passive context slot; they do not add a model request. Passwords remain in
+the private adapter and must never be requested, narrated or submitted by the
+dialogue model.
+
+Gateway controls retain their original event text and time for observation,
+but are not durable gameplay guides or a reason to generate social replies.
+Known online players, private messages, public messages quoting auth markers,
+normal gameplay instructions, protection denials and errors keep their existing
+delivery. Welcome references explicitly describe historical connection messages;
+current authenticated receipts take precedence over an old login instruction.
+This changes no heartbeat interval, model, thinking setting or gameplay policy.
+
+The private YUI installation also used a default master display name and two
+persona lines containing an unwanted mechanical form of address. Those three
+configuration values were corrected locally, without committing personal
+configuration, clearing history or changing the voice/avatar. Other installations
+choose their own profile names.
+
+Validation before deployment: the two new native reproductions fail on the old
+source; the final native authentication/observation suite passes 44 cases. The
+plugin suite passes 243 cases and 38 subtests, including authentication freshness,
+tight budgets, passive transition deduplication and player/error delivery. Syntax,
+Ruff and whitespace checks pass. Runtime deployment and fresh conversation
+acceptance are recorded separately; these tests do not prove all repetition fixed.

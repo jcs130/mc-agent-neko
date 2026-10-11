@@ -1,9 +1,9 @@
 {
   "upstreamRepository": "https://github.com/Project-N-E-K-O/N.E.K.O",
   "baseCommit": "fb2a2e731a8c954478d08678b0c8cf40e8145a54",
-  "sourceCommit": "00ae06be6920b1533f92d59636c03e2c4115710f",
+  "sourceCommit": "171b7475174644632906737e185d7f827a331689",
   "scope": "plugin/plugins/game_agent_minecraft",
-  "resultPluginTree": "51bcc254ea91d7be6bf26026b50ee7eeff16aa48",
+  "resultPluginTree": "ff69b3539d477a9c06f66c7e1b69445d33ad5759",
   "patches": [
     {
       "file": "0001-chore-configure-text-only-local-Qwen-Minecraft-trial.patch",
@@ -292,6 +292,10 @@
     {
       "file": "0072-fix-minecraft-preserve-accepted-goals-and-matched-ou.patch",
       "sha256": "863b0080b6386f838e56f512b422b16a4fcae4e63799e54870636a01f4227b1b"
+    },
+    {
+      "file": "0073-fix-minecraft-preserve-private-client-authentication.patch",
+      "sha256": "922333e110954b83688bf4f17aa704ff0441c247a5bd303bbae88882dce2d59e"
     }
   ],
   "verification": {
@@ -1472,5 +1476,22 @@
     "ticketWriteback": "written",
     "futureRepeatedControlAcceptance": "open",
     "semanticRepetitionAcceptance": "open"
+  },
+  "authenticationContextVerification": {
+    "date": "2026-10-11",
+    "sourceCommit": "171b7475174644632906737e185d7f827a331689",
+    "nativeRedFailures": 2,
+    "nativeRelatedPassed": 44,
+    "pluginPassed": 243,
+    "pluginSubtestsPassed": 38,
+    "authenticatedReceiptDistinctFromSubmission": true,
+    "freshnessAndSessionChecked": true,
+    "allFocusedModesAnd256TokenFallback": true,
+    "playerAndProtectionFeedbackPreserved": true,
+    "credentialsInContext": false,
+    "extraModelCalls": 0,
+    "fullReplayMatchesSource": true,
+    "deploymentPhase": "prepared",
+    "naturalConversationAcceptance": "open"
   }
 }

@@ -7,6 +7,13 @@ configuration, one-RTX-3090 measurements, caller/thinking boundaries and feature
 that remain experimental. Private provider configuration and model weights are
 not included.
 
+The [private authentication context companion](../../docs/server-password-authentication.md#login-receipts-in-the-main-brain-context)
+delivers current credential-free login receipts to the main brain, keeps them
+through focused context budgets and retires gateway control notices from social
+wakeups. Apply the matching native change and plugin patch together. Gameplay
+guides and genuine player communication remain available; no local profile or
+password is distributed.
+
 The [joint reply and emotion companion](../../docs/joint-avatar-local-deployment.md)
 removes the extra offline main-reply emotion classification request. It includes
 ordinary, tool-feedback and proactive delivery coverage, a host Regression

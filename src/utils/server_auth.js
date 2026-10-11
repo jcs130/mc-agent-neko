@@ -9,6 +9,18 @@ const challenge = /(?:^请先\s*\/login\s+.*\[MC_AUTH_(?:DENIED|REQUIRED)\]\s*$|
 const success = /\[MC_AUTH_OK\]|^登录成功|^\[MC_AUTH_SUCCESS\]\s*登录成功/u;
 const rejected = /\[MC_AUTH_(?:FAILED|INVALID_PASSWORD)\]|^(?:密码错误|Wrong password|Incorrect password)/iu;
 
+// Read-only, credential-free facts from the adapter that owns this connection.
+// Neither an LLM tool nor player text can set these fields.
+export function serverAuthentication(bot) {
+    return installed.get(bot)?.snapshot() ?? null;
+}
+
+export function isServerAuthControl(text) {
+    return /^\[MC_AUTH_(?:LOGIN|PASSWORD_OK|SUCCESS|FAILED|INVALID_PASSWORD|DENIED|REQUIRED|OK)\](?:\s|$)/u.test(text)
+        || challenge.test(text)
+        || /^(?:登录成功|密码错误|Wrong password|Incorrect password)(?:\s|\[|[，。:：]|$)/iu.test(text);
+}
+
 function privateConfig(file, connection) {
     if (statSync(file).size > 16384) throw Error('invalid configuration');
     const config = JSON.parse(readFileSync(file, 'utf8').replace(/^\uFEFF/, ''));

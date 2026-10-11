@@ -5,6 +5,7 @@ import { activeServerCommand } from './server_commands.js';
 import { applyMerchantTrades, merchantOffers } from '../agent/library/merchant_trades.js';
 import { backpackSource } from '../agent/library/portable_storage.js';
 import { playerInventorySlots, playerHeldItem } from '../agent/library/inventory_snapshot.js';
+import { serverAuthentication, isServerAuthControl } from '../utils/server_auth.js';
 
 // Observation only: this module never sends game packets, chat or actions.
 const finite = value => typeof value === 'number' && Number.isFinite(value) ? value : null;
@@ -234,7 +235,7 @@ export function collectGameState(agent, presentation = {}) {
             recovery: bot._protectedRetreatRecovery?.expiresAt > Date.now() ? bot._protectedRetreatRecovery
                 : bot._surfaceSwimRecovery?.expiresAt > Date.now() ? bot._surfaceSwimRecovery : null,
             usingHeldItem: bot.usingHeldItem ?? null },
-        server: { welcome: presentation.welcome, scoreboards,
+        server: { authentication: serverAuthentication(bot), welcome: presentation.welcome, scoreboards,
             protection: bot.serverProtection?.snapshot() ?? null,
             bossBars: Array.isArray(bot.bossBars) ? bot.bossBars.map(bar => ({ id: bar.entityUUID,
                 title: gameText(bar.title), health: bar.health, color: bar.color, dividers: bar.dividers })) : presentation.bossBars,
@@ -271,6 +272,11 @@ export class GameInformation {
         const structured = new WeakSet();
         const own = player => player === this.bot.username || player === agent.name;
         const chat = (kind, player, text, _translate, json) => {
+            // Mineflayer's generic [name] pattern can parse gateway records as
+            // player chat. Let the original message's position/sender classify
+            // those packets instead. Real online players keep their chat path.
+            if (kind === 'chat' && !this.bot.players?.[player] && /^MC_AUTH_[A-Z_]+$/u.test(player)
+                && gameText(json).startsWith(`[${player}]`)) return;
             if (json && typeof json === 'object') structured.add(json);
             if (own(player)) return;
             this.event(kind, { player, text: gameText(text), source: 'player',
@@ -294,12 +300,14 @@ export class GameInformation {
                     return;
                 } catch { /* malformed JSON remains observable text */ }
             }
-            const contact = position !== 'game_info' ? receivedPlayer(this.bot, sender, text) : null;
+            const authenticationControl = position === 'system' && !sender && isServerAuthControl(text);
+            const contact = position !== 'game_info' && !authenticationControl ? receivedPlayer(this.bot, sender, text) : null;
             if (contact && own(contact.player)) return;
             this.event(contact ? 'chat' : position === 'game_info' ? 'actionbar' : position === 'chat' ? 'chat' : 'system',
                 { ...(contact ? { player: contact.player } : {}), text,
                     source: contact || position === 'chat' ? 'received_chat' : 'server',
                     data: { sender, verified, translation: json?.translate, position,
+                        ...(authenticationControl ? { authenticationControl: true } : {}),
                         ...(contact ? { senderResolvedBy: contact.senderResolvedBy } : {}),
                         ...(!contact && solicitedCommand ? { solicitedCommand } : {}) } });
         } catch { /* malformed text is not a game failure */ } });
@@ -463,7 +471,7 @@ export class GameInformation {
         const welcome = this.presentation.welcome;
         if (event.observedAt > welcome.captureUntil || event.source !== 'server' ||
             !['system', 'title', 'subtitle'].includes(event.kind) ||
-            event.data?.solicitedCommand || event.data?.sender || !event.text) return;
+            event.data?.solicitedCommand || event.data?.sender || event.data?.authenticationControl || !event.text) return;
         const key = createHash('sha256').update(event.kind + '\0' + event.text).digest('hex');
         if (this.welcomeKeys.has(key)) return;
         const left = 8192 - this.welcomeChars;

@@ -11,6 +11,7 @@ import { sendServerCommand } from '../src/websocket/server_commands.js';
 import { sendGameChat } from '../src/websocket/chat_bridge.js';
 import minecraftData from 'minecraft-data';
 import ItemFactory from 'prismarine-item';
+import { installServerAuth } from '../src/utils/server_auth.js';
 
 function fixture(t, options = {}) {
     const slots = Array(46).fill(null);
@@ -43,6 +44,58 @@ function fixture(t, options = {}) {
     t.after(() => information.close());
     return { agent, bot, frames, information };
 }
+
+test('client authentication outcome reaches snapshots without credentials or login commands', t => {
+    const { bot, information } = fixture(t);
+    installServerAuth(bot, { host: 'mc.test.invalid', port: 25702, username: bot.username },
+        { configPath: 'missing-test-config', log() {} });
+    const auth = information.snapshot().state.server.authentication;
+    assert.equal(auth.status, 'waiting_for_challenge');
+    assert.equal(auth.serverConfirmed, false);
+    assert.equal(auth.worldSpawned, false);
+    assert.ok(!JSON.stringify(auth).includes('/login'));
+    bot.emit('end');
+    assert.equal(information.snapshot().state.server.authentication.status, 'disconnected');
+});
+
+test('gateway auth controls stay observable but do not become player chat or durable gameplay guides', async t => {
+    const { bot, information } = fixture(t);
+    const text = '[MC_AUTH_SUCCESS] 登录成功，可以开始游戏。';
+    const json = { toString: () => text };
+    bot.emit('message', json, 'system');
+    bot.emit('chat', 'MC_AUTH_SUCCESS', '登录成功，可以开始游戏。', null, json);
+    await new Promise(resolve => setImmediate(resolve));
+    const state = information.snapshot();
+    const auth = state.recentEvents.find(event => event.text === text);
+    assert.equal(auth.kind, 'system');
+    assert.equal(auth.data.authenticationControl, true);
+    assert.equal(auth.player, undefined);
+    assert.ok(!state.state.server.welcome.messages.some(message => message.text === text));
+    bot.emit('message', { toString: () => '输入 /mycli quests 查看委托，村庄建筑受保护。' }, 'system');
+    await new Promise(resolve => setImmediate(resolve));
+    assert.ok(information.snapshot().state.server.welcome.messages.some(message => message.text.includes('委托')));
+});
+
+test('a real player named like an auth marker still reaches chat', t => {
+    const { bot, information } = fixture(t);
+    bot.players.MC_AUTH_SUCCESS = {};
+    const json = { toString: () => '[MC_AUTH_SUCCESS] YUI 你好' };
+    bot.emit('chat', 'MC_AUTH_SUCCESS', 'YUI 你好', null, json);
+    const event = information.snapshot().recentEvents.at(-1);
+    assert.equal(event.kind, 'chat');
+    assert.equal(event.player, 'MC_AUTH_SUCCESS');
+    assert.equal(event.text, 'YUI 你好');
+});
+
+test('auth markers quoted in public player messages are not control packets', async t => {
+    const { bot, information } = fixture(t);
+    bot.emit('message', { toString: () => '[世界] Friend_1: YUI 看这个 [MC_AUTH_OK]' }, 'system');
+    await new Promise(resolve => setImmediate(resolve));
+    const event = information.snapshot().recentEvents.at(-1);
+    assert.equal(event.kind, 'chat');
+    assert.equal(event.player, 'Friend_1');
+    assert.equal(event.data.authenticationControl, undefined);
+});
 
 test('snapshot retains body, world, inventory, menu, scoreboard and loaded surroundings', t => {
     const { agent } = fixture(t);
