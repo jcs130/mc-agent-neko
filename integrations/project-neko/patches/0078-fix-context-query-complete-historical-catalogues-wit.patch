@@ -1,0 +1,74 @@
+From b09f18fe9cad5d3798530c2e5d60ebecb4319107 Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Mon, 12 Oct 2026 02:38:13 +0800
+Subject: [PATCH] fix(context): query complete historical catalogues without
+ repeating old headers
+
+---
+ .../plugins/game_agent_minecraft/evidence.py  | 19 +++++++++++--------
+ .../test_game_evidence.py                     | 15 ++++++++++++++-
+ 2 files changed, 25 insertions(+), 9 deletions(-)
+
+diff --git a/plugin/plugins/game_agent_minecraft/evidence.py b/plugin/plugins/game_agent_minecraft/evidence.py
+index 4251351..37a0485 100644
+--- a/plugin/plugins/game_agent_minecraft/evidence.py
++++ b/plugin/plugins/game_agent_minecraft/evidence.py
+@@ -172,14 +172,17 @@ def decision_input(info, *, mode='decision', sections=None, extra=None):
+             state = {key: child for key, child in state.items() if key in sections}
+     value['state'] = state
+     events = full.get('recentEvents') or []
+-    value['eventIndex'] = []
+-    for index, event in enumerate(events):
+-        if event.get('kind') in ('plugin_message', 'server_record') and not event.get('text'):
+-            continue
+-        value['eventIndex'].append({**{key: deepcopy(event[key]) for key in
+-            ('id', 'kind', 'player', 'observedAt', 'source') if key in event},
+-            'details': ref(event, f'/recentEvents/{index}')})
+-    value['eventIndexNote'] = 'Historical event index. New pending player messages are delivered whole in social callbacks; read exact old text through the evidence pointer when needed.'
++    # The historical catalogue is itself historical data, not a current fact.
++    # Sending all old row headers every turn still grows without bound even
++    # when each row points to its raw text. Keep the entire catalogue behind
++    # the same exact query; pending human messages are delivered separately.
++    value['eventIndex'] = ref(events, '/recentEvents')
++    kinds = {}
++    for event in events:
++        kind = event.get('kind', 'unknown')
++        kinds[kind] = kinds.get(kind, 0) + 1
++    value['eventKinds'] = kinds
++    value['eventIndexNote'] = 'Complete historical catalogue at /recentEvents; entries include identity, time and exact text. New pending player messages are delivered whole in social callbacks. Query history when it is relevant; it is not current state.'
+     value['protocolEventHistory'] = ref(events, '/recentEvents')
+     value['agentLog'] = ref(full.get('agentLog') or [], '/agentLog')
+     for key in ('recentTaskOutcomes', 'recentTaskOutcomeDetails'):
+diff --git a/plugin/plugins/game_agent_minecraft/test_game_evidence.py b/plugin/plugins/game_agent_minecraft/test_game_evidence.py
+index fe00b97..4da75e2 100644
+--- a/plugin/plugins/game_agent_minecraft/test_game_evidence.py
++++ b/plugin/plugins/game_agent_minecraft/test_game_evidence.py
+@@ -42,7 +42,8 @@ class GameEvidenceTest(unittest.TestCase):
+         value = decision_input(info)
+         ident = value['rawEvidence']['id']
+         self.assertEqual(info.evidence.read(ident, '/recentEvents/0/text')['value'], '来拿装备' * 1000)
+-        self.assertEqual(value['eventIndex'][0]['player'], 'RealPlayer')
++        self.assertEqual(value['eventIndex']['path'], '/recentEvents')
++        self.assertEqual(info.evidence.read(ident, '/recentEvents/0')['value']['player'], 'RealPlayer')
+         self.assertEqual(value['state']['inventory']['slots'][0]['lore'], ['全文' * 1000])
+         self.assertEqual(value['serverSkills']['abilities'][0]['name'], '闪现')
+         result = info.evidence.read(ident, '/state/inventory/slots/0/book/pages/0/text')
+@@ -87,6 +88,18 @@ class GameEvidenceTest(unittest.TestCase):
+         self.assertIn('server', index['sections'])
+         self.assertEqual(info.evidence.read(index['rawEvidence']['id'], '/state/self')['value']['health'], 20)
+ 
++    def test_history_catalogue_growth_does_not_copy_all_old_headers_into_decisions(self):
++        info = self.observations()
++        for index in range(600):
++            info.events[str(index)] = {'id': str(index), 'kind': 'whisper',
++                'player': 'Friend', 'text': '第' + str(index) + '条完整旧消息', 'observedAt': 19000}
++        view = decision_input(info)
++        self.assertEqual(view['eventIndex']['entries'], 602)
++        self.assertEqual(view['eventKinds']['whisper'], 601)
++        retained = info.evidence.read(view['rawEvidence']['id'], '/recentEvents')['value']
++        self.assertEqual(len(retained), 602)
++        self.assertEqual(retained[-1]['text'], '第599条完整旧消息')
++
+ 
+ if __name__ == '__main__':
+     unittest.main()
