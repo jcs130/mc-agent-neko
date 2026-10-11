@@ -1,0 +1,83 @@
+From 4c327b6ef6720d3809dcd3e9a7aed6257d789d05 Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Mon, 12 Oct 2026 04:23:43 +0800
+Subject: [PATCH] fix(survival): accept fresh idle surface recovery handoffs
+
+---
+ .../plugins/game_agent_minecraft/service.py   | 15 ++++++++------
+ .../game_agent_minecraft/test_query_loop.py   | 20 +++++++++++++++++++
+ 2 files changed, 29 insertions(+), 6 deletions(-)
+
+diff --git a/plugin/plugins/game_agent_minecraft/service.py b/plugin/plugins/game_agent_minecraft/service.py
+index f1e0256..680a0bb 100644
+--- a/plugin/plugins/game_agent_minecraft/service.py
++++ b/plugin/plugins/game_agent_minecraft/service.py
+@@ -1214,8 +1214,9 @@ class GameAgentService:
+         decision['status'] = status
+         handoff = self._native_retreat_handoff() if status == 'ready_if_authorized' else None
+         if handoff:
+-            constraint = ('server_protection' if handoff['type'] == 'protected-retreat-stall'
+-                          else 'missing_pickaxe')
++            constraint = ('server_protection' if handoff['type'] in (
++                'protected-retreat-stall', 'protected-surface-swim-stall')
++                else 'physical_stall' if handoff['type'] == 'surface-swim-stall' else 'missing_pickaxe')
+             decision['nativeRecovery'] = {'type': handoff['type'], 'constraint': constraint,
+                                          'expiresAt': handoff['expiresAt']}
+             followup = (
+@@ -1309,10 +1310,11 @@ class GameAgentService:
+             return None
+         recovery = activity.get('recovery')
+         if isinstance(recovery, dict) and recovery.get('type') in (
+-                'protected-retreat-stall', 'tool-retreat-stall'):
++                'protected-retreat-stall', 'tool-retreat-stall', 'surface-swim-stall', 'protected-surface-swim-stall'):
+             start, end = recovery.get('observedAt'), recovery.get('expiresAt')
++            window = 90000 if 'surface-swim' in recovery['type'] else 60000
+             if (type(start) in (int, float) and type(end) in (int, float)
+-                    and start <= time.time() * 1000 < end <= start + 60000):
++                    and start <= time.time() * 1000 < end <= start + window):
+                 return recovery
+         return None
+ 
+@@ -2676,8 +2678,9 @@ class GameAgentService:
+         handoff = self._native_retreat_handoff() if self._unattended.enabled else None
+         if self._unattended.enabled:
+             if handoff:
+-                constraint = ('server_protection' if handoff['type'] == 'protected-retreat-stall'
+-                              else 'missing_pickaxe')
++                constraint = ('server_protection' if handoff['type'] in (
++                    'protected-retreat-stall', 'protected-surface-swim-stall')
++                    else 'physical_stall' if handoff['type'] == 'surface-swim-stall' else 'missing_pickaxe')
+                 sections.append(
+                     'Latest human stop/pause wins. If unattended play is still authorized, the current physical priority '
+                     f'is escaping a measured stalled retreat ({constraint}), before unrelated quest/catalogue inspection. '
+diff --git a/plugin/plugins/game_agent_minecraft/test_query_loop.py b/plugin/plugins/game_agent_minecraft/test_query_loop.py
+index 389bac4..2183ee6 100644
+--- a/plugin/plugins/game_agent_minecraft/test_query_loop.py
++++ b/plugin/plugins/game_agent_minecraft/test_query_loop.py
+@@ -11,6 +11,26 @@ from .test_grounded_recovery import history_value
+ 
+ 
+ class QueryLoopTests(unittest.IsolatedAsyncioTestCase):
++    async def test_surface_handoff_uses_measured_stall_without_inventing_a_denial(self):
++        for kind, constraint in [('surface-swim-stall', 'physical_stall'),
++                                 ('protected-surface-swim-stall', 'server_protection')]:
++            service, _ = self.service()
++            service._client = SimpleNamespace(is_connected=True)
++            now = time.time() * 1000
++            data = frame()
++            data['state']['activity'] = {'action': None, 'skill': None, 'digging': None,
++                'usingHeldItem': False, 'recovery': {'type': kind,
++                'observedAt': now - 1000, 'expiresAt': now + 89000}}
++            await service._on_game_state(data)
++            service._agent_busy, service._agent_busy_at = True, time.time()
++            decision, _ = service.observation_decision()
++            self.assertEqual(decision['nativeRecovery']['constraint'], constraint)
++            self.assertFalse(service._mc_agent_busy())
++            data['seq'] += 1
++            data['state']['activity']['action'] = 'mode:self_preservation'
++            await service._on_game_state(data)
++            self.assertTrue(service._mc_agent_busy(), 'an active action never grants a handoff')
++
+     async def test_idle_measured_retreat_selects_survival_context_and_goal_before_catalogues(self):
+         service, calls = self.service()
+         data = frame()

@@ -1,9 +1,9 @@
 {
   "upstreamRepository": "https://github.com/Project-N-E-K-O/N.E.K.O",
   "baseCommit": "fb2a2e731a8c954478d08678b0c8cf40e8145a54",
-  "sourceCommit": "1493ec83c090579373113eb262b54fa9c7224ba3",
+  "sourceCommit": "4c327b6ef6720d3809dcd3e9a7aed6257d789d05",
   "scope": "plugin/plugins/game_agent_minecraft",
-  "resultPluginTree": "0d320757aab151a7049dacf4d8d3ea86fec6edc8",
+  "resultPluginTree": "0e7d20653317135bebb53ad65ed1f06250c61503",
   "patches": [
     {
       "file": "0001-chore-configure-text-only-local-Qwen-Minecraft-trial.patch",
@@ -344,6 +344,10 @@
     {
       "file": "0085-fix-context-preserve-live-action-eligibility-after-e.patch",
       "sha256": "e9fa7229a9569f1182ec37053fa6bf890ec1905fde14203667988839609bf233"
+    },
+    {
+      "file": "0086-fix-survival-accept-fresh-idle-surface-recovery-hand.patch",
+      "sha256": "aefddda89160d42b3774a92088c7ee46f0e1b35e1ed374cc481800526954ce31"
     }
   ],
   "verification": {
@@ -1606,9 +1610,9 @@
   },
   "completeInformationVerification": {
     "date": "2026-10-12",
-    "sourceCommit": "1493ec83c090579373113eb262b54fa9c7224ba3",
-    "nativeCommit": "4dc0fcf8daf86e8ac0417068e5a5129b8ed93bc6",
-    "runtimeCommit": "bd35b7cd8307a5e0dc4370f7eb65d26d2c7e87b4",
+    "sourceCommit": "4c327b6ef6720d3809dcd3e9a7aed6257d789d05",
+    "nativeCommit": "cea378f7fa7f0d2223e64e6da9ae22bfe103d7b0",
+    "runtimeCommit": "ef306922ec066a3bb7da0126f8d3c9d2f2cb8133",
     "nativeRelatedPassed": 243,
     "pythonRelatedPassed": 348,
     "pythonSubtestsPassed": 42,
@@ -1643,7 +1647,7 @@
       "maxContext": 32768,
       "result": "rejected_context_overflow"
     },
-    "runtimeAcceptance": "pending natural continuation after query/action handoff repair",
+    "runtimeAcceptance": "pending actual query/action and surface recovery deployment",
     "explicitExecutionDecision": true,
     "explicitWaitWithoutGameplayForcing": true,
     "persistentEvidenceUsesRuntimeDataRoot": true,
@@ -1673,6 +1677,10 @@
     "queryActionRegressionPassed": 436,
     "queryActionSubtestsPassed": 44,
     "historicalEvidenceNeverGrantsCurrentAuthority": true,
-    "explicitFinalActionOrWait": true
+    "explicitFinalActionOrWait": true,
+    "surfaceStallPluginRegressionPassed": 437,
+    "surfaceStallSubtestsPassed": 44,
+    "surfaceStallNativeRegressionPassed": 45,
+    "measuredNonLethalSurfaceHandoff": true
   }
 }
