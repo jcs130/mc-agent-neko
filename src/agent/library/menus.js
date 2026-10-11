@@ -13,6 +13,12 @@ function describeCursor(bot) {
 
 const closeHint = window => `Use !closeWindow(${window.id}) to close this exact window, then !inventory to verify item counts. Reopening a chest is not a close operation.`;
 
+// Trusted precondition refusal, not server prose. Keep changed window evidence
+// distinct so the completed-action repetition guard permits a fresh observation.
+const staleMenuRefusal = (window, windowId, operation) => 'Action not started: Menu changed or closed. '
+    + `Requested window ID=${windowId}; current window ID=${window ? window.id ?? 'unknown' : 'none'}. `
+    + `Query !window again before ${operation}.`;
+
 // Mineflayer's openVillager assumes a vanilla merchant window and rejects
 // server NPCs backed by generic inventory menus (also leaking its trade-list
 // listener on that rejection). Inspect through openEntity before using it.
@@ -83,9 +89,9 @@ export function describeMenu(bot) {
 
 export async function clickMenuSlot(bot, windowId, slot) {
     const window = bot.currentWindow;
-    if (!window || window.id !== windowId) return 'Menu changed or closed. Query !window again before clicking.';
-    if (!Number.isInteger(window.inventoryStart) || !Number.isInteger(slot) || slot < 0 || slot >= window.inventoryStart || !window.slots[slot]) return 'Invalid or empty menu slot. Your own inventory and outside slots cannot be clicked.';
-    if (carriedItem(bot)) return 'Cursor is holding an item. Menu click refused to avoid moving inventory items.\n' + describeCursor(bot) + '\n' + closeHint(window);
+    if (!window || window.id !== windowId) return staleMenuRefusal(window, windowId, 'clicking');
+    if (!Number.isInteger(window.inventoryStart) || !Number.isInteger(slot) || slot < 0 || slot >= window.inventoryStart || !window.slots[slot]) return 'Action not started: Invalid or empty menu slot. Your own inventory and outside slots cannot be clicked.';
+    if (carriedItem(bot)) return 'Action not started: Cursor is holding an item. Menu click refused to avoid moving inventory items.\n' + describeCursor(bot) + '\n' + closeHint(window);
     await bot.clickWindow(slot, 0, 0);
     return `Submitted left click on menu ${windowId}, slot ${slot}. Query !window and !stats to verify the server outcome.` +
         (bot.currentWindow === window ? '\n' + describeCursor(bot) + '\n' + closeHint(window) : '\nThe window changed; query !window again.');
@@ -93,7 +99,7 @@ export async function clickMenuSlot(bot, windowId, slot) {
 
 export async function closeMenu(bot, windowId) {
     const window = bot.currentWindow;
-    if (!window || window.id !== windowId) return 'Menu changed or closed. Query !window again before closing.';
+    if (!window || window.id !== windowId) return staleMenuRefusal(window, windowId, 'closing');
     const cursorBefore = describeCursor(bot);
     await bot.closeWindow(window);
     return `Submitted close for menu ${windowId}. Before closing: ${cursorBefore}\nVerify !inventory and !window. Closing is not proof that the server stored or dropped the carried item.`;

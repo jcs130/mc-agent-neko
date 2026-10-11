@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { playerInventorySlots } from '../src/agent/library/inventory_snapshot.js';
+import { closeMenu, clickMenuSlot } from '../src/agent/library/menus.js';
 
 function harness(perform = async () => '生命 20/20；魔力 20/20；技能点 6', actions = []) {
     const finishes = [];
@@ -43,6 +44,55 @@ function failedActionHarness() {
     h.mission._handoff({ text: '找到合适的交易', taskId: 'failed-action', origin: 'ws' });
     return { ...h, setResult: value => { result = value; } };
 }
+
+function menuFailureHarness() {
+    const h = harness(undefined, [
+        { name: '!closeWindow', params: { id: { type: 'int' } }, perform: (agent, id) => closeMenu(agent.bot, id) },
+        { name: '!clickWindow', params: { id: { type: 'int' }, slot: { type: 'int' } },
+            perform: (agent, id, slot) => clickMenuSlot(agent.bot, id, slot) },
+    ]);
+    Object.assign(h.agent.bot, { entity: { position: { x: 1, y: 64, z: 2 } }, health: 20, food: 20,
+        inventory: { slots: Array(46).fill(null) }, currentWindow: { id: 3, inventoryStart: 1, slots: [{ name: 'dirt', count: 1 }] },
+        closeWindow: () => assert.fail('a stale close must never be submitted'),
+        clickWindow: () => assert.fail('a stale click must never be submitted') });
+    h.mission._handoff({ text: '检查实际菜单', taskId: 'menu-action', origin: 'ws' });
+    return h;
+}
+
+test('real stale menu closes and clicks reach the existing failed-action handoff boundary', async () => {
+    for (const command of ['!closeWindow(24)', '!clickWindow(24, 0)']) {
+        const { agent, mission, finishes, execute } = menuFailureHarness();
+        for (let i = 0; i < 2; i++) assert.doesNotMatch(await execute(agent, command, () => {}), /Repeated action failure/);
+        assert.match(await execute(agent, command, () => {}), /Repeated action failure.*3/s);
+        assert.equal(mission.isActive(), true);
+        await execute(agent, command, () => {});
+        await execute(agent, command, () => {});
+        assert.equal(mission.isActive(), false, 'rejected menu operations cannot keep the task alive indefinitely');
+        assert.equal(finishes.length, 1);
+        assert.equal(finishes[0][1], 'failed');
+        assert.match(finishes[0][2], /current window ID=3/);
+        assert.doesNotMatch(finishes[0][2], /已判定无法完成/);
+    }
+});
+
+test('changed menus and successful cursor-safe closing break stale-action streaks', async () => {
+    const { agent, mission, finishes, execute } = menuFailureHarness();
+    for (let i = 0; i < 4; i++) await execute(agent, '!closeWindow(24)', () => {});
+    agent.bot.currentWindow.id = 4;
+    await execute(agent, '!closeWindow(24)', () => {});
+    assert.equal(mission.mission.actionFailureLoop?.count, 1, 'current window changes reset the comparison');
+    for (let i = 0; i < 3; i++) await execute(agent, '!closeWindow(24)', () => {});
+    const window = agent.bot.currentWindow;
+    window.selectedItem = { name: 'iron_sword', count: 1 };
+    agent.bot.closeWindow = value => { assert.equal(value, window); agent.bot.currentWindow = null; };
+    const result = await execute(agent, '!closeWindow(4)', () => {});
+    assert.match(result, /^Submitted close/);
+    assert.match(result, /CURSOR iron_sword/);
+    assert.equal(window.selectedItem.count, 1, 'do not invent an inventory transfer');
+    assert.equal(mission.mission.actionFailureLoop, null);
+    assert.equal(finishes.length, 0);
+    assert.equal(mission.isActive(), true);
+});
 
 test('identical completed model action failures warn then hand real evidence back without declaring the goal impossible', async () => {
     const { agent, mission, finishes, execute } = failedActionHarness();

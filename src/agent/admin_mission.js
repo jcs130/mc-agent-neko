@@ -626,7 +626,7 @@ export class AdminMission {
             || bot?.usingHeldItem || bot?.isSleeping;
         const invocation = JSON.stringify([parsed.commandName, parsed.args || []]);
         const state = failedActionState(bot);
-        // Only the action wrapper's explicit completed rejection is counted.
+        // Only trusted action helpers' explicit completed rejection is counted.
         // Normal waiting, success, queries, changed evidence and human commands
         // break this streak; nothing runs while a long action is still awaited.
         if (!model || query || bodyBusy || !state || typeof result !== 'string'

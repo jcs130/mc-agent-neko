@@ -94,6 +94,22 @@ test('closeWindow refuses stale IDs and already closed windows', async () => {
     assert.match(await menus.closeMenu(bot, 3), /changed or closed/);
 });
 
+test('menu precondition refusals are explicit non-started actions with current window evidence', async () => {
+    const bot = menuBot();
+    bot.closeWindow = bot.clickWindow = () => assert.fail('a refused action must not touch the window');
+    const stale = await menus.closeMenu(bot, 24);
+    assert.match(stale, /^Action not started:/);
+    assert.match(stale, /current window ID=3/);
+    assert.match(await clickMenuSlot(bot, 24, 0), /^Action not started:.*current window ID=3/s);
+    for (const slot of [-1, 1, 2]) assert.match(await clickMenuSlot(bot, 3, slot), /^Action not started:/);
+    bot.currentWindow.selectedItem = { name: 'iron_sword', count: 1 };
+    assert.match(await clickMenuSlot(bot, 3, 0), /^Action not started:.*CURSOR.*iron_sword/s);
+    bot.currentWindow.id = 4;
+    assert.notEqual(await menus.closeMenu(bot, 24), stale, 'a new current window is changed evidence');
+    bot.currentWindow = null;
+    assert.match(await menus.closeMenu(bot, 24), /^Action not started:.*current window ID=none/s);
+});
+
 test('a cursor item remains visible when no server menu is currently open', () => {
     const text = describeMenu({ inventory: { selectedItem: { name: 'iron_sword', count: 1 } } });
     assert.match(text, /No server menu/);
