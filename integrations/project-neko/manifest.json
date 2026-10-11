@@ -1,9 +1,9 @@
 {
   "upstreamRepository": "https://github.com/Project-N-E-K-O/N.E.K.O",
   "baseCommit": "fb2a2e731a8c954478d08678b0c8cf40e8145a54",
-  "sourceCommit": "b09f18fe9cad5d3798530c2e5d60ebecb4319107",
+  "sourceCommit": "1fbbc69c4db4d236e006e34787de96c8c6d9c660",
   "scope": "plugin/plugins/game_agent_minecraft",
-  "resultPluginTree": "a5c8ff2e62923f54f8436c5004f349f7d162df9a",
+  "resultPluginTree": "c8c7f1924a59162073622e4decc2cecde7c2943f",
   "patches": [
     {
       "file": "0001-chore-configure-text-only-local-Qwen-Minecraft-trial.patch",
@@ -316,6 +316,10 @@
     {
       "file": "0078-fix-context-query-complete-historical-catalogues-wit.patch",
       "sha256": "0f5086d34efefb04563e506bb0640f6a124cd7f11d4d5cceec25658d0cc2df3e"
+    },
+    {
+      "file": "0079-fix-context-keep-complete-historical-receipts-behind.patch",
+      "sha256": "d5e8f8629f75b99914041f3fdfc3932b3cb2465e0fcc5694addfbee43ab12a1f"
     }
   ],
   "verification": {
@@ -1554,7 +1558,7 @@
   },
   "completeInformationVerification": {
     "date": "2026-10-12",
-    "sourceCommit": "b09f18fe9cad5d3798530c2e5d60ebecb4319107",
+    "sourceCommit": "1fbbc69c4db4d236e006e34787de96c8c6d9c660",
     "nativeCommit": "7c8c278ea92138d2aa2fca71a70779c294fbb111",
     "runtimeCommit": "be808d311619b331fcb44e9ab5a771bde3eecde6",
     "nativeRelatedPassed": 243,
@@ -1591,12 +1595,15 @@
       "maxContext": 32768,
       "result": "rejected_context_overflow"
     },
-    "runtimeAcceptance": "pending tool continuation acceptance after historical catalogue indexing",
+    "runtimeAcceptance": "pending natural continuation acceptance after historical receipt indexing",
     "explicitExecutionDecision": true,
     "explicitWaitWithoutGameplayForcing": true,
     "persistentEvidenceUsesRuntimeDataRoot": true,
     "historyCatalogueRegressionPassed": 257,
     "historyCatalogueSubtestsPassed": 42,
-    "historicalHeaderGrowthRemoved": true
+    "historicalHeaderGrowthRemoved": true,
+    "receiptIndexRegressionPassed": 258,
+    "receiptIndexSubtestsPassed": 44,
+    "historicalReceiptsNeverReinlined": true
   }
 }

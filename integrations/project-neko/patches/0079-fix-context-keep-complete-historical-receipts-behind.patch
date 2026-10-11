@@ -1,0 +1,373 @@
+From 1fbbc69c4db4d236e006e34787de96c8c6d9c660 Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Mon, 12 Oct 2026 03:05:17 +0800
+Subject: [PATCH] fix(context): keep complete historical receipts behind exact
+ queries
+
+---
+ .../plugins/game_agent_minecraft/evidence.py  | 19 ++++++-
+ .../plugins/game_agent_minecraft/service.py   | 55 +++++++++----------
+ .../test_game_evidence.py                     | 24 ++++++++
+ .../test_grounded_recovery.py                 | 51 +++++++++++------
+ .../game_agent_minecraft/test_observations.py |  7 ++-
+ .../game_agent_minecraft/test_query_loop.py   | 10 +++-
+ 6 files changed, 112 insertions(+), 54 deletions(-)
+
+diff --git a/plugin/plugins/game_agent_minecraft/evidence.py b/plugin/plugins/game_agent_minecraft/evidence.py
+index 37a0485..0a7ae1a 100644
+--- a/plugin/plugins/game_agent_minecraft/evidence.py
++++ b/plugin/plugins/game_agent_minecraft/evidence.py
+@@ -185,9 +185,17 @@ def decision_input(info, *, mode='decision', sections=None, extra=None):
+     value['eventIndexNote'] = 'Complete historical catalogue at /recentEvents; entries include identity, time and exact text. New pending player messages are delivered whole in social callbacks. Query history when it is relevant; it is not current state.'
+     value['protocolEventHistory'] = ref(events, '/recentEvents')
+     value['agentLog'] = ref(full.get('agentLog') or [], '/agentLog')
+-    for key in ('recentTaskOutcomes', 'recentTaskOutcomeDetails'):
++    for key in ('recentTaskOutcomes', 'recentTaskOutcomeDetails', 'lastServerCommands',
++                'deferredEvents', 'deferredPlayerMessages'):
+         if key in full:
+             value[key] = ref(full[key], pointer('', key))
++    if isinstance(full.get('lastTaskOutcome'), dict):
++        # A receipt is a historical result, not current physical state. Keep
++        # its matching identity/status visible and the original goal and
++        # feedback queryable, including arbitrarily long action appendices.
++        value['lastTaskOutcome'] = {key: ref(child, pointer('/lastTaskOutcome', key))
++            if key in ('task', 'text') else deepcopy(child)
++            for key, child in full['lastTaskOutcome'].items()}
+     if mode == 'running':
+         # A passive update is a query index, not a second copy of an active
+         # decision. The complete snapshot is already saved above.
+@@ -195,9 +203,16 @@ def decision_input(info, *, mode='decision', sections=None, extra=None):
+                  'ageSeconds', 'inputPolicy', 'rawEvidence', 'note', 'authentication') if key in value}
+         value['sections'] = list((full.get('state') or {}).keys())
+         if extra:
+-            for key in ('status', 'source', 'decision', 'llm_instruction', 'lastTaskOutcome'):
++            for key in ('status', 'source', 'decision', 'llm_instruction'):
+                 if key in full:
+                     value[key] = deepcopy(full[key])
++            if isinstance(full.get('lastTaskOutcome'), dict):
++                value['lastTaskOutcome'] = {key: ref(child, pointer('/lastTaskOutcome', key))
++                    if key in ('task', 'text') else deepcopy(child)
++                    for key, child in full['lastTaskOutcome'].items()}
++            value['history'] = {key: ref(full[key], pointer('', key))
++                for key in ('recentTaskOutcomes', 'recentTaskOutcomeDetails', 'lastServerCommands',
++                            'deferredEvents', 'deferredPlayerMessages') if key in full}
+             value['state'] = {key: deepcopy(child) for key, child in (full.get('state') or {}).items()
+                               if key in ('self', 'world', 'activity')}
+     elif mode == 'social' and isinstance(value.get('state'), dict):
+diff --git a/plugin/plugins/game_agent_minecraft/service.py b/plugin/plugins/game_agent_minecraft/service.py
+index 5ee7c97..f18d1ad 100644
+--- a/plugin/plugins/game_agent_minecraft/service.py
++++ b/plugin/plugins/game_agent_minecraft/service.py
+@@ -46,8 +46,6 @@ from typing import Any, Callable, Dict, Optional
+ from . import prompts
+ from .client import GameAgentClient, IngameChatMessage
+ from .observations import GameObservations, bounded_value
+-from .feedback import task_feedback_excerpt
+-from .task_context import task_outcome_view, task_history_view
+ 
+ # Strip ANSI colour escapes from agent log lines before relaying to the
+ # LLM — we don't want VT100 noise in the model's context window.
+@@ -1274,13 +1272,29 @@ class GameAgentService:
+             self._task_failure_streak = min(99, self._task_failure_streak + 1)
+ 
+     def recovery_context(self, max_tokens=800) -> str:
+-        """Prior matched outcomes, kept separate from current inventory facts."""
+-        if not self._recent_task_outcomes:
++        """Index historical receipts; keep originals outside each new decision."""
++        if not self._last_task_outcome and not self._recent_task_outcomes and not self._server_command_history:
+             return ''
+-        value = task_history_view(self._recent_task_outcomes[1:], max_tokens=max_tokens)
+-        value['failureStreak'] = self._task_failure_streak
+-        prefix = 'Previous reported outcomes (historical): '
+-        return prefix + json.dumps(value, ensure_ascii=False, separators=(',', ':'))
++        full = {'lastTaskOutcome': self._last_task_outcome,
++                'recentTaskOutcomes': self._recent_task_outcomes,
++                'lastServerCommands': self._server_command_history}
++        evidence = self._game_observations.evidence.save(full)
++        value = {'rawEvidence': evidence, 'failureStreak': self._task_failure_streak,
++                 'recentTaskOutcomes': {'path': '/recentTaskOutcomes',
++                                        'entries': len(self._recent_task_outcomes)},
++                 'lastServerCommands': {'path': '/lastServerCommands',
++                                        'entries': len(self._server_command_history)}}
++        if self._last_task_outcome:
++            outcome = self._last_task_outcome
++            value['lastTaskOutcome'] = {key: outcome[key] for key in
++                ('taskId', 'sessionId', 'status', 'observedAt', 'receiptMatch', 'receivedTaskId')
++                if key in outcome}
++            value['lastTaskOutcome']['details'] = {'path': '/lastTaskOutcome'}
++        value['instruction'] = ('Receipts are historical, never proof of current inventory or completion. '
++            'Read the matching goal and exact feedback before retrying a failed task or relying on an old result: '
++            'minecraft_observe(evidence_id=rawEvidence.id,reference_path=path). '
++            'All goals, feedback and server replies are retained without clipping.')
++        return 'Received task/server history query index: ' + json.dumps(value, ensure_ascii=False, separators=(',', ':'))
+ 
+     def _native_retreat_handoff(self):
+         """Return only a fresh, explicitly idle, bounded native recovery window."""
+@@ -2665,34 +2679,15 @@ class GameAgentService:
+             else:
+                 sections.append(prompts.t("AUTONOMOUS_DECISION_BODY", lang=self._lang))
+         if self._game_observations.fresh:
+-            # The host caps the entire callback, not just the game-state part.
+-            # Avoid duplicate inventory/vitals and reserve space for the real
+-            # last outcome before choosing the summary's token budget.
+-            if self._last_task_outcome:
+-                outcome = self._last_task_outcome
+-                # Reserve feedback independently: a long repeated goal used
+-                # to consume the whole 90-token envelope before any result.
+-                sections.append(prompts.t(
+-                    'LAST_TASK_OUTCOME', lang=self._lang,
+-                    task=task_outcome_view(outcome).get('task', '[full accepted goal requires minecraft_observe]'),
+-                    status=outcome['status'],
+-                    result=task_feedback_excerpt(outcome['text'], 240, status=outcome.get('status')),
+-                ) + '\nMatched taskId: ' + str(outcome.get('taskId') or 'not received')
+-                    + '\nFull lastTaskOutcome is available through minecraft_observe.')
+-            if self._server_command_history:
+-                history = [{'command': item['command'], 'status': item['status'],
+-                            'reply': ' '.join(str(text) for text in item['messages'])}
+-                           for item in self._server_command_history]
+-                sections.append('Received server replies (historical, not completion): ' + json.dumps(history, ensure_ascii=False, separators=(',', ':')) +
+-                    '\nFull lastServerCommands: minecraft_observe.')
++            # Current facts and complete historical evidence have separate
++            # roles. Re-inlining old replies here bypassed the evidence index
++            # and eventually made every new decision exceed model capacity.
+             if self._idle_decision_attempts:
+                 sections.append(prompts.t('IDLE_DECISION_RETRY', lang=self._lang))
+             if not self._unattended.enabled:
+                 sections.append(prompts.t('KEEP_GOING_BODY', lang=self._lang))
+             sections.append('If detailsRequired=true, query the needed section before deciding; omitted facts are unknown.')
+ 
+-            # Fit whole historical pairs around the current goal/result, never
+-            # let a long previous goal cut off current safety or failure facts.
+             recovery = self.recovery_context()
+             if recovery:
+                 sections.append(recovery)
+diff --git a/plugin/plugins/game_agent_minecraft/test_game_evidence.py b/plugin/plugins/game_agent_minecraft/test_game_evidence.py
+index 4da75e2..d960d39 100644
+--- a/plugin/plugins/game_agent_minecraft/test_game_evidence.py
++++ b/plugin/plugins/game_agent_minecraft/test_game_evidence.py
+@@ -100,6 +100,30 @@ class GameEvidenceTest(unittest.TestCase):
+         self.assertEqual(len(retained), 602)
+         self.assertEqual(retained[-1]['text'], '第599条完整旧消息')
+ 
++    def test_tool_summary_never_reinlines_old_receipts_or_unbounded_failure_appendix(self):
++        info = self.observations()
++        old = '旧服务器原始返回' * 10000
++        goal = '完整的旧任务目标' * 1000
++        failure = '实际失败原因：当前报价不收铁锭。' + '完整工具回执' * 10000
++        extras = {'lastTaskOutcome': {'taskId': 'matched', 'status': 'failed',
++                                     'task': goal, 'text': failure},
++                  'lastServerCommands': [{'command': '/mycli guild', 'messages': [old]}],
++                  'recentTaskOutcomes': [{'task': goal, 'text': failure}]}
++        for mode in ('decision', 'running'):
++            with self.subTest(mode=mode):
++                view = decision_input(info, mode=mode, extra=extras)
++                encoded = json.dumps(view, ensure_ascii=False)
++                self.assertNotIn(old, encoded)
++                self.assertNotIn(failure, encoded)
++                self.assertNotIn(goal, encoded)
++                self.assertEqual(view['lastTaskOutcome']['taskId'], 'matched')
++                self.assertEqual(view['lastTaskOutcome']['status'], 'failed')
++                ident = view['rawEvidence']['id']
++                self.assertEqual(info.evidence.read(ident, '/lastTaskOutcome/text')['value'], failure)
++                self.assertEqual(info.evidence.read(ident, '/lastTaskOutcome/task')['value'], goal)
++                self.assertEqual(info.evidence.read(ident, '/lastServerCommands/0/messages/0')['value'], old)
++                self.assertEqual(info.evidence.read(ident, '/recentTaskOutcomes')['value'], extras['recentTaskOutcomes'])
++
+ 
+ if __name__ == '__main__':
+     unittest.main()
+diff --git a/plugin/plugins/game_agent_minecraft/test_grounded_recovery.py b/plugin/plugins/game_agent_minecraft/test_grounded_recovery.py
+index 4ed0711..955a28e 100644
+--- a/plugin/plugins/game_agent_minecraft/test_grounded_recovery.py
++++ b/plugin/plugins/game_agent_minecraft/test_grounded_recovery.py
+@@ -10,6 +10,16 @@ from .service import GameAgentService
+ from .test_observations import frame
+ 
+ 
++def history_value(service, cue, path):
++    prefix = 'Received task/server history query index: '
++    line = next(line for line in cue.splitlines() if line.startswith(prefix))
++    index = json.loads(line[len(prefix):])
++    result = service._game_observations.evidence.read(index['rawEvidence']['id'], path)
++    assert result['status'] == 'ok'
++    assert result['responseTruncated'] is False
++    return result['value']
++
++
+ def crowded_frame(seq=1, session='resources-fixture'):
+     data = frame(seq=seq, session=session)
+     data['state']['inventory'] = {
+@@ -151,8 +161,10 @@ class RecoveryDecisionTests(unittest.IsolatedAsyncioTestCase):
+         await self.complete(service, '向上挖出矿洞', '缺少镐，无法破坏深板岩。')
+         await service._fire_keep_going_nudge()
+         text = calls[-1]['parts'][0]['text']
+-        self.assertIn('缺少木料', text)
+-        self.assertIn('缺少镐', text)
++        history = history_value(service, text, '/recentTaskOutcomes')
++        self.assertIn('缺少木料', history[1]['text'])
++        self.assertIn('缺少镐', history[0]['text'])
++        self.assertNotIn('缺少木料，无法合成工作台。', text)
+         self.assertIn('failureStreak', text)
+         observed = await service.observe_game(['self'], 0)
+         self.assertEqual(observed.get('failureStreak'), 2)
+@@ -167,7 +179,7 @@ class RecoveryDecisionTests(unittest.IsolatedAsyncioTestCase):
+         text = plugin._format_completion_cue(pending.result)
+         self.assertTrue('灵纹法杖' in text, 'fresh custom-item identity must reach the completion cue')
+         self.assertIn('pickaxes', text)
+-        self.assertIn('缺少木料', text)
++        self.assertIn('缺少木料', history_value(service, text, '/recentTaskOutcomes/1/text'))
+         self.assertIn('缺少镐', text)
+         self.assertIn('缺少镐。' + '重复观察资料。' * 2000, text)
+ 
+@@ -215,7 +227,7 @@ class RecoveryDecisionTests(unittest.IsolatedAsyncioTestCase):
+         self.assertEqual(len(service._recent_task_outcomes), 1)
+         self.assertIsNone(service._pending)
+ 
+-    async def test_full_decision_with_failure_history_replies_and_retry_keeps_its_budget(self):
++    async def test_full_decision_indexes_all_failure_history_replies_and_preserves_retry(self):
+         service, calls = await self.service()
+         await self.complete(service, '合成工作台', '缺少木料。')
+         await self.complete(service, '挖出深层矿洞', '缺少镐，无法向上开路。')
+@@ -224,7 +236,9 @@ class RecoveryDecisionTests(unittest.IsolatedAsyncioTestCase):
+                                        'messages': ['技能说明' * 2000]})
+         await service._fire_keep_going_nudge()
+         text = calls[-1]['parts'][0]['text']
+-        self.assertIn('缺少木料', text)
++        self.assertIn('缺少木料', history_value(service, text, '/recentTaskOutcomes/1/text'))
++        self.assertEqual(history_value(service, text, '/lastServerCommands/0/messages/0'), '技能说明' * 2000)
++        self.assertNotIn('技能说明' * 2000, text)
+         self.assertIn('pickaxes', text)
+ 
+     async def test_complete_goal_and_received_blocker_survive_later_task(self):
+@@ -237,9 +251,11 @@ class RecoveryDecisionTests(unittest.IsolatedAsyncioTestCase):
+         pending = await self.complete(service, goal, raw)
+         await self.complete(service, '查询补给商菜单', '已读取菜单。', status='ok')
+         recovery = service.recovery_context()
+-        self.assertIn(goal, recovery)
+-        self.assertIn(blocker, recovery)
+-        self.assertIn(pending.task_id, recovery)
++        self.assertEqual(history_value(service, recovery, '/recentTaskOutcomes/1/task'), goal)
++        self.assertEqual(history_value(service, recovery, '/recentTaskOutcomes/1/text'), raw)
++        self.assertNotIn(raw, recovery)
++        self.assertIn(blocker, history_value(service, recovery, '/recentTaskOutcomes/1/text'))
++        self.assertEqual(history_value(service, recovery, '/recentTaskOutcomes/1/taskId'), pending.task_id)
+         observed = await service.observe_game(None, 0)
+         previous = next(item for item in observed['recentTaskOutcomes'] if item['taskId'] == pending.task_id)
+         self.assertEqual(previous['task'], goal)
+@@ -256,16 +272,17 @@ class RecoveryDecisionTests(unittest.IsolatedAsyncioTestCase):
+         self.assertEqual(pending.result['receivedTaskId'], pending.task_id)
+         self.assertEqual(pending.result['receiptMatch'], 'current')
+ 
+-    async def test_long_goal_pairs_omit_whole_old_entries_and_preserve_current_blocker(self):
++    async def test_long_goal_pairs_are_queryable_without_reinlining_any_old_entry(self):
+         service, calls = await self.service()
+         goal = '到指定箱子核对当前库存，保留技能物品，不替换其他玩家的物资。' * 12
+         for n in range(8):
+             await self.complete(service, goal + str(n), '缺少真实的购买凭证，不能交任务。')
+         await service._fire_keep_going_nudge()
+         cue = calls[-1]['parts'][0]['text']
+-        self.assertIn(goal + '7', cue)
+-        self.assertIn('缺少真实的购买凭证', cue)
+-        self.assertIn('outcomesOmitted', cue)
++        self.assertEqual(history_value(service, cue, '/lastTaskOutcome/task'), goal + '7')
++        self.assertEqual(history_value(service, cue, '/lastTaskOutcome/text'), '缺少真实的购买凭证，不能交任务。')
++        self.assertEqual(len(history_value(service, cue, '/recentTaskOutcomes')), 8)
++        self.assertNotIn(goal, cue)
+         details = await service.observe_game([], 0)
+         self.assertEqual(len(details['recentTaskOutcomeDetails']), 8)
+         self.assertEqual(details['recentTaskOutcomeDetails'][-1]['task'], goal + '0')
+@@ -278,8 +295,9 @@ class RecoveryDecisionTests(unittest.IsolatedAsyncioTestCase):
+         await self.complete(service, '查看公会当前任务', '口粮任务需要一次真实购买。', status='ok')
+         await service._fire_keep_going_nudge()
+         text = calls[-1]['parts'][0]['text']
+-        self.assertIn(goal, text)
+-        self.assertIn(reason, text)
++        self.assertEqual(history_value(service, text, '/recentTaskOutcomes/1/task'), goal)
++        self.assertEqual(history_value(service, text, '/recentTaskOutcomes/1/text'), reason)
++        self.assertIn('before retrying a failed task', text)
+ 
+     async def merchant_feedback(self):
+         service, calls = await self.service()
+@@ -302,11 +320,12 @@ class RecoveryDecisionTests(unittest.IsolatedAsyncioTestCase):
+         text = plugin._format_completion_cue(pending.result)
+         self.assertIn(conclusion, text)
+ 
+-    async def test_idle_outcome_reserves_feedback_before_a_long_goal(self):
++    async def test_idle_outcome_indexes_complete_feedback_and_long_goal(self):
+         service, calls, _, conclusion, raw = await self.merchant_feedback()
+         await service._fire_keep_going_nudge()
+         text = calls[-1]['parts'][0]['text']
+-        self.assertIn('无收购煤炭或粗铁', text)
++        self.assertIn('无收购煤炭或粗铁', history_value(service, text, '/lastTaskOutcome/text'))
++        self.assertNotIn(raw, text)
+         observed = await service.observe_game(['self'], 0)
+         self.assertEqual(observed['lastTaskOutcome']['text'], raw)
+ 
+diff --git a/plugin/plugins/game_agent_minecraft/test_observations.py b/plugin/plugins/game_agent_minecraft/test_observations.py
+index 3f6ffb0..b39e001 100644
+--- a/plugin/plugins/game_agent_minecraft/test_observations.py
++++ b/plugin/plugins/game_agent_minecraft/test_observations.py
+@@ -264,7 +264,8 @@ class ObservationTests(unittest.IsolatedAsyncioTestCase):
+         self.assertIn('minecraft_observe', text)
+         self.assertEqual(service._game_observations.view()['recentEvents'][0]['text'], '求助说明' * 200)
+ 
+-    async def test_full_decision_with_failure_and_retry_fits_host_limit(self):
++    async def test_full_decision_indexes_complete_failure_and_preserves_retry(self):
++        from .test_grounded_recovery import history_value
+         service, calls = self.service()
+         service._unattended.enabled = True
+         await service._on_game_state(frame())
+@@ -272,9 +273,9 @@ class ObservationTests(unittest.IsolatedAsyncioTestCase):
+         service._idle_decision_attempts = 2
+         await service._fire_keep_going_nudge()
+         cue = calls[-1]['parts'][0]['text']
+-        self.assertIn(service._last_task_outcome['text'], cue)
++        self.assertEqual(history_value(service, cue, '/lastTaskOutcome'), service._last_task_outcome)
+         self.assertIn('failed', cue)
+-        self.assertIn('缺少材料', cue)
++        self.assertNotIn(service._last_task_outcome['text'], cue)
+         self.assertIn('minecraft_observe', cue)
+         self.assertEqual(service._game_observations.focused_view()['truncated'], [])
+         result = await service.observe_game(['self'], max_events=0)
+diff --git a/plugin/plugins/game_agent_minecraft/test_query_loop.py b/plugin/plugins/game_agent_minecraft/test_query_loop.py
+index f54eacb..389bac4 100644
+--- a/plugin/plugins/game_agent_minecraft/test_query_loop.py
++++ b/plugin/plugins/game_agent_minecraft/test_query_loop.py
+@@ -7,6 +7,7 @@ from types import SimpleNamespace
+ from .observations import GameObservations
+ from .service import GameAgentService
+ from .test_observations import frame, event
++from .test_grounded_recovery import history_value
+ 
+ 
+ class QueryLoopTests(unittest.IsolatedAsyncioTestCase):
+@@ -101,7 +102,9 @@ class QueryLoopTests(unittest.IsolatedAsyncioTestCase):
+         await service._fire_keep_going_nudge()
+         for call in calls[-2:]:
+             text = call['parts'][0]['text']
+-            self.assertIn('X=-595 Y=60 Z=-474', text)
++            self.assertEqual(history_value(service, text, '/lastServerCommands/0/messages/0'),
++                             '探矿术找到青金石矿 X=-595 Y=60 Z=-474')
++            self.assertNotIn('X=-595 Y=60 Z=-474', text)
+             self.assertIn('minecraft_task', text)
+         observed = await service.observe_game(['server'], 0)
+         self.assertEqual(observed['lastServerCommands'][0]['messages'][0], '探矿术找到青金石矿 X=-595 Y=60 Z=-474')
+@@ -122,7 +125,7 @@ class QueryLoopTests(unittest.IsolatedAsyncioTestCase):
+         await service._on_game_state(frame(session='new-connection'))
+         self.assertEqual(service._server_command_history, [])
+ 
+-    async def test_action_cue_keeps_budget_and_last_outcome_with_large_received_data(self):
++    async def test_action_cue_indexes_complete_last_outcome_with_large_received_data(self):
+         service, calls = self.service()
+         data = frame()
+         data['state']['server']['protection'] = {'enabled': True, 'installed': True}
+@@ -131,7 +134,8 @@ class QueryLoopTests(unittest.IsolatedAsyncioTestCase):
+         service.record_server_command({'command': '/mycli spells list 1', 'status': 'received', 'messages': ['技能说明' * 2000]})
+         await service._fire_keep_going_nudge()
+         text = calls[-1]['parts'][0]['text']
+-        self.assertIn(service._last_task_outcome['task'], text)
++        self.assertEqual(history_value(service, text, '/lastTaskOutcome'), service._last_task_outcome)
++        self.assertNotIn(service._last_task_outcome['task'], text)
+         self.assertIn('minecraft_task', text)
+         self.assertIn('failed', text)
+ 
