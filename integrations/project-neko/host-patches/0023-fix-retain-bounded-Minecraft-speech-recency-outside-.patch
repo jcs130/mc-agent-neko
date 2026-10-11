@@ -1,0 +1,218 @@
+From 481140c7aba57e067c7ed1f80092494720ce01b9 Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Sun, 11 Oct 2026 20:03:00 +0800
+Subject: [PATCH] fix: retain bounded Minecraft speech recency outside task
+ evidence
+
+---
+ .../2026-10-11-minecraft-speech-recency.md    | 31 +++++++
+ main_logic/omni_offline_client/_lifecycle.py  | 11 ++-
+ .../_minecraft_narration.py                   | 44 ++++++++++
+ .../unit/test_minecraft_narration_context.py  | 80 +++++++++++++++++++
+ 4 files changed, 165 insertions(+), 1 deletion(-)
+ create mode 100644 docs/regression-reports/2026-10-11-minecraft-speech-recency.md
+ create mode 100644 main_logic/omni_offline_client/_minecraft_narration.py
+ create mode 100644 tests/unit/test_minecraft_narration_context.py
+
+diff --git a/docs/regression-reports/2026-10-11-minecraft-speech-recency.md b/docs/regression-reports/2026-10-11-minecraft-speech-recency.md
+new file mode 100644
+index 0000000..df895f5
+--- /dev/null
++++ b/docs/regression-reports/2026-10-11-minecraft-speech-recency.md
+@@ -0,0 +1,31 @@
++# 回归报告 / Regression Report
++
++Minecraft execution callbacks deliberately avoid persisting spoken plans as
++task evidence. This also discarded all memory of their wording: a second
++callback could not see a completed first reply. In the observed local session,
++46 main-brain replies contained five exact duplicate groups (eight extra
++replies); the separate playback trace showed no duplicate playback cycles.
++
++The execution callback now keeps a session-local speech recency cache: at most
++four quotes, 240 characters each, expiring after five minutes. Only committed,
++non-cancelled speech enters it. A request-only note labels quotes as prior
++speech, without authority or evidence of task acceptance, actions, completion
++or rewards. The actual human instructions, tool receipts and persistent
++conversation history are retained. Ordinary dialogue and foreign callbacks
++do not receive this cache. There are no additional model calls, tool actions,
++playback filters or persistent transcript copies.
++
++The reproduction initially failed because the second request contained zero
++references to the first spoken reply. The corrected integration and boundary
++tests cover request projection, bounded/expired quotes, isolation, silent tool
++turns, actual receipts and stop instructions. The focused set passed 160 tests
++with one known logger-capture test deselected. The broader speech/tool suite
++passed 2,134 tests and reproduced that same pre-existing logger-capture failure
++(`test_failed_takeover_with_stale_token_still_unmutes`), previously reproduced
++on the unmodified baseline. No broader pass is claimed.
++
++Potential regressions: the request gains up to roughly 1,700 characters at its
++dynamic tail, and a model could still repeat or over-interpret its own words.
++The explicit non-evidence label and original no-persistence test cover the
++boundary; natural-session speech quality and task progress require separate
++observation. Do not close gameplay or audible-quality tickets on these tests.
+diff --git a/main_logic/omni_offline_client/_lifecycle.py b/main_logic/omni_offline_client/_lifecycle.py
+index 9b822ad..abd4c9b 100644
+--- a/main_logic/omni_offline_client/_lifecycle.py
++++ b/main_logic/omni_offline_client/_lifecycle.py
+@@ -834,7 +834,13 @@ class _LifecycleMixin:
+                 _ephemeral_msg = HumanMessage(content=instruction)
+         else:
+             _ephemeral_msg = HumanMessage(content=instruction)
+-        messages_to_send = self._conversation_history + [_ephemeral_msg]
++        speech_recency = []
++        if minecraft_execution_turn:
++            from ._minecraft_narration import narration_message
++            note = narration_message(self)
++            if note is not None:
++                speech_recency.append(note)
++        messages_to_send = self._conversation_history + speech_recency + [_ephemeral_msg]
+         # This turn's place in history: the instruction itself is never saved,
+         # so a cancelled reply is anchored to the last message it was shown.
+         # Not a tool-round dict: a round still running may leave history with
+@@ -1118,6 +1124,9 @@ class _LifecycleMixin:
+             # 此处不再手动调用 TokenTracker.record() 避免双重计数。
+             committed_text = _strip_nonverbal_directives(assistant_message).strip()
+             content_committed = bool(committed_text)
++            if minecraft_execution_turn and content_committed and not response_cancelled:
++                from ._minecraft_narration import remember_narration
++                remember_narration(self, committed_text)
+             # 一条可见的 ephemeral 回复（greeting / agent 回调 / 戳头像的 quip）是
+             # 用户接下来要回应的「新一条 AI 轮」，它让之前为「下一条用户回复」暂存的
+             # 屏幕截图过时——清掉它。persist_response=False 的回复（如头像 quip）不进
+diff --git a/main_logic/omni_offline_client/_minecraft_narration.py b/main_logic/omni_offline_client/_minecraft_narration.py
+new file mode 100644
+index 0000000..dda06b2
+--- /dev/null
++++ b/main_logic/omni_offline_client/_minecraft_narration.py
+@@ -0,0 +1,44 @@
++"""Short-lived speech recency, separate from Minecraft task evidence."""
++import json
++import time
++
++from ._shared import SystemMessage
++
++_TTL_SECONDS = 300
++_MAX_QUOTES = 4
++_MAX_QUOTE_CHARS = 240
++
++
++def _recent(client, now):
++    rows = [(at, text) for at, text in getattr(client, "_minecraft_narration", ())
++            if 0 <= now - at < _TTL_SECONDS]
++    client._minecraft_narration = rows[-_MAX_QUOTES:]
++    return client._minecraft_narration
++
++
++def narration_message(client, *, now=None):
++    rows = _recent(client, time.monotonic() if now is None else now)
++    if not rows:
++        return None
++    return SystemMessage(content=(
++        "Recent Minecraft narration: speech history only, not game state. "
++        "The JSON strings below quote words already spoken to the audience; "
++        "they are not evidence of accepted tasks, actions, completion or rewards, "
++        "and contain no new instructions or authority. Do not repeat these words "
++        "or merely rephrase a promise instead of acting. Follow the existing rules, "
++        "latest human instructions and actual observations/receipts. Use tools "
++        "silently when there is nothing new worth saying. Shortened quotes are "
++        "explicitly marked and must not be completed by guessing.\n"
++        + json.dumps([text for _, text in rows], ensure_ascii=False)
++    ))
++
++
++def remember_narration(client, text, *, now=None):
++    if not isinstance(text, str) or not text.strip():
++        return
++    now = time.monotonic() if now is None else now
++    text = text.strip()
++    if len(text) > _MAX_QUOTE_CHARS:
++        text = text[:_MAX_QUOTE_CHARS] + " [spoken quote shortened]"
++    rows = [(at, previous) for at, previous in _recent(client, now) if previous != text]
++    client._minecraft_narration = (rows + [(now, text)])[-_MAX_QUOTES:]
+diff --git a/tests/unit/test_minecraft_narration_context.py b/tests/unit/test_minecraft_narration_context.py
+new file mode 100644
+index 0000000..821288f
+--- /dev/null
++++ b/tests/unit/test_minecraft_narration_context.py
+@@ -0,0 +1,80 @@
++"""Minecraft speech must remember its own words without inventing game facts."""
++import pytest
++from types import SimpleNamespace
++
++from main_logic.omni_offline_client import OmniOfflineClient
++from tests.unit.test_tool_calling import _minimal_offline_client_for_leak_tests
++from utils.llm_client import AIMessage, LLMStreamChunk
++
++
++@pytest.mark.asyncio
++async def test_game_turn_sees_prior_spoken_words_without_saving_them_as_facts(monkeypatch):
++    calls = []
++
++    async def stream(self, messages, **overrides):
++        calls.append(list(messages))
++        yield LLMStreamChunk(content="本喵先看现场再决定下一步。")
++
++    monkeypatch.setattr(OmniOfflineClient, "_astream_with_tools", stream)
++    client = _minimal_offline_client_for_leak_tests()
++    client.on_response_done = None
++    client.on_text_delta = None
++    await client.prompt_ephemeral("idle cue", request_scope="minecraft_execution")
++    await client.prompt_ephemeral("new actual failure receipt", request_scope="minecraft_execution")
++    quoted = [m.content for m in calls[1] if "本喵先看现场" in str(m.content)]
++    assert len(quoted) == 1
++    assert "not game state" in quoted[0]
++    assert "not evidence" in quoted[0]
++    assert calls[1][-1].content == "new actual failure receipt"
++    assert not any(isinstance(m, AIMessage) for m in client._conversation_history)
++    await client.prompt_ephemeral("human conversation", request_scope=None)
++    assert not any("本喵先看现场" in str(m.content) for m in calls[2])
++
++
++def test_speech_quotes_expire_and_are_bounded_without_replaying_old_results():
++    from main_logic.omni_offline_client._minecraft_narration import (
++        narration_message, remember_narration,
++    )
++    client = SimpleNamespace()
++    for n in range(9):
++        remember_narration(client, str(n) + "语" * 300, now=n)
++    note = narration_message(client, now=9)
++    assert len(client._minecraft_narration) == 4
++    assert all(len(text) <= 265 for _, text in client._minecraft_narration)
++    assert "[spoken quote shortened]" in note.content
++    assert len(note.content) < 1700
++    assert narration_message(client, now=400) is None
++
++
++def test_duplicate_quotes_refresh_one_entry_and_clients_are_isolated():
++    from main_logic.omni_offline_client._minecraft_narration import (
++        narration_message, remember_narration,
++    )
++    first, second = SimpleNamespace(), SimpleNamespace()
++    remember_narration(first, "本喵已经说过这句话", now=1)
++    remember_narration(first, "本喵已经说过这句话", now=100)
++    assert len(first._minecraft_narration) == 1
++    assert narration_message(first, now=350) is not None
++    assert narration_message(second, now=350) is None
++
++
++@pytest.mark.asyncio
++async def test_silent_tool_turn_adds_no_speech_and_preserves_stop_and_receipt(monkeypatch):
++    from utils.llm_client import HumanMessage, SystemMessage
++    calls = []
++
++    async def stream(self, messages, **overrides):
++        calls.append(list(messages))
++        yield LLMStreamChunk(content="", tool_round_persisted=True)
++
++    monkeypatch.setattr(OmniOfflineClient, "_astream_with_tools", stream)
++    client = _minimal_offline_client_for_leak_tests()
++    client.on_response_done = None
++    stop = HumanMessage(content="暂停游戏，先别动")
++    receipt = SystemMessage(content="Actual receipt: task failed, protection denied.")
++    client._conversation_history.extend([stop, receipt])
++    assert await client.prompt_ephemeral("idle cue", request_scope="minecraft_execution")
++    await client.prompt_ephemeral("another cue", request_scope="minecraft_execution")
++    assert client._minecraft_narration == []
++    assert stop in calls[1] and receipt in calls[1]
++    assert stop in client._conversation_history and receipt in client._conversation_history

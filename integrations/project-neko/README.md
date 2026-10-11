@@ -26,6 +26,13 @@ Minecraft turns. Spoken plans are not stored as execution evidence. See
 [the recovery and progress-watch report](../../docs/neko-idle-decision-recovery-2026-10-11.md)
 for ownership, cancellation, verification and live outcome limits.
 
+Host patch 0023 retains four short-lived quotes of committed Minecraft narration
+in the request tail. They are explicitly speech history with no task authority or
+completion evidence; actual receipts and human stop requests are preserved.
+This addresses the observed loss of speech recency without adding model calls or
+filtering playback. See [the scoped report](../../docs/neko-speech-recency-2026-10-11.md)
+for validation and the separate runtime acceptance limits.
+
 Host patch 0011 keeps repeated autonomous query preludes out of spoken output,
 using actual read-only tool receipts while retaining results and final replies.
 The matching native repair bounds measured protected-floor retreat stalls.
