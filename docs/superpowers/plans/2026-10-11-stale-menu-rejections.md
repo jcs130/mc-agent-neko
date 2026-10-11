@@ -24,7 +24,13 @@
 - [x] Add red integration tests using the real menu helpers plus command/mission boundary: warn at three and hand back at five identical refused model closes/clicks, but preserve changed-window and successful operations.
 - [x] Classify existing menu precondition refusals; include the actual current window ID when the requested ID is stale. Keep successful paths intact.
 - [x] Run menu/mission/infinite-loop regression, complete native tests, syntax and whitespace checks. Record trigger, mechanism, falsifiable prediction and attribution in the ledger.
-- [ ] Commit/push the scoped repair to the authorized fork; prepare native checkout and load only at an existing safe owned idle boundary. Otherwise leave it prepared.
-- [ ] Write the maintainer receipt with actual phase and evidence. Observe naturally, update hourly comparison/log and report acceptance limits.
+- [x] Commit/push the scoped repair to the authorized fork; prepare native checkout and load only at an existing safe owned idle boundary. Otherwise leave it prepared.
+- [x] Write the maintainer receipt with actual phase and evidence. Observe naturally and report acceptance limits; record the hourly comparison/log as the closing operational step.
+
+Actual outcome: fork `975bb9c`, native disk `9d99bbd`; running child 14188 still
+has the prior `f83473e` version. Two bounded gates did not permit reload. The
+prepared receipt is API-confirmed, the guardian was restored and healthy game,
+host, model and TTS processes were retained. Deployment and natural menu-loop
+acceptance remain pending; this plan does not label the broader ticket resolved.
 
 **Falsifiable prediction:** Five identical completed stale-menu refusals with unchanged measured state return the current task with its actual evidence. A new window, a real result change or an explicit player operation permits a fresh attempt. This does not promise escape, a successful trade or elimination of speech repetition.
