@@ -339,7 +339,24 @@ export async function executeCommand(agent, message, beforeExecute = null) {
             if (beforeExecute) beforeExecute(parsed);
             const mission = agent._missionEnabled && agent.adminMission?.isActive()
                 ? agent.adminMission.mission : null;
-            const result = await command.perform(agent, ...parsed.args);
+            const body = agent.bot;
+            let result;
+            try {
+                result = await command.perform(agent, ...parsed.args);
+            } catch (error) {
+                // Preserve stop/preemption and never attach an old command's
+                // failure to a replacement body or mission. Ordinary failures
+                // must reach history just like returned action failures do.
+                const currentMission = agent._missionEnabled && agent.adminMission?.isActive()
+                    ? agent.adminMission.mission : null;
+                if (error?.name === 'AbortError' || body !== agent.bot || body?.interrupt_code
+                    || mission !== currentMission) throw error;
+                const name = error?.name || 'Error';
+                const detail = error?.message ?? String(error);
+                result = `Action failed: ${parsed.commandName} raised ${name}: ${detail}\n`
+                    + 'Completion and side effects are not confirmed. Use current observed game state and the actual failure '
+                    + 'to choose another short step; do not assume success or blindly replay the same query.';
+            }
             if (mission) {
                 agent.adminMission.recordObservation(mission, parsed.commandName, result);
                 const inspectionFeedback = await agent.adminMission.merchantInspectionFeedback?.(mission, parsed, result,

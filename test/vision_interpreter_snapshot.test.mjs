@@ -13,3 +13,11 @@ test('grounded center-block facts stay with the captured frame during slow visio
     assert.match(result, /coal_ore/);
     assert.doesNotMatch(result, /iron_ore/);
 });
+
+test('vision body preemption remains explicit cancellation, not a failed current observation', async () => {
+    const agent = { bot: { entity: {}, interrupt_code: true },
+        prompter: { vision_model: { sendVisionRequest() {} } } };
+    const vision = new VisionInterpreter(agent, true);
+    await assert.rejects(vision.lookAround(), error => error.name === 'AbortError');
+    assert.equal(vision._pending, null);
+});

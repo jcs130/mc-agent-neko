@@ -15,7 +15,7 @@ export class VisionInterpreter {
 
     _assertCurrent() {
         if (this.agent.bot !== this.bot || !this.bot.entity || this.bot.interrupt_code)
-            throw new Error('Vision cancelled: game body changed or action interrupted.');
+            throw Object.assign(new Error('Vision cancelled: game body changed or action interrupted.'), { name: 'AbortError' });
     }
 
     async lookAround() {
@@ -33,7 +33,7 @@ export class VisionInterpreter {
         const controller = new AbortController();
         const poll = setInterval(() => {
             if (this.agent.bot !== this.bot || this.bot.interrupt_code || !this.bot.entity)
-                controller.abort(new Error('Vision cancelled: game body changed or interrupted.'));
+                controller.abort(Object.assign(new Error('Vision cancelled: game body changed or interrupted.'), { name: 'AbortError' }));
         }, 100);
         try {
             const jpeg = await captureModernView(viewer.url, { signal: controller.signal });

@@ -87,6 +87,58 @@ function fixture() {
     return { api, agent, calls, context };
 }
 
+test('a thrown query records the actual failure and the next decision can choose a physical step', async () => {
+    const { agent, calls, context } = fixture();
+    const error = new Error('page.waitForFunction: Timeout 23275ms exceeded.');
+    error.name = 'TimeoutError';
+    context.commandFailure = error;
+    vm.runInContext("getCommand('!stats').perform = async () => { throw commandFailure; };", context);
+    agent._adminMultiCmdActive = () => false;
+    let decisions = 0;
+    agent.prompter.promptConvo = async () => {
+        if (decisions++ === 0) return '!stats';
+        assert.ok(calls.history.some(row => /Action failed: !stats/.test(row.content)));
+        return '!getWood(1)';
+    };
+    await agent.handleMessage('admin', 'query then act', 2);
+    assert.equal(decisions, 2);
+    assert.equal(calls.performed.length, 1);
+    const failure = calls.history.find(row => /Action failed: !stats/.test(row.content));
+    assert.match(failure.content, /TimeoutError: page.waitForFunction: Timeout 23275ms exceeded/);
+    assert.match(failure.content, /completion.*not confirmed/i);
+});
+
+test('a thrown first batch command records failure and never runs the remaining action', async () => {
+    const { agent, calls, context } = fixture();
+    vm.runInContext("getCommand('!stats').perform = async () => { throw new Error('capture unavailable'); };", context);
+    agent.prompter.promptConvo = async () => '!stats !getWood(1)';
+    await agent.handleMessage('admin', 'batch');
+    assert.equal(calls.performed.length, 0);
+    assert.ok(calls.history.some(row => /Action failed: !stats/.test(row.content)));
+    assert.ok(calls.history.some(row => /remaining command\(s\) were not executed/.test(row.content)));
+});
+
+test('abort and stale ownership keep cancellation semantics instead of becoming fresh failure feedback', async () => {
+    for (const cause of ['abort', 'body', 'mission', 'interrupt']) {
+        const { api, agent, calls, context } = fixture();
+        const mine = {};
+        agent._missionEnabled = true;
+        agent.adminMission = { isActive: () => true, mission: mine,
+            recordObservation: () => calls.hooks.push('observation') };
+        context.failCurrent = () => {
+            const error = new Error('interrupted query');
+            if (cause === 'abort') error.name = 'AbortError';
+            if (cause === 'body') agent.bot = {};
+            if (cause === 'mission') agent.adminMission.mission = {};
+            if (cause === 'interrupt') agent.bot.interrupt_code = true;
+            throw error;
+        };
+        vm.runInContext("getCommand('!stats').perform = () => failCurrent();", context);
+        await assert.rejects(api.executeCommand(agent, '!stats', () => {}), /interrupted query/);
+        assert.equal(calls.hooks.length, 0);
+    }
+});
+
 test('the unlimited mission response loop exits after unchanged query warnings are ignored', async () => {
     const { agent, calls, context } = fixture();
     const source = readFileSync(new URL('../src/agent/admin_mission.js', import.meta.url), 'utf8')
