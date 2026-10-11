@@ -1,7 +1,7 @@
 {
   "upstreamRepository": "https://github.com/Project-N-E-K-O/N.E.K.O",
   "baseCommit": "fb2a2e731a8c954478d08678b0c8cf40e8145a54",
-  "sourceCommit": "0a7b96096db6f7dcbaad67a2a5b50c0635da0fbc",
+  "sourceCommit": "4448190fff5bef6aa8d310e3988fd11cc6ef57a6",
   "scope": "plugin/plugins/game_agent_minecraft",
   "resultPluginTree": "b75fd2bc2a42cf45a2e84eceab484ab8a31178d7",
   "patches": [
@@ -628,6 +628,15 @@
       "scopePaths": [
         "main_logic/omni_offline_client/_minecraft_narration.py",
         "tests/unit/test_minecraft_narration_context.py"
+      ]
+    },
+    {
+      "file": "host-patches/0028-fix-local-preserve-complete-game-history-in-provider.patch",
+      "sha256": "66b786b00f154feb914d664866ad25df53eb45755df8cdfe985e676fe46fb803",
+      "scopePaths": [
+        "main_logic/omni_offline_client/_tools.py",
+        "tests/unit/test_local_strata_prefill.py",
+        "utils/llm_client/prefill.py"
       ]
     }
   ],
@@ -1525,7 +1534,7 @@
   },
   "completeInformationVerification": {
     "date": "2026-10-12",
-    "sourceCommit": "0a7b96096db6f7dcbaad67a2a5b50c0635da0fbc",
+    "sourceCommit": "4448190fff5bef6aa8d310e3988fd11cc6ef57a6",
     "nativeCommit": "7c8c278ea92138d2aa2fca71a70779c294fbb111",
     "runtimeCommit": "be808d311619b331fcb44e9ab5a771bde3eecde6",
     "nativeRelatedPassed": 243,
@@ -1548,6 +1557,11 @@
     "dimensionRefreshRetainsPendingEvents": true,
     "commandShapedLogFilteringRemoved": true,
     "allLogsTimestamped": true,
-    "completeSessionNarration": true
+    "completeSessionNarration": true,
+    "providerRelatedPassed": 334,
+    "providerHistoryProjectionRemoved": true,
+    "gameScreenCommentProjectionRemoved": true,
+    "localMessagePlanePayloadBytes": 16777216,
+    "transportNeverSilentlyClips": true
   }
 }

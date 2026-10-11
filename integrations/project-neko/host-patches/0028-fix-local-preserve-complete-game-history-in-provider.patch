@@ -1,0 +1,86 @@
+From 4448190fff5bef6aa8d310e3988fd11cc6ef57a6 Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Mon, 12 Oct 2026 01:42:58 +0800
+Subject: [PATCH] fix(local): preserve complete game history in provider
+ request views
+
+---
+ main_logic/omni_offline_client/_tools.py |  6 ++++++
+ tests/unit/test_local_strata_prefill.py  | 18 ++++++++++++++++--
+ utils/llm_client/prefill.py              |  9 ++-------
+ 3 files changed, 24 insertions(+), 9 deletions(-)
+
+diff --git a/main_logic/omni_offline_client/_tools.py b/main_logic/omni_offline_client/_tools.py
+index 94f3a1c..7e3f7d6 100644
+--- a/main_logic/omni_offline_client/_tools.py
++++ b/main_logic/omni_offline_client/_tools.py
+@@ -172,6 +172,12 @@ class _ToolingMixin:
+         if prefill.game_scope.get() and prefill.enabled(getattr(self, 'base_url', None)):
+             messages = prefill.project_game_history(messages)
+         paired = self._paired_tool_rounds(messages)
++        if prefill.game_scope.get():
++            # Game history is evidence, including earlier narration and visual
++            # comments. Repair invalid tool pairing without applying the
++            # generic screen-comment projection to a trusted game request.
++            return (presentation_messages(paired, language=self._tool_image_locale())
++                    if getattr(self, 'joint_reply_emotion', False) else paired)
+         turn_start = next(
+             (index + 1 for index in range(len(paired) - 1, -1, -1)
+              if getattr(paired[index], "type", None) == "human"),
+diff --git a/tests/unit/test_local_strata_prefill.py b/tests/unit/test_local_strata_prefill.py
+index 18711d3..c31f818 100644
+--- a/tests/unit/test_local_strata_prefill.py
++++ b/tests/unit/test_local_strata_prefill.py
+@@ -47,16 +47,30 @@ def test_default_policy_is_byte_identical(monkeypatch):
+     assert prefill.request_policy(body, 'http://127.0.0.1:18030/v1', 'emotion') is body
+ 
+ 
+-def test_history_projection_retains_users_tools_and_recent_narration():
++def test_history_projection_retains_users_tools_and_all_narration():
+     history = [SimpleNamespace(type='ai', content=str(i), additional_kwargs={'dialog_source': 'proactive'}) for i in range(20)]
+     user = SimpleNamespace(type='human', content='停止、规则、玩家的原话', additional_kwargs={})
+     tool = {'role': 'tool', 'tool_call_id': 'actual', 'content': 'protection denied'}
+     original = [user, *history, tool]
+     actual = prefill.project_game_history(original)
+-    assert actual == [user, *history[-6:], tool]
++    assert actual is original
+     assert len(original) == 22
+ 
+ 
++def test_game_provider_view_skips_generic_screen_comment_projection(monkeypatch):
++    from main_logic.omni_offline_client import _tools
++    client = SimpleNamespace(_paired_tool_rounds=lambda messages: messages, joint_reply_emotion=False)
++    original = [SimpleNamespace(type='ai', content=f'完整视觉说明 {n}') for n in range(20)]
++    def forbidden(*args, **kwargs):
++        raise AssertionError('Generic screen projection must not hide game evidence')
++    monkeypatch.setattr(_tools, 'project_screen_history', forbidden)
++    token = prefill.game_scope.set('trusted Minecraft request')
++    try:
++        assert _tools._ToolingMixin._dialog_messages_for_provider(client, original) is original
++    finally:
++        prefill.game_scope.reset(token)
++
++
+ def test_optional_background_is_coalesced_while_game_requests_bypass_it(monkeypatch):
+     monkeypatch.setenv('NEKO_LOCAL_STRATA_PREFILL', '1')
+     async def run():
+diff --git a/utils/llm_client/prefill.py b/utils/llm_client/prefill.py
+index 9c6ca59..a8788f6 100644
+--- a/utils/llm_client/prefill.py
++++ b/utils/llm_client/prefill.py
+@@ -46,13 +46,8 @@ def request_policy(body: dict, base_url, call_type: str) -> dict:
+ 
+ 
+ def project_game_history(messages):
+-    """Keep all user wording and tool receipts; bound only old tagged narration."""
+-    def narration(message):
+-        meta = getattr(message, 'additional_kwargs', None) or getattr(message, 'metadata', None) or {}
+-        return getattr(message, 'type', None) == 'ai' and meta.get('dialog_source') == 'proactive'
+-    indexes = [index for index, message in enumerate(messages) if narration(message)]
+-    discard = set(indexes[:-6])
+-    return [message for index, message in enumerate(messages) if index not in discard] if discard else messages
++    """Keep complete game history; caching must not discard evidence."""
++    return messages
+ 
+ 
+ async def background_admission(base_url, call_type, *, probe=None, max_wait=10.0, interval=0.25):
