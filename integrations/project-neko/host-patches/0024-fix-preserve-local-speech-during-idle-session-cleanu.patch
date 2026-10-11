@@ -1,0 +1,95 @@
+From d5b2815dd1fdf4b11fdbbe06320b2c39ccbc5a0d Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Sun, 11 Oct 2026 21:21:04 +0800
+Subject: [PATCH] fix: preserve local speech during idle session cleanup
+
+---
+ main_logic/core/lifecycle.py                | 10 ++++--
+ tests/unit/test_offline_reply_work_gates.py | 39 +++++++++++++++++++++
+ 2 files changed, 46 insertions(+), 3 deletions(-)
+
+diff --git a/main_logic/core/lifecycle.py b/main_logic/core/lifecycle.py
+index 5e3c418..a668b1d 100644
+--- a/main_logic/core/lifecycle.py
++++ b/main_logic/core/lifecycle.py
+@@ -890,8 +890,8 @@ class LifecycleMixin:
+     async def _idle_session_reset_loop(self) -> None:
+         """Periodically check the user's silence duration; past the threshold, proactively
+         end_session so the next message triggers fresh /new_dialog context injection.
+-        Guards: reply work in progress / takeover / session starting / no activity
+-        timestamp → skip this round, re-evaluate next round.
++        Guards: reply work or playback in progress / takeover / session starting /
++        no activity timestamp → skip this round, re-evaluate next round.
+ 
+         Reply work is ``session_reply_in_progress`` and, on an offline session,
+         anything ``is_idle`` still counts (the same check the owed wrap-up's
+@@ -912,7 +912,11 @@ class LifecycleMixin:
+                 session = self.session
+                 if session_reply_in_progress(session) or (
+                     isinstance(session, OmniOfflineClient) and not session.is_idle()
+-                ):
++                ) or self._is_voice_playing():
++                    # LLM completion precedes external TTS synthesis/playback.
++                    # Reuse the bounded gate, including fresh local audio's
++                    # grace period, rather than cancelling that tail or letting
++                    # a lost playback-end flag block cleanup forever.
+                     continue
+                 last_activity = self.last_user_activity_time
+                 if last_activity is None:
+diff --git a/tests/unit/test_offline_reply_work_gates.py b/tests/unit/test_offline_reply_work_gates.py
+index ad7cd26..707db7f 100644
+--- a/tests/unit/test_offline_reply_work_gates.py
++++ b/tests/unit/test_offline_reply_work_gates.py
+@@ -62,6 +62,7 @@ def idle_reset(monkeypatch):
+             session=session,
+             _starting_session_count=0,
+             _takeover_active=False,
++            _is_voice_playing=lambda: False,
+             last_user_activity_time=time.time() - 2 * IDLE_SESSION_RESET_THRESHOLD_SECONDS,
+             end_session=AsyncMock(),
+         )
+@@ -136,6 +137,44 @@ async def test_the_idle_reset_still_waits_for_a_realtime_response(idle_reset):
+     assert mgr.end_session.await_count >= 1
+ 
+ 
++@pytest.mark.parametrize("local_tail", [False, True])
++async def test_idle_reset_waits_for_real_playback_gate_after_model_finishes(
++    idle_reset, local_tail,
++):
++    """A finished LLM reply can still have synthesizing/playing audio."""
++    from main_logic.core import proactive
++
++    session = _client()
++    assert session.is_idle()
++    mgr = idle_reset(session)
++    mgr._voice_playback_active = True
++    mgr._VOICE_PLAYBACK_STALE_S = 45.0
++    mgr._voice_playback_started_ts = time.monotonic() - (90 if local_tail else 2)
++    mgr._tts_active_provider_key = proactive.LOCAL_PRIMARY_PROVIDER if local_tail else None
++    mgr._last_speech_output_time = time.time()
++    mgr._is_voice_playing = lambda: M._is_voice_playing(mgr)
++    await _drain()
++    mgr.end_session.assert_not_awaited()
++
++    # Playback-end releases the ordinary user-silence cleanup; no new user
++    # input, invented user activity or extra model request is needed.
++    mgr._voice_playback_active = False
++    await _drain()
++    assert mgr.end_session.await_count >= 1
++
++
++async def test_idle_reset_does_not_wait_forever_for_stale_playback_flag(idle_reset):
++    mgr = idle_reset(_client())
++    mgr._voice_playback_active = True
++    mgr._voice_playback_started_ts = time.monotonic() - 90
++    mgr._VOICE_PLAYBACK_STALE_S = 45.0
++    mgr._tts_active_provider_key = None
++    mgr._is_voice_playing = lambda: M._is_voice_playing(mgr)
++    await _drain()
++    assert mgr.end_session.await_count >= 1
++    assert mgr._voice_playback_active is False
++
++
+ # ── Greetings never restart a text session that is replying ─────────────────
+ 
+ 

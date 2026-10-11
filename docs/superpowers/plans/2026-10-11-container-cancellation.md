@@ -36,14 +36,22 @@
 - [x] Implement the owned wait using windowOpen/end events, interrupt polling and a six-second deadline. Remove only owned listeners/timers at settlement. Observe activateBlock rejection, and use the already extended event window instead of leaving openContainer's hidden waiter behind.
 - [x] Gate each chest skill after navigation; log explicit opening failure and never call a timeout an empty container. Close successful windows in finally only while still owned; propagate the command's boolean result.
 - [x] Cover success, timeout, cancellation/death/end/generation, activation rejection, late/foreign windows and unreachable navigation; real Mineflayer inventory packets prove slot and method initialization.
-- [ ] Run focused container, action reconnect, combat window and collection cancellation suites; inspect diff and commit only scoped files.
+- [x] Run focused container, action reconnect, combat window and collection cancellation suites; inspect diff and commit only scoped files.
 
 ### Task 2: Deployment and attribution
 
 **Files:** Private runtime/hourly-20261011-2043 evidence, logs/hourly-inspection.log and hourly-check-state.json; no private artifacts committed.
 
 - [x] Record T-0068 occurrences=1 before source changes in the private container-ticket-baseline.json.
-- [ ] Transfer the tested commit to the existing native checkout while preserving its unrelated arbitration file. Check native tests and file hashes.
-- [ ] Use the existing owned native-child restart mechanism once, after repeated full-health safe idle observations; verify main/plugin/model/voice/spectator identity continuity.
-- [ ] Observe natural online actions and results, separate unit proof from actual successful container opening. Submit prepared/deployed/verified receipt only for evidence actually obtained.
+- [x] Transfer the tested commit to the existing native checkout while preserving its unrelated arbitration file. Native 64 related tests and all four changed source/test Git blobs match; working-tree line endings differ.
+- [x] Use the existing owned native-child restart mechanism once, after repeated full-health safe idle observations; verify main/plugin/model/voice/spectator identity continuity.
+- [x] Observe natural online actions and results, separate unit proof from actual successful container opening. T-0068 deployed receipt accepted; a natural chest-opening acceptance remains pending.
 - [ ] Push to contribution-fork, confirm remote SHA, update the inspection comparison baseline and report the actual remaining acceptance limits.
+
+Deployment evidence: the code commit `5f269d32de5f9deefa71495991be5a88e13d37bc`
+was pushed and remote-confirmed; native source `fd94b7d066ac969e63fda97139cb7e40458a5467`
+was loaded once at Beijing 21:04:23. The main/plugin host, local model, local TTS,
+spectator and monitor identities were preserved. Online samples retain health
+and food at 20. Later inventory shows three iron consumed and one iron pickaxe
+added, plus a position change; this is limited measured progress, not proof of
+finished commissions, successful chest opening or productive autonomous play.

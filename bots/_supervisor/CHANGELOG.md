@@ -3237,3 +3237,15 @@
 - Validation: eight original reproductions fail before the change; the final
   focused suites pass 64 cases, including real Mineflayer slot initialization.
   Deployment and a natural successful opening remain separate acceptance gates.
+
+### 2026-10-11 — Keep idle maintenance from cancelling local speech
+- Evidence: Beijing 21:07:54 user-silence cleanup cancelled the TTS handler while
+  the speech started at 21:07:48 still lacked completion/end receipts.
+- Mechanism: model-idle was treated as session-idle while external speech lived
+  beyond model completion. Reuse the existing bounded playback gate before reset.
+- Falsifiable prediction: cleanup waits during active playback and fresh local
+  audio; a stale gate with no new audio still expires without new user input.
+- Validation: three new reproductions fail before the change; 17 direct and
+  173 related cases pass (overlapping sets). Companion patch 0024 replays with
+  all 96 patches and matches 59 host files. Runtime deployment/periodic boundary
+  acceptance and recurring generated narration remain separately tracked.

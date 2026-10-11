@@ -1,7 +1,7 @@
 {
   "upstreamRepository": "https://github.com/Project-N-E-K-O/N.E.K.O",
   "baseCommit": "fb2a2e731a8c954478d08678b0c8cf40e8145a54",
-  "sourceCommit": "481140c7aba57e067c7ed1f80092494720ce01b9",
+  "sourceCommit": "d5b2815dd1fdf4b11fdbbe06320b2c39ccbc5a0d",
   "scope": "plugin/plugins/game_agent_minecraft",
   "resultPluginTree": "51bcc254ea91d7be6bf26026b50ee7eeff16aa48",
   "patches": [
@@ -574,6 +574,15 @@
         "main_logic/omni_offline_client/_lifecycle.py",
         "main_logic/omni_offline_client/_minecraft_narration.py",
         "tests/unit/test_minecraft_narration_context.py"
+      ]
+    },
+    {
+      "file": "host-patches/0024-fix-preserve-local-speech-during-idle-session-cleanu.patch",
+      "sha256": "90d530d68e48a255f6062257e771f124708bd8bbc73b3bdeec240ea7d78b691b",
+      "sourceCommit": "d5b2815dd1fdf4b11fdbbe06320b2c39ccbc5a0d",
+      "scopePaths": [
+        "main_logic/core/lifecycle.py",
+        "tests/unit/test_offline_reply_work_gates.py"
       ]
     }
   ],
@@ -1388,6 +1397,27 @@
     "audibleHumanAcceptance": "open",
     "wholeGameplayAcceptance": "open",
     "ticketId": "T-0067",
+    "ticketOccurrences": 1
+  },
+  "idlePlaybackResetVerification": {
+    "date": "2026-10-11",
+    "sourceCommit": "d5b2815dd1fdf4b11fdbbe06320b2c39ccbc5a0d",
+    "redFailed": 3,
+    "redPassed": 4,
+    "directPassed": 17,
+    "relatedPassed": 173,
+    "countsOverlap": true,
+    "ruffPassed": true,
+    "fullReplayMatchesSource": true,
+    "extraModelCalls": 0,
+    "textMuting": false,
+    "idleThresholdChanged": false,
+    "watchdogChanged": false,
+    "deploymentPhase": "prepared",
+    "naturalIdleBoundaryAcceptance": "open",
+    "audibleHumanAcceptance": "open",
+    "semanticRepetitionAcceptance": "open",
+    "ticketId": "T-0069",
     "ticketOccurrences": 1
   }
 }

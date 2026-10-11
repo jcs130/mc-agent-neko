@@ -496,3 +496,11 @@ Patch 0022 declares the local worker's final `audio_done` contract in audio
 headers. Its consumer waits through synthesis gaps with a bounded 45-second
 missing-done recovery, rather than the legacy 700ms fallback. Apply it to both
 the host and desktop consumer; merely refreshing the desktop is insufficient.
+
+Host patch 0024 makes user-silence session cleanup honor the existing bounded
+playback gate after model generation finishes. It protects active local speech,
+retains expired-gate recovery and adds no model calls. Apply the full companion
+series and reload the host at a measured idle boundary. See the local speech
+report for the reproduced cancellation, 173 related checks and separate
+deployment and natural inactivity-boundary acceptance. Repeated generated
+narration remains a separate open issue.
