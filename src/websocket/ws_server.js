@@ -841,6 +841,10 @@ class WSMessageServer {
         this.taskCompleted = false;
         this.lastTaskCompletionTime = null;
         console.log(`🎯 mission begin (${origin || 'ws'}) task_id=${this.currentTaskId || '-'}: ${String(text).slice(0, 80)}`);
+        if (origin === 'ws' && this.currentTaskId) {
+            this.broadcast({ type: 'task_accepted', task_id: this.currentTaskId,
+                acceptedAt: this.taskStartTime, phase: 'planning' });
+        }
     }
     finishMission(taskId, status, message) {
         const id = (typeof taskId === 'string' && taskId) ? taskId : null;

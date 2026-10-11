@@ -18,6 +18,28 @@ function fixture() {
     return { bridge: context.bridge, created };
 }
 
+test('only an installed external mission emits its exact acceptance, before movement is claimed', () => {
+    const { bridge } = fixture();
+    const frames = [];
+    bridge.broadcast = frame => frames.push(frame);
+    bridge.beginMissionTask('沿现有通道去入口', 'task-owned', 'ws');
+    assert.equal(frames.length, 1);
+    assert.equal(frames[0].type, 'task_accepted');
+    assert.equal(frames[0].task_id, 'task-owned');
+    assert.equal(frames[0].phase, 'planning');
+    assert.equal(frames[0].acceptedAt, bridge.taskStartTime);
+    assert.equal('completed' in frames[0], false);
+});
+
+test('legacy or in-game missions do not fabricate an external task acceptance', () => {
+    const { bridge } = fixture();
+    const frames = [];
+    bridge.broadcast = frame => frames.push(frame);
+    bridge.beginMissionTask('chat task', 'chat-owned', 'chat');
+    bridge.beginMissionTask('legacy task', null, 'ws');
+    assert.equal(frames.length, 0);
+});
+
 test('respawn start reuses the binding and existing clients while the listener is alive', () => {
     const { bridge, created } = fixture();
     bridge.start();
