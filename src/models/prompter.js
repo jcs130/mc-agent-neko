@@ -255,7 +255,8 @@ export class Prompter {
             await this.agent.history.waitForMemory?.();
             // A completed summary may have consumed pending raw turns while this
             // request waited. Re-snapshot so they are represented exactly once.
-            if (this.agent.history.getHistory) messages = this.agent.history.getHistory();
+            if (this.agent.history.getTaskHistory) messages = this.agent.history.getTaskHistory();
+            else if (this.agent.history.getHistory) messages = this.agent.history.getHistory();
             messages = executionPromptHistory(messages, this.agent);
             for (let i = 0; i < 3; i++) { // try 3 times to avoid hallucinations
                 if (i > 0) {

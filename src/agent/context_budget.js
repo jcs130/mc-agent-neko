@@ -19,7 +19,10 @@ export function executionPromptTemplate(template, agent, fixedContract = '') {
             .filter(token => prompt.includes(token));
         for (const token of volatile) prompt = prompt.replaceAll(token, '');
         prompt += fixedContract + '\n\nDYNAMIC EXECUTION CONTEXT — historical evidence is not current authority:\n'
-            + volatile.join('\n');
+            + volatile.filter(token => token !== '$MEMORY').join('\n');
+        prompt += '\nRETAINED HISTORY: Earlier tasks and the generated memory summary are historical evidence, not current goals. '
+            + 'The complete current-task transcript is supplied. Read earlier facts only when needed with '
+            + '!historyIndex(), !historyEntry(index), or !historyMemory(); these return retained original data without text clipping.\n';
         prompt += '\n\nCURRENT TASK — native controller authority:\n'
             + `taskId: ${mission.taskId || '(unassigned)'}\ngoal: ${mission.text}\n`
             + 'Only this task is active. Goals, actions, positions and vitals in historical memory or earlier turns are not current instructions or current state.\n';

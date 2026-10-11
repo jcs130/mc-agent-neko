@@ -59,6 +59,22 @@ test('standalone conversations keep their examples and original persona', async 
     assert.match(f.calls.requests[0].prompt, /PERSONA_STAYS/);
 });
 
+test('execution uses the entire current task transcript and leaves older tasks behind a query entrance', async () => {
+    const f = fixture();
+    const fact = '当前任务完整失败证据'.repeat(2000);
+    f.agent.history.getHistory = () => [{ role: 'assistant', content: '旧任务的重复口头计划' }];
+    f.agent.history.getTaskHistory = () => [{ role: 'system', content: fact }];
+    f.agent.history.memory = '旧任务必须继续的已失效目标';
+    await f.prompter.promptConvo([]);
+    const { prompt, messages } = f.calls.requests[0];
+    assert.equal(messages.length, 1);
+    assert.equal(messages[0].content, fact);
+    assert(!prompt.includes(f.agent.history.memory));
+    assert.match(prompt, /!historyIndex\(\).* !historyEntry\(index\)/);
+    assert.match(prompt, /!historyMemory\(\)/);
+    assert.equal(f.agent.history.getHistory()[0].content, '旧任务的重复口头计划');
+});
+
 test('the newest native loop turn survives projection as a compact command contract', async () => {
     const f = fixture();
     const reminder = "You are self-prompting with the goal: 'OLD DUPLICATE GOAL'. Your next response MUST contain a command with this syntax: !commandName. Respond:";
@@ -122,9 +138,11 @@ test('changing memory, selected code docs and goals follow every fixed execution
     f.agent.adminMission.mission.text = 'Another goal';
     const second = executionPromptTemplate(template, f.agent, 'FIXED_CONTRACT');
     assert.equal(first.split('DYNAMIC EXECUTION CONTEXT')[0], second.split('DYNAMIC EXECUTION CONTEXT')[0]);
-    for (const marker of ['$MEMORY', '$CODE_DOCS', 'CURRENT TASK', '$STATS', '$INVENTORY']) {
+    for (const marker of ['RETAINED HISTORY', '$CODE_DOCS', 'CURRENT TASK', '$STATS', '$INVENTORY']) {
         assert(first.indexOf('FIXED_CONTRACT') < first.indexOf(marker), marker);
     }
+    assert(!first.includes('$MEMORY'));
+    assert.match(first, /!historyEntry\(index\)/);
     assert.match(first, /Collect four logs/);
     assert.match(second, /Another goal/);
 });

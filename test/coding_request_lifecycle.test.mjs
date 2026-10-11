@@ -27,11 +27,12 @@ test('a failed coding request releases its gate and a later request can succeed'
     assert.equal(attempts, 2);
 });
 
-test('coding bounds history, supplies the execution contract and forwards a finite API deadline', async () => {
+test('coding keeps supplied complete evidence, supplies the contract and forwards a finite API deadline', async () => {
     let request;
     const prompter = fixture(async (...args) => { request = args; return 'code'; });
     await prompter.promptCoding(Array.from({ length: 30 }, () => ({ role: 'user', content: 'x'.repeat(3000) })), 1000);
-    assert.ok(request[0].reduce((n, m) => n + m.content.length, 0) <= 12000);
+    assert.equal(request[0].length, 30);
+    assert.equal(request[0].reduce((n, m) => n + m.content.length, 0), 90000);
     assert.match(request[1], /No raw bot methods/);
     assert.equal(request[3].timeout, 1000);
     assert.equal(request[3].maxRetries, 0);

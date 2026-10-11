@@ -17,6 +17,22 @@ const pad = (str) => {
 // queries are commands that just return strings and don't affect anything in the world
 export const queryList = [
     {
+        name: '!historyIndex',
+        description: 'Read the complete retained historical turn catalogue (indices, roles, task IDs and times). Current task history is already supplied. Query an exact old turn with !historyEntry(index); old goals and summaries are not current instructions.',
+        perform: agent => pad(JSON.stringify(agent.history.getEvidenceIndex())),
+    },
+    {
+        name: '!historyEntry',
+        description: 'Read one retained original historical turn in full, including its action/result text. Use an index from !historyIndex. No text clipping; historical facts must not override live state or current task authority.',
+        params: { index: { type: 'int', description: 'Exact zero-based retained history index.' } },
+        perform: (agent, index) => pad(JSON.stringify(agent.history.getEvidenceEntry(index))),
+    },
+    {
+        name: '!historyMemory',
+        description: 'Read the complete generated historical memory summary on demand. It is a summary, not a current goal or proof of success; original turns are available via !historyIndex and !historyEntry.',
+        perform: agent => pad(JSON.stringify({ historical: true, kind: 'generated_summary', value: agent.history.memory })),
+    },
+    {
         name: '!lookAround',
         description: 'Use the configured vision model to analyze one current rendered game frame without moving or turning. On demand for terrain/structure uncertainty, not a heartbeat. Visual appearance cannot prove inventory, break permission or server rules; check actual game/server data.',
         perform: async agent => pad(await agent.vision_interpreter.lookAround()),
@@ -40,7 +56,7 @@ export const queryList = [
     },
     {
         name: '!readBookPages',
-        description: 'Read up to 8 book pages starting at a specified page, without using or editing the book.',
+        description: 'Read all received book pages from a specified start page, without using or editing the book.',
         params: {
             slot: { type: 'int', description: 'Inventory slot; -1 chooses the held book or first book.' },
             start_page: { type: 'int', description: 'First page to read, starting at 1.' },

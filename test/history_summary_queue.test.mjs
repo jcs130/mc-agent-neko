@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
-import { sanitizeMemorySummary, memoryEvidence, boundedPromptHistory } from '../src/agent/context_budget.js';
+import { sanitizeMemorySummary, memoryEvidence, boundedPromptHistory, externalMission } from '../src/agent/context_budget.js';
 
 function fixture() {
     const files = new Map(), timers = new Set(), calls = [], clock = { now: 100000 };
@@ -11,7 +11,7 @@ function fixture() {
             calls.push({ turns, oldMemory, resolve, reject });
         }) } };
     const context = vm.createContext({ console: { log() {}, warn() {}, error() {} }, settings: { max_messages: 12 },
-        sanitizeMemorySummary, memoryEvidence, boundedPromptHistory, Date: class extends Date { static now() { return clock.now; } },
+        sanitizeMemorySummary, memoryEvidence, boundedPromptHistory, externalMission, Date: class extends Date { static now() { return clock.now; } },
         mkdirSync() {}, existsSync: path => files.has(path), readFileSync: path => files.get(path),
         writeFileSync: (path, value) => files.set(path, value),
         setTimeout: (fn, ms) => { const timer = { fn, ms, unref() {} }; timers.add(timer); return timer; },
@@ -39,6 +39,28 @@ test('overflow batches for 45 seconds instead of generating a summary every five
     assert.equal(f.history.memory, 'Spruce planks can make sticks.');
     assert.equal(f.history.getHistory().length, 20);
     assert(f.history.getHistory().some(turn => turn.content.startsWith('fact-0:')));
+});
+
+test('current-task input has no previous-task prose while original evidence remains exactly readable', async () => {
+    const f = fixture(); f.add(20, 'previous task'); await f.settle();
+    f.agent.hasExternalAutonomyOwner = () => true;
+    f.agent.adminMission = { isActive: () => true, mission: {
+        origin: 'ws', taskId: 'new-task', historyStart: f.history.complete_turns.length } };
+    const original = JSON.stringify(f.history.complete_turns);
+    assert.equal(f.history.getTaskHistory().length, 0);
+    const fullResult = '真实失败原因'.repeat(3000);
+    await f.history.add('system', fullResult);
+    await f.history.add(f.agent.name, '!goToPosition(1, 64, 2, 1)');
+    const input = f.history.getTaskHistory();
+    assert.equal(input.length, 2);
+    assert.equal(input[0].content, fullResult);
+    assert.equal(input[1].taskId, 'new-task');
+    assert.equal(JSON.stringify(f.history.complete_turns.slice(0, 20)), original);
+    assert.equal(f.history.getEvidenceIndex().total, 22);
+    assert.equal(f.history.getEvidenceEntry(0).turn.content, 'previous task-0: learned a recipe constraint');
+    assert.equal(f.history.getEvidenceEntry(20).turn.content, fullResult);
+    assert.equal(f.history.getEvidenceEntry(22).status, 'unavailable');
+    assert.equal(f.history.getEvidenceEntry(-1).status, 'unavailable');
 });
 
 test('pending original turns survive trimming, serialization and reload', async () => {

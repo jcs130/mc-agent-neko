@@ -392,7 +392,8 @@ export class AdminMission {
         const now = Date.now();
         const mine = { text: mine0.text, taskId: mine0.taskId, origin: mine0.origin,
             startedAt: now, deadlineAt: now + this._maxMs, deaths: 0, observations: [],
-            initialTurnPending: true, inventoryStart: missionInventory(this._bot()) };
+            initialTurnPending: true, inventoryStart: missionInventory(this._bot()),
+            historyStart: this.agent.history?.complete_turns?.length };
         mine.prompt = this._loopPrompt(mine.text);   // ★admin 独占铁律包裹的自驱 goal (见 _loopPrompt)
         // Supersede any running mission FIRST — fires the OLD taskId exactly once. keepLoop so the OLD
         // end() does NOT tear down the shared loop the incoming mission is about to own.

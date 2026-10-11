@@ -1,7 +1,7 @@
 import { writeFileSync, readFileSync, mkdirSync, existsSync } from 'fs';
 import { NPCData } from './npc/data.js';
 import settings from './settings.js';
-import { sanitizeMemorySummary, memoryEvidence, boundedPromptHistory } from './context_budget.js';
+import { sanitizeMemorySummary, memoryEvidence, boundedPromptHistory, externalMission } from './context_budget.js';
 
 
 export class History {
@@ -41,6 +41,31 @@ export class History {
         // Every received turn remains visible after summarization as well as
         // before it. Only an explicit clear() removes conversation evidence.
         return boundedPromptHistory(this.complete_turns);
+    }
+
+    getTaskHistory() {
+        const mission = externalMission(this.agent);
+        const start = mission?.historyStart;
+        // Scope by a controller-owned task boundary, never by character or
+        // turn quotas. Every turn of this task stays complete after summaries.
+        if (Number.isSafeInteger(start) && start >= 0 && start <= this.complete_turns.length)
+            return boundedPromptHistory(this.complete_turns.slice(start));
+        return this.getHistory();
+    }
+
+    getEvidenceIndex() {
+        return { historical: true, total: this.complete_turns.length,
+            memoryAvailable: !!this.memory, read: '!historyEntry(index), !historyMemory()',
+            entries: this.complete_turns.map((turn, index) => ({ index, role: turn.role,
+                chars: String(turn.content || '').length, taskId: turn.taskId ?? null,
+                recordedAt: turn.recordedAt ?? null })) };
+    }
+
+    getEvidenceEntry(index) {
+        if (!Number.isSafeInteger(index) || index < 0 || index >= this.complete_turns.length)
+            return { status: 'unavailable', reason: 'History index is out of range; use !historyIndex().' };
+        return { status: 'ok', historical: true, index, total: this.complete_turns.length,
+            turn: boundedPromptHistory([this.complete_turns[index]])[0], responseTruncated: false };
     }
 
     async summarizeMemories(turns, oldMemory = this.memory) {
@@ -175,8 +200,10 @@ export class History {
             role = 'user';
             content = `${name}: ${content}`;
         }
-        this.turns.push({role, content});
-        this.complete_turns.push({role, content});
+        const turn = { role, content, recordedAt: Date.now(),
+            taskId: externalMission(this.agent)?.taskId ?? null };
+        this.turns.push(turn);
+        this.complete_turns.push(turn);
 
         if (this.turns.length >= this.max_messages) {
             let chunk = this.turns.splice(0, this.summary_chunk_size);

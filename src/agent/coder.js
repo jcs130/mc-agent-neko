@@ -48,7 +48,7 @@ export class Coder {
         bot.modes.pause('unstuck');
         const deadline = Date.now() + 180000;
         // this message history is transient and only maintained in this function
-        let messages = agent_history.getHistory(); 
+        let messages = agent_history.getTaskHistory?.() ?? agent_history.getHistory();
         messages.push({role: 'system', content: 'Code generation started. Write code in codeblock in your response:'});
 
         const MAX_ATTEMPTS = 3;
