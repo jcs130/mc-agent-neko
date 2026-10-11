@@ -146,3 +146,14 @@ files. Live deployment and actual productive gameplay remain separate gates.
   sockets, plus a skills snapshot containing mana 28/28 and nine abilities.
   That skills snapshot was marked stale, with nine unknown cooldowns; this
   verifies frame transport and preserved data, not fresh cooldown telemetry.
+- A later purchase task received the server's specific supplier location.
+  Navigation reported arrival, and a fresh state placed the agent within three
+  blocks of that location, but the overall purchase task ended at its deadline
+  without a verified purchase. Arrival must not be counted as settlement or
+  mislabelled as a proven navigation failure. The following three-minute
+  observation had no movement; continuous productive autonomy remains open.
+- Closeout: the repair package was pushed and remote-head checked. T-0006
+  retained its actual pre-change occurrence baseline 352; the maintainer API
+  confirmed a `deployed` receipt. This records deployment without closing the
+  ticket or asserting full runtime recovery. Private evidence and the hourly
+  comparison baseline retain both productive and unsuccessful windows.

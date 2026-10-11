@@ -49,7 +49,7 @@
 - [x] Reload only the owned native executor at a safe idle boundary using the existing lifecycle deployment pattern and verify the loaded commit, online state and retained main/model/voice/spectator PIDs.
 - [x] Observe at least 90 seconds of natural state and task changes. Distinguish cancelled-action recovery from actual productive gathering, commission or combat success. The cancellation-only window showed no productive progress; later four-bread storage was real, while trading/commission/combat acceptance remains open.
 - [x] If the brain still repeats an impossible plan, inspect the actual received failure/context boundary and add a separate failing test before changing that mechanism.
-- [ ] Save sanitized evidence, update the inspection log and any applicable DSH receipt with the actual phase, then push the contribution fork. Do not claim completed commissions without server/inventory evidence.
+- [x] Save sanitized evidence, update the inspection log and any applicable DSH receipt with the actual phase, then push the contribution fork. Commit 97173a5 was verified on the remote; T-0006 baseline 352 received a confirmed deployed receipt. Inspection evidence and unresolved acceptance gates are saved under runtime/autonomy-20261011-1500. No completed commission is claimed.
 
 ### Task 3: Preserve received failure in bounded planner feedback
 
