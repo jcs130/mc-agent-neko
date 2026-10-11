@@ -61,6 +61,33 @@ outside Git.
 
 ## Deployment acceptance
 
-Prepared; the live viewer refresh and browser acceptance are recorded below
-after deployment. Passing fixtures or HTTP 200 alone does not establish live
-YSM rendering, native Java pixel parity or an actual OBS recording.
+At 17:43:54 Beijing time, the owned viewer-only refresh loaded native commit
+`0cccb3d7160c614614b1a9eca285e68d66893299` (consumer change `fed70dd`).
+Native PID 62512, entity 160443 and the original game session were retained;
+health/food stayed 20/20. Main, plugin, mindserver, local model, desktop, Eye,
+DSH, TTS keeper and unattended guardian PIDs/start times were retained. The
+temporary maintenance entry was removed. Native consumer verification passed
+13 tests; its base has fewer adapter tests than the contribution checkout.
+
+At 17:46, both real LAN socket paths delivered 212–213 avatar frames, 81 chunks,
+46 minimap updates and nine abilities in 22 seconds, without connection errors.
+Mana remained the correctly labelled cached 28/28; replayed cooldowns were
+unknown, not newly claimed ready. The actual served browser bundle matched the
+recorded SHA-256. Each path received five appearance states for the actual own
+player UUID, no assets, and the corrected
+`renderReason=YSM_WORKER_STATE_UNAVAILABLE`.
+
+Browser inspection confirmed real terrain in dungeon view and the explicit
+YSM status. OBS showed the painted 2D map, survival HUD, mana/skills and message
+history entry; its body background was transparent and no world canvas was
+created. The map was checked visually, not only through HTTP. No browser error
+was captured; the pre-existing duplicate Three.js warning remains. Neither an
+actual OBS recording nor YSM geometry/animation/native pixel parity is claimed.
+
+The unavailable state belongs to ag_NEKO itself. Client diagnostics are fixed,
+but YSM display still needs an assigned, available server appearance state and
+the corresponding original distributable model resources. This is a request
+for server-side verification, not a confirmed server defect. No server change,
+YSM assignment, guessed mesh, test chat, gameplay action or model call was made.
+Private evidence is under `runtime/viewer-obs-ysm-20261011-1735/` and includes
+source/build checks, stream metadata, viewer-only receipt and browser screenshots.
