@@ -1,7 +1,7 @@
 {
   "upstreamRepository": "https://github.com/Project-N-E-K-O/N.E.K.O",
   "baseCommit": "fb2a2e731a8c954478d08678b0c8cf40e8145a54",
-  "sourceCommit": "e675de2ee4254ea80b1b9bc1223dda3f667cda3b",
+  "sourceCommit": "9387a5ec7e5341f7605422806c6aeeba0ceb1f6e",
   "scope": "plugin/plugins/game_agent_minecraft",
   "resultPluginTree": "0eb7f71201478f5e469000d2856cf798fb987c92",
   "patches": [
@@ -464,6 +464,19 @@
       "scopePaths": [
         "main_logic/omni_offline_client/_tools.py",
         "tests/unit/test_tool_calling.py"
+      ]
+    },
+    {
+      "file": "host-patches/0016-fix-interrupt-slow-TTS-draining-and-buffer-local-Vox.patch",
+      "sha256": "4c2f6bac20dee5d9cdd9491e310e548d19b83a981af9bd18a5e6f0b1f498baf7",
+      "sourceCommit": "9387a5ec7e5341f7605422806c6aeeba0ceb1f6e",
+      "scopePaths": [
+        "main_logic/tts_client/_infra.py",
+        "main_logic/tts_client/local_primary.py",
+        "main_logic/tts_client/workers/openai.py",
+        "tests/unit/test_local_voxcpm_primary.py",
+        "tests/unit/test_openai_compatible_tts.py",
+        "tests/unit/test_tts_audio_done_emit.py"
       ]
     }
   ],
@@ -1085,7 +1098,7 @@
     "receiptsAndStopGenerationGuardsPreserved": true,
     "plainChatAndUnmarkedTextUnchanged": true,
     "deploymentPhase": "deployed",
-    "productiveAcceptance": "not_verified",
+    "productiveAcceptance": "no natural tagged sample; playback acceptance still open",
     "fullReplayMatchesSource": true,
     "deploymentEvidence": "runtime/repetition-20261011-1237/thinking-host-deployment.json",
     "naturalTaggedReasoningCaseObserved": false,
@@ -1096,5 +1109,23 @@
     "unmarkedLongOutputStillObserved": true,
     "voiceEndWatchdogStillObserved": true,
     "repairReceiptWriteback": "pending-baseline-changed"
+  },
+  "localSentenceContinuityVerification": {
+    "date": "2026-10-11",
+    "sourceCommit": "9387a5ec7e5341f7605422806c6aeeba0ceb1f6e",
+    "focusedCasesPassed": 107,
+    "sharedSpeechCasesPassed": 757,
+    "beforeFixFailed": 3,
+    "explicitInterruptBypassesSlowTerminalDrain": true,
+    "normalSpeechRoundsRemainFifo": true,
+    "singlePendingExecutorQueueRead": true,
+    "localVoxSentenceStagingOnly": true,
+    "maxRawSentenceSeconds": 180,
+    "extraModelCalls": 0,
+    "firstSoundLatencyTradeoff": "complete sentence synthesis must finish first",
+    "backendSpeedAndInterSentenceWaitingResolved": false,
+    "deploymentPhase": "prepared",
+    "naturalPlaybackAcceptance": "pending",
+    "fullReplayMatchesSource": true
   }
 }

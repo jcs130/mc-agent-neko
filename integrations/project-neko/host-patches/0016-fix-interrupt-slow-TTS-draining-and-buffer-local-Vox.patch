@@ -1,0 +1,360 @@
+From 9387a5ec7e5341f7605422806c6aeeba0ceb1f6e Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Sun, 11 Oct 2026 14:16:46 +0800
+Subject: [PATCH] fix: interrupt slow TTS draining and buffer local Vox
+ sentences
+
+---
+ main_logic/tts_client/_infra.py          | 69 +++++++++++++++++++---
+ main_logic/tts_client/local_primary.py   |  1 +
+ main_logic/tts_client/workers/openai.py  | 35 ++++++++---
+ tests/unit/test_local_voxcpm_primary.py  | 74 ++++++++++++++++++++++++
+ tests/unit/test_openai_compatible_tts.py |  4 ++
+ tests/unit/test_tts_audio_done_emit.py   | 28 +++++++++
+ 6 files changed, 193 insertions(+), 18 deletions(-)
+
+diff --git a/main_logic/tts_client/_infra.py b/main_logic/tts_client/_infra.py
+index 44cf494..66fbb24 100644
+--- a/main_logic/tts_client/_infra.py
++++ b/main_logic/tts_client/_infra.py
+@@ -22,6 +22,7 @@ import re
+ import os
+ import math
+ import asyncio
++from collections import deque
+ from utils.logger_config import get_module_logger
+ 
+ logger = get_module_logger(__name__, "Main")
+@@ -724,10 +725,64 @@ async def _non_bistream_tts_main_loop(
+ 
+     # ── 主循环 ──
+     loop = asyncio.get_running_loop()
++    deferred_requests = deque()
++    pending_request = None
++
++    def _read_request():
++        # Reuse the outstanding blocking get: cancelling an executor Future
++        # cannot stop queue.get and would leave a second consumer stealing data.
++        nonlocal pending_request
++        if pending_request is None:
++            pending_request = loop.run_in_executor(None, request_queue.get)
++        return pending_request
++
++    async def _interrupt_speech():
++        nonlocal current_speech_id
++        audio_done.begin_interrupt()
++        try:
++            await _cancel_all()
++        finally:
++            audio_done.end_interrupt()
++        sentence_buf.clear()
++        current_speech_id = None
++
++    async def _drain_interruptibly():
++        nonlocal pending_request
++        closing = asyncio.create_task(_drain_remaining())
++        try:
++            while not closing.done():
++                request = _read_request()
++                ready, _ = await asyncio.wait(
++                    (closing, request), return_when=asyncio.FIRST_COMPLETED
++                )
++                if request in ready:
++                    item = request.result()
++                    pending_request = None
++                    if item[0] == "__interrupt__":
++                        # Preserve FIFO for ordinary rounds, but an explicit
++                        # interrupt invalidates all queued pre-interrupt text.
++                        deferred_requests.clear()
++                        closing.cancel()
++                        await _interrupt_speech()
++                        return False, True
++                    deferred_requests.append(item)
++                    if item[0] == TTS_SHUTDOWN_SENTINEL:
++                        # Shutdown remains FIFO. Do not start another blocking
++                        # queue.get after consuming the final sentinel.
++                        return await closing, False
++            return closing.result(), False
++        finally:
++            if not closing.done():
++                closing.cancel()
++            await asyncio.gather(closing, return_exceptions=True)
+ 
+     while True:
+         try:
+-            sid, tts_text = await loop.run_in_executor(None, request_queue.get)
++            if deferred_requests:
++                sid, tts_text = deferred_requests.popleft()
++            else:
++                sid, tts_text = await _read_request()
++                pending_request = None
+         except Exception:
+             break
+ 
+@@ -735,13 +790,7 @@ async def _non_bistream_tts_main_loop(
+             break
+ 
+         if sid == "__interrupt__":
+-            audio_done.begin_interrupt()
+-            try:
+-                await _cancel_all()
+-            finally:
+-                audio_done.end_interrupt()
+-            sentence_buf.clear()
+-            current_speech_id = None
++            await _interrupt_speech()
+             continue
+ 
+         if current_speech_id != sid and sid is not None:
+@@ -755,7 +804,9 @@ async def _non_bistream_tts_main_loop(
+                 _enqueue_sentence(remaining, current_speech_id)
+             # 先捕获本轮 sid：_drain_remaining 会让出，期间不能依赖循环变量。
+             finished_speech_id = current_speech_id
+-            drained = await _drain_remaining()
++            drained, interrupted = await _drain_interruptibly()
++            if interrupted:
++                continue
+             if drained:
+                 audio_done.emit(finished_speech_id)
+             else:
+diff --git a/main_logic/tts_client/local_primary.py b/main_logic/tts_client/local_primary.py
+index 4c3b2b3..b00e8b3 100644
+--- a/main_logic/tts_client/local_primary.py
++++ b/main_logic/tts_client/local_primary.py
+@@ -68,6 +68,7 @@ def voxcpm_primary_worker(request_queue, response_queue, api_key, voice_id, *,
+         extra_body_overrides={'stream': True, 'stream_format': 'audio'},
+         request_timeout=60.0, max_retries=0, pcm_sample_rate=48000,
+         text_transform=styled_queue.transform,
++        buffer_sentence_audio=True,
+     )
+ 
+ 
+diff --git a/main_logic/tts_client/workers/openai.py b/main_logic/tts_client/workers/openai.py
+index 03a414a..a924de1 100644
+--- a/main_logic/tts_client/workers/openai.py
++++ b/main_logic/tts_client/workers/openai.py
+@@ -96,6 +96,7 @@ def openai_tts_worker(
+     max_retries=None,
+     pcm_sample_rate=OPENAI_TTS_PCM_SAMPLE_RATE,
+     text_transform=None,
++    buffer_sentence_audio=False,
+ ):
+     """OpenAI-compatible TTS: sentence input with a streamed PCM response."""
+ 
+@@ -168,12 +169,25 @@ def openai_tts_worker(
+                 _record_tts_telemetry(effective_model, len(text))
+                 pending = b""
+                 received_samples = False
++                staged_pcm = bytearray() if buffer_sentence_audio else None
++                # Bound opt-in sentence staging to three minutes of raw PCM.
++                # A corrupt/unbounded response fails through native fallback.
++                staging_limit = int(pcm_sample_rate * 2 * 180)
+                 resampler = soxr.ResampleStream(
+                     pcm_sample_rate,
+                     48000,
+                     1,
+                     dtype="float32",
+                 )
++
++                def emit_pcm(pcm):
++                    audio_array = np.frombuffer(pcm, dtype="<i2")
++                    resampled = _resample_audio(
++                        audio_array, pcm_sample_rate, 48000, resampler,
++                    )
++                    if len(resampled):
++                        response_queue.put(resampled)
++
+                 async for chunk in response.iter_bytes(chunk_size=4096):
+                     if chunk:
+                         pcm = pending + chunk
+@@ -181,22 +195,25 @@ def openai_tts_worker(
+                         pending = pcm[even_length:]
+                         if not even_length:
+                             continue
+-                        audio_array = np.frombuffer(pcm[:even_length], dtype="<i2")
+                         received_samples = True
+-                        resampled = _resample_audio(
+-                            audio_array,
+-                            pcm_sample_rate,
+-                            48000,
+-                            resampler,
+-                        )
+-                        if len(resampled):
+-                            response_queue.put(resampled)
++                        if staged_pcm is not None:
++                            if len(staged_pcm) + even_length > staging_limit:
++                                raise RuntimeError("OpenAI TTS sentence exceeds PCM staging limit")
++                            staged_pcm.extend(pcm[:even_length])
++                        else:
++                            emit_pcm(pcm[:even_length])
+ 
+                 if pending:
+                     raise RuntimeError("OpenAI TTS returned a truncated PCM sample")
+                 if not received_samples:
+                     raise RuntimeError("OpenAI TTS returned an empty PCM response")
+ 
++                if staged_pcm is not None:
++                    # Slow local generation must not starve an already-playing
++                    # sentence. Keep normal transport-sized frontend chunks.
++                    for offset in range(0, len(staged_pcm), 4096):
++                        emit_pcm(staged_pcm[offset:offset + 4096])
++
+                 tail = _resample_audio(
+                     np.empty(0, dtype=np.int16),
+                     pcm_sample_rate,
+diff --git a/tests/unit/test_local_voxcpm_primary.py b/tests/unit/test_local_voxcpm_primary.py
+index 6ee3ebb..aaf29dd 100644
+--- a/tests/unit/test_local_voxcpm_primary.py
++++ b/tests/unit/test_local_voxcpm_primary.py
+@@ -1,9 +1,11 @@
+ """Local VoxCPM2 opt-in routing and the native failure boundary."""
+ from functools import partial
++import asyncio
+ import queue
+ import threading
+ from unittest.mock import Mock
+ 
++import numpy as np
+ import pytest
+ 
+ from main_logic.tts_client.local_primary import (
+@@ -68,6 +70,7 @@ def test_native_http_worker_streams_48khz_and_never_forwards_online_identity(con
+     assert options['extra_body_overrides'] == {'stream': True, 'stream_format': 'audio'}
+     assert options['pcm_sample_rate'] == 48000
+     assert options['max_retries'] == 0
++    assert options['buffer_sentence_audio'] is True
+     assert options['base_url'] == config['base_url']
+     assert options['safe_error_provider'] == LOCAL_PRIMARY_PROVIDER
+     assert options['text_transform']('你好。', 'sid') == '(自然、亲切，语速适中)你好。'
+@@ -149,6 +152,77 @@ def test_real_http_sentence_worker_styles_payload_but_acknowledges_clean_text(mo
+         assert not thread.is_alive()
+ 
+ 
++def test_local_pcm_waits_for_complete_sentence_and_preserves_every_sample(monkeypatch):
++    from tests.unit.test_openai_compatible_tts import _install_fake_openai, _wait_for_item
++    from main_logic.tts_client.local_primary import voxcpm_primary_worker
++    gate, started = threading.Event(), threading.Event()
++    pcm = np.arange(9600, dtype='<i2').tobytes()
++
++    async def slow_chunks():
++        yield pcm[:9601]  # Transport boundaries may bisect a PCM sample.
++        started.set()
++        while not gate.is_set():
++            await asyncio.sleep(0.01)
++        yield pcm[9601:]
++
++    _install_fake_openai(monkeypatch, slow_chunks)
++    requests, responses = queue.Queue(), queue.Queue()
++    thread = threading.Thread(target=voxcpm_primary_worker,
++        args=(requests, responses, '', 'ignored'),
++        kwargs={'base_url': 'http://127.0.0.1:18041/v1', 'local_voice': 'yui-local'}, daemon=True)
++    thread.start()
++    try:
++        _wait_for_item(responses, lambda item: item == ('__ready__', True))
++        requests.put(('s1', '测试连续语音。'))
++        requests.put((None, None))
++        assert started.wait(5)
++        # Nothing may reach playback while the slow HTTP sentence is incomplete.
++        with pytest.raises(queue.Empty):
++            responses.get(timeout=0.2)
++        gate.set()
++        audio = []
++        while True:
++            item = responses.get(timeout=5)
++            if isinstance(item, bytes):
++                audio.append(item)
++            elif item == ('__audio_done__', 's1'):
++                break
++        assert b''.join(audio) == pcm
++    finally:
++        gate.set()
++        requests.put(('__shutdown__', None))
++        thread.join(5)
++        assert not thread.is_alive()
++
++
++def test_local_truncated_sentence_never_leaks_partial_audio_before_fallback(monkeypatch):
++    from tests.unit.test_openai_compatible_tts import _install_fake_openai, _wait_for_item
++    from main_logic.tts_client.local_primary import voxcpm_primary_worker
++    _install_fake_openai(monkeypatch, [b'\x01\x00' * 4800, b'\x01'])
++    requests, responses = queue.Queue(), queue.Queue()
++    thread = threading.Thread(target=voxcpm_primary_worker,
++        args=(requests, responses, '', 'ignored'),
++        kwargs={'base_url': 'http://127.0.0.1:18041/v1', 'local_voice': 'yui-local'}, daemon=True)
++    thread.start()
++    try:
++        _wait_for_item(responses, lambda item: item == ('__ready__', True))
++        requests.put(('broken', '不应播放残缺片段。'))
++        requests.put((None, None))
++        requests.put(('__shutdown__', None))
++        thread.join(5)
++        assert not thread.is_alive()
++        items = []
++        while not responses.empty():
++            items.append(responses.get_nowait())
++        assert not any(isinstance(item, bytes) for item in items)
++        assert ('__tts_sentence_failed__', 'broken', '不应播放残缺片段。') in items
++        assert ('__tts_sentence_done__', 'broken', '不应播放残缺片段。') not in items
++    finally:
++        if thread.is_alive():
++            requests.put(('__shutdown__', None))
++            thread.join(5)
++
++
+ def test_local_failure_returns_online_and_never_reselects_local(config):
+     assert resolve(config, excluded={LOCAL_PRIMARY_PROVIDER}) == (online, 'online-secret', 'free')
+     assert resolve(config, provider='free_local_backup', excluded={LOCAL_PRIMARY_PROVIDER}) == (
+diff --git a/tests/unit/test_openai_compatible_tts.py b/tests/unit/test_openai_compatible_tts.py
+index 6e9b1b1..3c7878f 100644
+--- a/tests/unit/test_openai_compatible_tts.py
++++ b/tests/unit/test_openai_compatible_tts.py
+@@ -1284,6 +1284,10 @@ def _install_fake_openai(monkeypatch, chunks):
+ 
+         async def iter_bytes(self, chunk_size=4096):
+             del chunk_size
++            if callable(chunks):
++                async for chunk in chunks():
++                    yield chunk
++                return
+             for chunk in chunks:
+                 yield chunk
+ 
+diff --git a/tests/unit/test_tts_audio_done_emit.py b/tests/unit/test_tts_audio_done_emit.py
+index 0b96b5b..6604c9d 100644
+--- a/tests/unit/test_tts_audio_done_emit.py
++++ b/tests/unit/test_tts_audio_done_emit.py
+@@ -210,6 +210,34 @@ def test_round_after_an_interrupt_still_reports_closure_with_the_new_speech_id()
+     ]
+ 
+ 
++def test_interrupt_after_terminal_marker_cancels_slow_synthesis_before_next_round():
++    gate, started = threading.Event(), threading.Event()
++    requests, responses, thread = _start_worker(_gated_setup(gate, started, "Old."))
++    try:
++        requests.put(("old", "Old."))
++        requests.put((None, None))
++        assert started.wait(5)
++        # Ordinary queued rounds remain FIFO unless an explicit interrupt arrives.
++        requests.put(("also-old", "Discarded."))
++        requests.put((None, None))
++        requests.put(("__interrupt__", None))
++        requests.put(("new", "Current."))
++        requests.put((None, None))
++        assert _wait_for_item(
++            responses, lambda item: item == b"audio-Current.", timeout=1.5
++        ) == b"audio-Current."
++        assert not gate.is_set()
++        _wait_for_item(responses, lambda item: item == (TTS_AUDIO_DONE_SENTINEL, "new"))
++        assert not any(
++            item in (b"audio-Old.", b"audio-Discarded.")
++            or (isinstance(item, tuple) and item[-1] in ("old", "also-old"))
++            for item in _drain(responses)
++        )
++    finally:
++        gate.set()
++        _shutdown(requests, thread)
++
++
+ def test_undrained_round_stays_silent_instead_of_closing_early():
+     # 抽干撞上硬上限说明音频还没投完，此时发信号就是"早发"，前端会截掉尾音。
+     request_queue, response_queue, thread = _start_worker(

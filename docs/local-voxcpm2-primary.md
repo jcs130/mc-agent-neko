@@ -6,6 +6,12 @@ VoxCPM2 已从独立测试接入 Neko 正式语音路由。RTX 3080 Ti 负责语
 
 Host patch 0010 来自 `62d44c0dcc397608b1ad0b4fbbb65c2c9cd54c68`。按 [companion README](../integrations/project-neko/README.md) 顺序应用并重载 Neko 宿主，不要求重启原生 Minecraft 或 3090 模型。
 
+后续 patch 0016 修复文本结束后的慢合成不能及时响应中断，并仅为本地 Vox
+启用完整分句 PCM 缓冲，避免合成速度不足时一句话内部断续。它增加首句等待，
+不是合成加速；多句之间仍可能等待。普通轮次顺序、原生完成回执及线上失败
+回退保留，其他 provider 默认继续流式。180秒原始PCM上限拒绝异常无限响应。
+验证及部署阶段见 [2026-10-11 回归报告](neko-quest-query-handoff-2026-10-11.md)。
+
 新增 `state/config/local_tts_primary.json` 默认关闭，见 [配置示例](../services/local-voxcpm2/local_tts_primary.example.json)。`source_voice_id` 必须精确匹配角色选择且已授权克隆的线上音色；角色仍保留原音色 ID，不能改成本地 speaker 名。仅允许数字 loopback HTTP `/v1`，本地模型为 `voxcpm2`、speaker 为已注册的参考模式名称。其他角色、显式 Custom/Qwen 等选择及关闭 TTS 的行为保留。
 
 实际参考沿用此前已获授权的线上合成音频，并重新核对属于当前 YUI 音色：10.72 秒、48 kHz、单声道、16-bit。参考、原音色 ID、转写、权重、实际配置及试听留在私有运行目录；仓库只保存示例和元数据证据。
