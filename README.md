@@ -54,6 +54,10 @@ If you encounter issues, check the [FAQ](https://github.com/mindcraft-bots/mindc
 
 # Configuration
 
+Servers that require a password after an offline connection can use the optional
+[private login adapter](docs/server-password-authentication.md). Credentials stay
+in ignored local configuration and are never supplied as model or skill arguments.
+
 ## Browser visualization
 
 An optional modern viewer adds first-person, third-person and dungeon 2.5D views,
