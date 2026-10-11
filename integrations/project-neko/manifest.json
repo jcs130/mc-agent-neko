@@ -1,7 +1,7 @@
 {
   "upstreamRepository": "https://github.com/Project-N-E-K-O/N.E.K.O",
   "baseCommit": "fb2a2e731a8c954478d08678b0c8cf40e8145a54",
-  "sourceCommit": "d5b2815dd1fdf4b11fdbbe06320b2c39ccbc5a0d",
+  "sourceCommit": "00ae06be6920b1533f92d59636c03e2c4115710f",
   "scope": "plugin/plugins/game_agent_minecraft",
   "resultPluginTree": "51bcc254ea91d7be6bf26026b50ee7eeff16aa48",
   "patches": [
@@ -583,6 +583,18 @@
       "scopePaths": [
         "main_logic/core/lifecycle.py",
         "tests/unit/test_offline_reply_work_gates.py"
+      ]
+    },
+    {
+      "file": "host-patches/0025-fix-keep-repeated-presentation-controls-out-of-speec.patch",
+      "sha256": "52bb3ce08b25ce3660d315ff820f84f99423609622be2062aa4fa6eecb277dae",
+      "sourceCommit": "00ae06be6920b1533f92d59636c03e2c4115710f",
+      "scopePaths": [
+        "docs/regression-reports/2026-10-11-joint-reply-emotion.md",
+        "docs/regression-reports/2026-10-11-private-controls-in-body.md",
+        "tests/unit/test_joint_reply_emotion.py",
+        "tests/unit/test_private_speech_controls.py",
+        "utils/joint_reply_emotion.py"
       ]
     }
   ],
@@ -1423,5 +1435,25 @@
     "deploymentBoundary": "repeated explicit gateway maintenance offline state, no task, idle inference and completed playback",
     "nativeModelTtsSpectatorPreserved": true,
     "receiptWriteback": "written"
+  },
+  "privateControlsInBodyVerification": {
+    "date": "2026-10-11",
+    "sourceCommit": "00ae06be6920b1533f92d59636c03e2c4115710f",
+    "redFailed": 8,
+    "relatedPassed": 371,
+    "proactivePassed": 81,
+    "countsOverlapFocusedSuite": true,
+    "ordinaryAndEphemeralCallbacksVerified": true,
+    "exactHttpSpeechPayloadVerified": true,
+    "truncatedAndOverlongReservedControlsPrivate": true,
+    "onlyLeadingMetadataSetsEmotion": true,
+    "ruffPassed": true,
+    "extraModelCalls": 0,
+    "inputChatFiltering": false,
+    "voiceStylePrefixEnabled": false,
+    "fullReplayMatchesSource": true,
+    "deploymentPhase": "prepared",
+    "naturalSpeechAcceptance": "open",
+    "audibleHumanAcceptance": "open"
   }
 }

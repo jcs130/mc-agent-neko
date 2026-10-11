@@ -33,6 +33,12 @@ This addresses the observed loss of speech recency without adding model calls or
 filtering playback. See [the scoped report](../../docs/neko-speech-recency-2026-10-11.md)
 for validation and the separate runtime acceptance limits.
 
+Host patch 0025 keeps repeated `neko_emotion` headers inside reply bodies private
+before speech, subtitles and history. Only the leading header sets emotion;
+split, overlong and truncated repeated controls are discarded without another
+model request. The [regression report](../../docs/neko-private-speech-controls.md)
+records the actual leak, exact HTTP speech-input tests and deployment limits.
+
 Host patch 0011 keeps repeated autonomous query preludes out of spoken output,
 using actual read-only tool receipts while retaining results and final replies.
 The matching native repair bounds measured protected-floor retreat stalls.

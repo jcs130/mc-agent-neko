@@ -1,0 +1,307 @@
+From 00ae06be6920b1533f92d59636c03e2c4115710f Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Sun, 11 Oct 2026 22:59:25 +0800
+Subject: [PATCH] fix: keep repeated presentation controls out of speech
+
+---
+ .../2026-10-11-joint-reply-emotion.md         |  2 +-
+ .../2026-10-11-private-controls-in-body.md    | 46 ++++++++++++++
+ tests/unit/test_joint_reply_emotion.py        | 44 ++++++++++++-
+ tests/unit/test_private_speech_controls.py    | 38 +++++++++++
+ utils/joint_reply_emotion.py                  | 63 +++++++++++++++++--
+ 5 files changed, 185 insertions(+), 8 deletions(-)
+ create mode 100644 docs/regression-reports/2026-10-11-private-controls-in-body.md
+
+diff --git a/docs/regression-reports/2026-10-11-joint-reply-emotion.md b/docs/regression-reports/2026-10-11-joint-reply-emotion.md
+index d0e2d1d..816de52 100644
+--- a/docs/regression-reports/2026-10-11-joint-reply-emotion.md
++++ b/docs/regression-reports/2026-10-11-joint-reply-emotion.md
+@@ -9,7 +9,7 @@ Previously, each finished reply could submit a second inference request to `/api
+ ## Compatibility and fallbacks
+ 
+ - The offline constructor remains opt-in; the core main brain opts in. Realtime sessions retain their existing protocol.
+-- Supported labels are neutral, happy, sad, angry and surprised. Missing, invalid or truncated metadata uses neutral without a retry/classifier request. Only a reserved leading header is interpreted; literal examples in the body remain text.
++- Supported labels are neutral, happy, sad, angry and surprised. Missing, invalid or truncated metadata uses neutral without a retry/classifier request. Only a reserved leading header sets metadata; repeated reserved headers in the body are private too. See [the repeated-control regression report](2026-10-11-private-controls-in-body.md).
+ - Native tool arguments keep their original schema. Tool responses still require subsequent generations when they contain new evidence.
+ - Mutable metadata belongs to each coroutine through a ContextVar, with cleanup on cancellation. It is not owned by a shared client field or an async generator finalizer.
+ - Phase 2 keeps its routing prefix and PASS semantics, strips the body header before dedup/data guards and TTS, and carries metadata into the existing guarded commit. Its regeneration path refreshes the emotion from the replacement reply.
+diff --git a/docs/regression-reports/2026-10-11-private-controls-in-body.md b/docs/regression-reports/2026-10-11-private-controls-in-body.md
+new file mode 100644
+index 0000000..d66b802
+--- /dev/null
++++ b/docs/regression-reports/2026-10-11-private-controls-in-body.md
+@@ -0,0 +1,46 @@
++# Regression Report: repeated presentation headers entering speech
++
++## Evidence and cause
++
++On 2026-10-11 at 22:44:55 and 22:50:11 Beijing time, two stored proactive replies
++contained a complete reserved `neko_emotion` header inside normal dialogue,
++at character offsets 107 and 39. Both headers contained a voice description.
++The active local VoxCPM2 configuration already disabled styled speech prefixes.
++Diagnostics retain timestamps, offsets, lengths and hashes, never reply bodies,
++voice IDs, prompts or credentials.
++
++The original `JointReplyFilter` recognized only the first header. A repeated
++header therefore reached callbacks, history and TTS. The Markdown speech
++stripper can remove its bracket shell while retaining the words, so the
++later bracket stripper cannot reliably protect it. Separately, an overlong
++unclosed leading header previously emitted its suffix after 80 characters.
++
++## Change and compatibility
++
++Only a leading header sets emotion and voice metadata. Reserved headers in
++the rest of the assistant output are now removed before callbacks, history,
++subtitles and TTS. A split opener is held across chunks; an identified header
++is discarded through its closing bracket without accumulating its body.
++Truncated controls are not flushed as speech. Reset retires this state.
++
++Ordinary brackets, near matches, dialogue about tone, multilingual text and
++native tool arguments remain intact. This is a reserved output protocol filter,
++not an input/chat filter or general dialogue deduplicator. It adds no model call,
++does not trim game context, and does not enable unverified VoxCPM2 style prefixes.
++Literal examples using this reserved protocol in an assistant reply are now
++private too; the earlier claim that such examples remain visible is superseded.
++
++## Verification and limits
++
++Eight parser regressions failed before the fix; the initial repaired parser
++and private-control suite passed 37 tests. The final related speech, local
++provider, cancellation and text-stripper suite passed 371 tests; proactive
++Phase 2 and ownership guards passed 81 tests. Counts overlap the focused suite.
++Ruff and whitespace checks passed. Coverage includes every split point,
++character-wise streams, repeated/invalid/overlong/unclosed headers, bounded
++storage, preserved near matches, real offline ordinary/ephemeral callbacks and
++history, and the native HTTP speech worker's exact clean input and receipt.
++
++Runtime deployment and actual synthesis/playback evidence are recorded separately.
++Tests alone do not establish subjective audio quality, eliminate unrelated
++semantic repetition or prove productive autonomous gameplay.
+diff --git a/tests/unit/test_joint_reply_emotion.py b/tests/unit/test_joint_reply_emotion.py
+index 2625faf..d820f56 100644
+--- a/tests/unit/test_joint_reply_emotion.py
++++ b/tests/unit/test_joint_reply_emotion.py
+@@ -51,7 +51,7 @@ def test_invalid_tone_never_becomes_speech_or_carries_across_segments(style):
+     ('[neko_emotion:unknown]正常回复', '正常回复'),
+     ('[neko_emotion:happy', ''),
+     ('[neko_emo', ''),
+-    ('正文示例：[neko_emotion:happy]。', '正文示例：[neko_emotion:happy]。'),
++    ('正文示例：[neko_emotion:happy]。', '正文示例：。'),
+     ('[example] 普通引用', '[example] 普通引用'),
+     ('[neko_emotion:happy]Hello! 日本語。中文。', 'Hello! 日本語。中文。'),
+ ])
+@@ -60,6 +60,44 @@ def test_missing_invalid_partial_and_literal_body(raw, expected):
+     assert text == expected
+ 
+ 
++@pytest.mark.parametrize('header', [
++    '[neko_emotion:happy|轻快、带笑意，语速适中]',
++    '[neko_emotion:unknown|不要朗读的描述]',
++    '[neko_emotion:happy|' + '描述' * 150 + ']',
++], ids=['valid-style', 'invalid-label', 'overlong-style'])
++def test_repeated_private_header_in_body_is_removed_at_every_boundary(header):
++    raw = '[neko_emotion:neutral]先看报价。' + header + '没有合适的交易。'
++    for split in range(len(raw) + 1):
++        text, metadata = render([raw[:split], raw[split:]])
++        assert text == '先看报价。没有合适的交易。'
++        assert metadata == {'mode': 'joint', 'emotion': 'neutral'}, 'only leading metadata owns emotion'
++    assert render(list(raw))[0] == '先看报价。没有合适的交易。'
++
++
++@pytest.mark.parametrize('partial', [
++    '[neko_emo', '[neko_emotion:happy|轻快',
++    '[neko_emotion:happy|' + '私有描述' * 500,
++], ids=['partial-opener', 'partial-style', 'overlong-unclosed'])
++def test_truncated_repeated_control_never_flushes_as_spoken_tail(partial):
++    text, metadata = render(list('正常正文。' + partial))
++    assert text == '正常正文。'
++    assert metadata['emotion'] == 'neutral'
++
++
++def test_long_incomplete_header_has_bounded_storage_and_can_resume_after_close():
++    parser = JointReplyFilter(ToolLeakFilter(), {'mode': 'joint', 'emotion': 'neutral'})
++    assert parser.feed('[neko_emotion:happy|' + '描述' * 10000)[0] == ''
++    assert len(parser.pending) <= 80
++    assert parser.feed(']恢复正文。')[0] == '恢复正文。'
++    assert parser.finalize()[0] == ''
++
++
++def test_ordinary_quotes_and_near_matches_are_preserved_across_chunks():
++    raw = '朋友说“语速慢一点”。[example]，[neko_friend]，普通（轻快）注释。'
++    for split in range(len(raw) + 1):
++        assert render([raw[:split], raw[split:]])[0] == raw
++
++
+ def test_tool_markup_stays_private_and_next_round_can_change_emotion():
+     metadata = {'mode': 'joint', 'emotion': 'neutral'}
+     parser = JointReplyFilter(ToolLeakFilter(), metadata)
+@@ -101,7 +139,9 @@ async def test_real_offline_loop_strips_metadata_before_callback_and_history(mon
+     monkeypatch.setattr('utils.token_tracker.TokenTracker.get_instance', MagicMock())
+     client = _client()
+     client.joint_reply_emotion = True
+-    client.script = [[_text('[neko_'), _text('emotion:happy|轻快、带笑意]'), _text('\n找到铁矿了。')]]
++    client.script = [[_text('[neko_'), _text('emotion:happy|轻快、带笑意]'),
++                      _text('\n找到'), _text('[neko_'), _text('emotion:sad|低沉、语速慢]'),
++                      _text('铁矿了。')]]
+     received = []
+ 
+     async def output(text, first, **kwargs):
+diff --git a/tests/unit/test_private_speech_controls.py b/tests/unit/test_private_speech_controls.py
+index 6962501..62e3e1f 100644
+--- a/tests/unit/test_private_speech_controls.py
++++ b/tests/unit/test_private_speech_controls.py
+@@ -1,5 +1,6 @@
+ """Private delivery metadata must not silently become synthesized dialogue."""
+ import queue
++import threading
+ 
+ from main_logic.tts_client.local_primary import _StyledRequestQueue, VOICE_STYLE_SENTINEL
+ from utils.joint_reply_emotion import presentation_messages
+@@ -46,3 +47,40 @@ def test_real_dialog_request_uses_session_locale_despite_english_game_data():
+     request = client._dialog_messages_for_provider(history)
+     assert 'Spoken reply language: zh-CN' in request[0].content
+     assert request[1].content == history[1].content
++
++
++def test_repeated_header_is_private_before_native_http_speech_payload(monkeypatch):
++    from tests.unit.test_openai_compatible_tts import _install_fake_openai, _wait_for_item
++    from main_logic.tts_client.local_primary import voxcpm_primary_worker
++    from utils.joint_reply_emotion import JointReplyFilter
++    from utils.llm_tool_leak_filter import ToolLeakFilter
++
++    clients = _install_fake_openai(monkeypatch, [b'\x01\x00' * 4800])
++    requests, responses = queue.Queue(), queue.Queue()
++    worker = threading.Thread(target=voxcpm_primary_worker,
++        args=(requests, responses, '', 'ignored'),
++        kwargs={'base_url': 'http://127.0.0.1:18041/v1', 'local_voice': 'yui-local'}, daemon=True)
++    worker.start()
++    try:
++        _wait_for_item(responses, lambda item: item == ('__ready__', True))
++        metadata = {'mode': 'joint', 'emotion': 'neutral'}
++        parser = JointReplyFilter(ToolLeakFilter(), metadata)
++        raw = '[neko_emotion:happy|轻快]找到了[neko_emotion:sad|低沉、语速慢]！'
++        # Use fragmented model delivery, not a manually cleaned sentence.
++        for char in raw:
++            visible, _ = parser.feed(char)
++            if visible:
++                requests.put(('s', visible))
++        visible, _ = parser.finalize()
++        if visible:
++            requests.put(('s', visible))
++        requests.put((None, None))
++        receipt = _wait_for_item(responses, lambda item:
++            isinstance(item, tuple) and item[0] == '__tts_sentence_done__')
++        assert receipt == ('__tts_sentence_done__', 's', '找到了！')
++        assert [call['input'] for call in clients[0].create_calls] == ['找到了！']
++        assert metadata == {'mode': 'joint', 'emotion': 'happy', 'voice_style': '轻快'}
++    finally:
++        requests.put(('__shutdown__', None))
++        worker.join(5)
++        assert not worker.is_alive()
+diff --git a/utils/joint_reply_emotion.py b/utils/joint_reply_emotion.py
+index 229aeb3..12574aa 100644
+--- a/utils/joint_reply_emotion.py
++++ b/utils/joint_reply_emotion.py
+@@ -1,7 +1,8 @@
+ """Bounded, turn-local emotion header for one-generation spoken replies.
+ 
+-Only a reserved header at the start of an assistant segment is interpreted.
+-The rest of the reply remains ordinary streamed text. No extra model call.
++Only a leading reserved header sets presentation metadata. Repeated reserved
++headers anywhere in the reply remain private, including truncated streams.
++Ordinary dialogue is preserved. No extra model call.
+ """
+ 
+ from contextvars import ContextVar
+@@ -100,9 +101,18 @@ class JointReplyFilter:
+         self.pending = ''
+         self.started = False
+         self.trim_header_gap = False
++        self.discard_header = False
++        self.body_pending = ''
++        self.body_discarding = False
+ 
+     def _text(self, chunk, *, final=False):
+         if self.started:
++            if self.discard_header:
++                end = chunk.find(']')
++                if end < 0:
++                    return ''
++                self.discard_header = False
++                chunk = chunk[end + 1:]
+             if self.trim_header_gap:
+                 chunk = chunk.lstrip('\r\n ')
+                 self.trim_header_gap = not bool(chunk)
+@@ -123,7 +133,8 @@ class JointReplyFilter:
+                 return ''
+             # Truncated/invalid reserved metadata must never be spoken.
+             if end < 0:
+-                visible = '' if len(candidate) <= 80 else candidate[80:]
++                visible = ''
++                self.discard_header = not final
+                 label = 'neutral'
+             else:
+                 label = candidate[len(HEADER):end]
+@@ -140,11 +151,50 @@ class JointReplyFilter:
+         self.started = True
+         return visible
+ 
++    def _body_text(self, chunk, *, final=False):
++        """Drop the reserved protocol anywhere, holding only a split opener.
++
++        A repeated header cannot change this segment's leading emotion. Once
++        an opener is known, discard until its close instead of spilling an
++        overlong description into speech. Incomplete controls die at finalize.
++        """
++        data = self.body_pending + chunk
++        self.body_pending = ''
++        visible = []
++        index = 0
++        while index < len(data):
++            if self.body_discarding:
++                end = data.find(']', index)
++                if end < 0:
++                    break
++                self.body_discarding = False
++                index = end + 1
++                continue
++            start = data.find('[', index)
++            if start < 0:
++                visible.append(data[index:])
++                break
++            visible.append(data[index:start])
++            candidate = data[start:]
++            if candidate.startswith(HEADER):
++                self.body_discarding = True
++                index = start + len(HEADER)
++            elif HEADER.startswith(candidate):
++                if not final:
++                    self.body_pending = candidate
++                elif not candidate.startswith('[neko_'):
++                    visible.append(candidate)
++                break
++            else:
++                visible.append('[')
++                index = start + 1
++        return ''.join(visible)
++
+     def feed(self, chunk):
+-        return self.inner.feed(self._text(str(chunk)))
++        return self.inner.feed(self._body_text(self._text(str(chunk))))
+ 
+     def finalize(self):
+-        visible, event = self.inner.feed(self._text('', final=True))
++        visible, event = self.inner.feed(self._body_text(self._text('', final=True), final=True))
+         tail, final_event = self.inner.finalize()
+         return visible + tail, final_event or event
+ 
+@@ -153,6 +203,9 @@ class JointReplyFilter:
+         self.pending = ''
+         self.started = False
+         self.trim_header_gap = False
++        self.discard_header = False
++        self.body_pending = ''
++        self.body_discarding = False
+ 
+ 
+ def split_reply_emotion(text):

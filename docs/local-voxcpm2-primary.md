@@ -20,6 +20,11 @@ Host patch 0010 来自 `62d44c0dcc397608b1ad0b4fbbb65c2c9cd54c68`。按 [compani
 
 ## 一次输出回复、表情和语气
 
+配套0025修复正文中重复出现的私有情绪/语气头：只由开头的头部设置表情，
+正文中的同类保留标签在进入字幕、历史及 TTS 之前移除；分块、超长和截断
+同样处理。不增加模型调用，不裁剪游戏信息，`voice_style_enabled=false`
+继续保持。见[实际证据与回归报告](neko-private-speech-controls.md)。
+
 主脑可在现有协议内输出：
 
 ```text
