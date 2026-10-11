@@ -73,11 +73,21 @@ turns still browsed help/villager catalogues without any physical action.
 
 ### Task 5: Preserve execution scope in real mixed Minecraft batches
 
-**Evidence:** After the final owned reload, the local request metadata still
-showed `minecraft` for batches containing both idle/completion and game-attention
-callbacks. The host required every key to be an execution key, so one incoming
-chat/feedback cue bypassed the query-prelude and bounded execution paths.
+**Evidence:** Source inspection and real callback-entry regression reproduced
+the all-keys execution check: one incoming chat/feedback cue demoted a mixed
+execution batch. Aggregate timing metadata normalizes both scopes to
+`minecraft` and cannot independently prove the selected execution subtype.
 
 - [x] Reproduce this through the real callback delivery method, including mixed player feedback, expired execution cues and foreign-plugin boundaries. Two mixed cases failed and five boundary cases passed before the change.
 - [x] Retain execution scope when an already deliverable trusted Minecraft batch includes an execution cue; keep attention-only and foreign batches conservative, preserving all message text and permission checks. All 492 related regressions passed; 82 patch hashes and all 42 scoped host files replay exactly.
-- [ ] Run callback delivery and cancellation/tool regressions, export the scoped companion, reload only the owned host at idle and assess natural gameplay separately from dispatch success.
+- [x] Run callback delivery and cancellation/tool regressions, export the scoped companion, reload only the owned host at idle and assess natural gameplay separately from dispatch success. Reload at 10:35 preserved native/session/model/TTS. The first 95 seconds had no displacement; later natural tasks moved within the same room, without a verified escape or trade.
+
+### Task 6: Keep paused observer proposals out of running-skill status
+
+**Evidence:** The live NL status reported `surfaceUp` while fresh body telemetry
+had no skill. V2 is enabled but its kernel is paused by Neko ownership; the
+observer's commitment remains a proposal, not a body action.
+
+- [x] Reproduce this with externally owned idle, moving and mission cases; all three new tests failed before repair.
+- [x] Ignore only the paused kernel commitment; preserve real live skills, movement, reflexes and mission text. Fifteen related status/ownership/lifecycle cases pass.
+- [ ] Run full native regression, deploy at an idle boundary and compare actual status and gameplay without claiming completed escape.

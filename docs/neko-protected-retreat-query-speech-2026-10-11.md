@@ -164,8 +164,9 @@ offers did not buy iron. Neither that failure nor an open window proves escape.
 
 ## Mixed game callback Regression Report
 
-**Before:** after the final reload, actual host metadata still recorded
-`minecraft` for batches containing idle/completion and game-attention cues.
+**Before:** source inspection and the real callback-entry regression reproduced
+an all-keys execution check. Aggregate timing metadata normalizes both game
+scopes to `minecraft`; it cannot prove which execution subtype was selected.
 The host required every key to be an execution key, so received player/server
 feedback bypassed the execution receipt and query-prelude paths when batched
 with an idle cue. This is an additional routing bug, not evidence that incoming
@@ -183,3 +184,18 @@ and optional tool choice remain unchanged; there is no extra model request.
 before the fix; the five boundary cases already passed. All 492 callback,
 delivery, tool, cancellation and budget tests then passed. Scoped companion
 replay and live acceptance are recorded separately from those unit results.
+
+## Paused observer status Regression Report
+
+**Before:** the native NL snapshot reported `surfaceUp` despite fresh body
+telemetry reporting no skill. Neko pauses the enabled V2 kernel, but the read-only
+observer keeps proposing a commitment; NL status incorrectly used its skill.
+That can mislead the host busy latch and narration without a physical action.
+
+**After:** externally owned status omits only the paused kernel commitment.
+Real body skills/reflexes, movement and current mission text remain visible;
+native autonomous mode retains its ordinary committed goal.
+
+**Validation:** the three new idle/movement/mission cases failed before repair;
+all 15 related status, kernel-ownership and WS-lifecycle cases then passed.
+Gameplay and actual deployment must be assessed independently.

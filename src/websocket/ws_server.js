@@ -274,9 +274,12 @@ class WSMessageServer {
         const tod = (() => { try { return bot.time.timeOfDay || 0; } catch (e) { return 0; } })();
         const night = tod >= 12542 && tod <= 23459;
         const dim = (bot.game && bot.game.dimension) || 'overworld';
-        // The read-only world observer still proposes vanilla survival goals
-        // when the kernel is disabled. Those proposals are not game actions.
-        const cmt = process.env.MC_FRAMEWORK_V2 === '0' ? null : (bot._commitment || null);
+        // The observer still proposes goals while an external controller pauses
+        // the kernel. They are not running skills, even with V2 enabled.
+        // Preserve actual skills/reflexes below and the active mission separately.
+        const kernelPaused = process.env.MC_FRAMEWORK_V2 === '0'
+            || this.agent?.hasExternalAutonomyOwner?.();
+        const cmt = kernelPaused ? null : (bot._commitment || null);
         const kind = (cmt && cmt.kind) || null;
         const skill = this._skillRunningName || bot._currentSkill || (cmt && cmt.skill) || null;
         // ★2026-07-08 ADMIN MISSION 真实性修复 (用户实观: 命令追蜘蛛却报"挖矿过夜"): 任务态下身体听的是
