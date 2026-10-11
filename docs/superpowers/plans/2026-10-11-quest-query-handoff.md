@@ -38,3 +38,15 @@ movement and one dirt block consumed during surface/placement actions. This is
 natural execution, not verified quest completion or observed loop-guard firing.
 Keep the original recurrence baseline 420, the deployed receipt pending, and
 the remaining voice/progress acceptance open for hourly evidence-based checks.
+
+The user still observes stalled gameplay and intermittent voice. Measured night
+shelter is intentional, but actual pillar attempts refuse held coarse dirt/moss
+because those full terrain blocks are missing from the scaffold candidates.
+Reproduce with the real voxel simulation, retain ceiling/material safeguards,
+then load a scoped native fix and verify actual height change rather than a
+command name. For speech, measure PCM arrivals, prove queued cancellation can
+interrupt end-of-text draining, and use local-only complete-sentence PCM staging
+where synthesis is slower than playback. Keep natural sentence order, truthful
+audio completion, next-turn isolation and online fallback. Export host changes
+as a companion patch, run the relevant regression, and record the first-sound
+latency tradeoff and actual natural playback evidence separately.

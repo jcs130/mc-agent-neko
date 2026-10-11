@@ -186,6 +186,26 @@ async function scenarioG() {
     check('direct call kept the plank', bot._items[0].count === 1, `oak_planks=${bot._items[0].count}`);
 }
 
+// Real held terrain from the stalled trial: neither material is ordinary dirt.
+async function scenarioH() {
+    console.log('\n=== Scenario H: held coarse dirt and moss can make a measured climb ===');
+    for (const material of ['coarse_dirt', 'moss_block']) {
+        const bot = makeBot({ start: new Vec3(0.5, 36, 0.5), floorY: 35,
+            blocks: { [material]: 7, oak_planks: 12 } });
+        const ret = await pillarUp(bot, 39, { placeUnder: makeSimPlace({}), sleep: makeSimSleep(bot) });
+        check(`${material}: reached the actual requested height`, ret === true && y(bot) === 39);
+        check(`${material}: consumed exactly three scaffold blocks`,
+            bot._items.find(i => i.name === material).count === 4);
+        check(`${material}: reserved planks were preserved`,
+            bot._items.find(i => i.name === 'oak_planks').count === 12);
+    }
+    const capped = makeBot({ start: new Vec3(0.5, 36, 0.5), floorY: 35,
+        blocks: { coarse_dirt: 7, moss_block: 24 }, ceilingY: 37 });
+    const ret = await pillarUp(capped, 39, { placeUnder: makeSimPlace({}), sleep: makeSimSleep(capped) });
+    check('new materials do not bypass an uncleared ceiling', ret === false && y(capped) === 36);
+    check('a blocked climb keeps both material stocks', capped._items.every(i => i.count === (i.name === 'coarse_dirt' ? 7 : 24)));
+}
+
 (async () => {
     await scenarioA();
     await scenarioB();
@@ -194,6 +214,7 @@ async function scenarioG() {
     await scenarioE();
     await scenarioF();
     await scenarioG();
+    await scenarioH();
     console.log(`\n${failures === 0 ? '✅ ALL CHECKS PASSED' : `❌ ${failures} CHECK(S) FAILED`}`);
     process.exit(failures === 0 ? 0 : 1);
 })();

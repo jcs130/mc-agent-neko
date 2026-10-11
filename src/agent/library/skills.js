@@ -6411,7 +6411,7 @@ export async function pillarUp(bot, targetY = null, opts = {}) {
 
     // Only tower with full solid blocks we actually hold (no slabs/stairs/etc,
     // which don't make a reliable 1-high step).
-    const SCAFFOLD = ['dirt', 'cobblestone', 'cobbled_deepslate', 'stone', 'deepslate',
+    const SCAFFOLD = ['dirt', 'coarse_dirt', 'moss_block', 'cobblestone', 'cobbled_deepslate', 'stone', 'deepslate',
         'netherrack', 'end_stone', 'granite', 'andesite', 'diorite', 'tuff', 'blackstone', 'gravel',
         'sand'];
     const held = new Set(bot.inventory.items().map(i => i.name));
