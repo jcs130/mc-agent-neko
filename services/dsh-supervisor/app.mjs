@@ -10,6 +10,9 @@ import { advanceProgressWatch, probePluginStatus, publishProgressCandidate } fro
 
 export const name = 'neko-ticket-supervisors';
 export const inject = ['agents', 'subagents', 'sessions', 'tools', 'llm'];
+// This fixed loopback source retains complete connection history, matching the
+// Minecraft plugin's unlimited transport. Model evidence is bounded separately.
+export const TELEMETRY_MAX_PAYLOAD = 0;
 const TICKET_URL = 'http://127.0.0.1:48920';
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const readJson = file => { try { return parseReport(fs.readFileSync(file, 'utf8')); } catch { return null; } };
@@ -110,7 +113,7 @@ export function apply(ctx, config) {
     function connect() {
         if (stopped || socket && socket.readyState < 2) return;
         const WebSocket = createRequire(path.join(nativeRoot, 'package.json'))('ws');
-        socket = new WebSocket('ws://127.0.0.1:48909', { maxPayload: 4 * 1024 * 1024 });
+        socket = new WebSocket('ws://127.0.0.1:48909', { maxPayload: TELEMETRY_MAX_PAYLOAD });
         socket.on('open', () => {
             status.telemetryConnected = true;
             const query = () => {

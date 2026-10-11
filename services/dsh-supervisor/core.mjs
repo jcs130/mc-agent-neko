@@ -111,7 +111,8 @@ export function buildEvidence(frame, worldModel, sentinel, now = Date.now(), ext
     if (sentinel) add('sentinel', { realProgress: sentinel.realProgress,
         activeDetectors: sentinel.activeDetectors, telemetryAgeS: sentinel.telemetryAgeS }, 700,
     Number.isFinite(sentinel.telemetryAgeS) ? sentinel.ts - Math.max(0, sentinel.telemetryAgeS) * 1000 : sentinel.ts);
-    if (extras.progress?.sessionId === frame?.sessionId) {
+    if (extras.progress && typeof frame?.sessionId === 'string' && frame.sessionId
+        && extras.progress.sessionId === frame.sessionId) {
         add('autonomy.idle_decision_window', extras.progress, 1100, extras.progress.observedAt);
     }
     const history = (extras.nativeEvents ?? []).filter(event => Number.isFinite(event.at)
