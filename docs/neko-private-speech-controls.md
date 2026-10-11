@@ -44,3 +44,20 @@ history, and the native HTTP speech worker's exact clean input and receipt.
 Runtime deployment and actual synthesis/playback evidence are recorded separately.
 Tests alone do not establish subjective audio quality, eliminate unrelated
 semantic repetition or prove productive autonomous gameplay.
+
+## Local deployment follow-up (2026-10-11)
+
+At 23:15 Beijing, the host loaded source `00ae06be6920` from companion fix
+`e50c97174d5e`, after three quiet playback/inference samples while the game was
+offline. The native game, RTX 3090 model/vision, local TTS unit and spectator
+process identities were retained. The authenticated room listener was restored
+through its regular API, without sending a message or creating a login QR.
+
+One isolated real VoxCPM2 synthesis produced 2.56 seconds of 48 kHz PCM. CPU ASR
+confirmed the expected content and no private voice description; the actual HTTP
+input exactly matched the cleaned dialogue. It was not injected into the game,
+desktop or broadcast. The following four natural replies had no reserved header,
+English-only output or exact duplicate, with four synthesis/start/end cycles and
+no duplicate or early end receipt. These are limited samples, not a subjective
+voice-quality or universal repetition claim. T-0071 has a confirmed deployed
+receipt; future natural malformed-header handling and human listening stay open.

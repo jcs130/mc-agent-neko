@@ -81,3 +81,24 @@ prompts; two of the new assertions failed against the earlier adapter.
 The earlier startup hook was loaded into the owned native child at 23:07, while
 the game was offline and no task was active. The changed prompt adapter is a
 subsequent repair; its deployment and actual world entry are recorded separately.
+
+## Current-prompt deployment result
+
+At 23:28 Beijing, only the owned native child loaded `ff9549e83269` (fork code
+`976cd1aa4bad`) through the existing MindServer restart route, after three
+offline/no-task checks. Main/plugin, model/vision, local speech, monitor and
+spectator identities were preserved. The adapter automatically submitted on the
+real gateway challenge, recorded explicit `authenticated`, and reached world
+spawn without a manually injected login command. A subsequent 45-second passive
+native/LAN observation stayed online with full health and hunger, live avatar
+and map streams. Login-time mana 28/28 and nine abilities were transported with
+their original timestamp and a stale marker; this is not a fresh cooldown check.
+Welcome instructions again reached the host context. No movement was observed
+in this window, so productive gameplay is not claimed.
+
+This verifies the repaired current gateway challenge and automatic world entry,
+not every future outage or mission completion. The earlier 22:49 proxy closing
+message and transient local socket errors retain their separate evidence; the
+generic timeout had also hidden this client authentication incompatibility.
+No current server fault is established and no owner intervention is required
+for this recovered incident. Private credentials remain outside all artifacts.

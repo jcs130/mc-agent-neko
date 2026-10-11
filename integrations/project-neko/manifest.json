@@ -1452,8 +1452,25 @@
     "inputChatFiltering": false,
     "voiceStylePrefixEnabled": false,
     "fullReplayMatchesSource": true,
-    "deploymentPhase": "prepared",
+    "deploymentPhase": "deployed",
     "naturalSpeechAcceptance": "open",
-    "audibleHumanAcceptance": "open"
+    "audibleHumanAcceptance": "open",
+    "deployedAtBeijing": "2026-10-11T23:15:17.561+08:00",
+    "deployedForkCodeCommit": "e50c97174d5ef540c743dd705ec0c94ec9a478bf",
+    "modelTtsNativeObserverPreservedByHostReload": true,
+    "isolatedRealSynthesisSeconds": 2.56,
+    "isolatedRealSampleRate": 48000,
+    "isolatedCpuAsrExpectedContent": true,
+    "isolatedCpuAsrPrivateDescriptionHeard": false,
+    "naturalObservationAt": "2026-10-11T23:23:06.656583+08:00",
+    "naturalRepliesObserved": 4,
+    "completeNaturalPlaybacksObserved": 4,
+    "duplicatePlaybackCyclesObserved": 0,
+    "reservedHeadersObservedAfterDeploy": 0,
+    "ticketId": "T-0071",
+    "ticketOccurrences": 1,
+    "ticketWriteback": "written",
+    "futureRepeatedControlAcceptance": "open",
+    "semanticRepetitionAcceptance": "open"
   }
 }
