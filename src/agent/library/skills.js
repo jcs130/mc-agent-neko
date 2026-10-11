@@ -1739,6 +1739,9 @@ export async function collectBlock(bot, blockType, num=1, exclude=null, veinFoll
         || collectOreBlockTypes(blockType).some(name => /(?:_ore$|ancient_debris$|obsidian$)/.test(String(name)));
     const endUnderwaterMiningTask = beginUnderwaterMiningTask(bot, underwaterMiningTarget);
     try {
+    const actionGeneration = bot._actionGeneration;
+    const interrupted = () => bot.interrupt_code || bot.death_abort || bot.health <= 0
+        || bot._actionGeneration !== actionGeneration;
     if (num < 1) {
         log(bot, `Invalid number of blocks to collect: ${num}.`);
         return false;
@@ -1957,6 +1960,9 @@ export async function collectBlock(bot, blockType, num=1, exclude=null, veinFoll
     // unreachable targets.
     const maxAttempts = num * 4 + 8;
     for (let i=0; i<maxAttempts && collected < num; i++) {
+        // Failure branches continue before the old bottom-of-loop check. Every
+        // retry and awaited scan must yield ownership when cancellation wins.
+        if (interrupted()) break;
         // ★死亡区矿物不可见 (242/243/244 17分钟三连死: 蜂窝雷区裸露矿脉是x-ray磁铁 —
         // 采集选target吸进去,避区撤退推出来,两逻辑打架死在往返路上。修在源头: 聚集区内
         // 的方块从候选里消失)。零开销缓存: 每次collect调用读一次death_log近50条,预算
@@ -1979,6 +1985,7 @@ export async function collectBlock(bot, blockType, num=1, exclude=null, veinFoll
             const _spId = mc.getBlockId('spawner');
             if (_spId != null) _spawners = (await world.getNearestBlocksWhereAsync(bot, _spId, 128, 8)).map(b => b.position);
         } catch (e) { _spawners = []; }
+        if (interrupted()) break;
         const _nearSpawner = (p) => _spawners.some(s => Math.hypot(s.x - p.x, s.y - p.y, s.z - p.z) < 10);
 
         // The scan + per-block predicate (incl. pathfinder's safeToBreak, which walks
@@ -2005,8 +2012,10 @@ export async function collectBlock(bot, blockType, num=1, exclude=null, veinFoll
                 try { _cands = (await world.getNearestBlocksWhereAsync(bot, _ids, 128, Math.max(64, _want * 8))).map(b => b.position); } catch (e) { _cands = []; }
             }
             // ② 对候选(已按距排序)跑昂贵谓词, 收满 want 即停 — safeToBreak 只在少量候选上求值。
+            if (interrupted()) break;
             for (const _pos of _cands) {
                 await new Promise(resolve => setImmediate(resolve));
+                if (interrupted()) break;
                 if (blocks.length >= _want) break;
                 const block = bot.blockAt(_pos);
                 try {
@@ -2032,6 +2041,7 @@ export async function collectBlock(bot, blockType, num=1, exclude=null, veinFoll
             continue;
         }
 
+        if (interrupted()) break;
         if (blocks.length === 0) {
             // ★RAW-NEAREST FALLBACK (2026-07-09): findBlocks 的类型快扫偶尔吐空集 —— 半空/孤立的
             //   单块(门框黑曜石就是活例: y63 半空, 脚下邻格是空气/门, chunk 追踪时序一飘就漏)会
@@ -2042,7 +2052,9 @@ export async function collectBlock(bot, blockType, num=1, exclude=null, veinFoll
             let _raw = null;
             for (const n of blocktypes) {
                 try { const b = await world.getNearestBlockAsync(bot, n, 8); if (b && b.position) { _raw = b; break; } } catch (e) {}
+                if (interrupted()) break;
             }
+            if (interrupted()) break;
             if (_raw && collected < num) {
                 const _p = _raw.position;
                 const _exd = exclude && exclude.some(q => q.x === _p.x && q.y === _p.y && q.z === _p.z);
@@ -2050,14 +2062,17 @@ export async function collectBlock(bot, blockType, num=1, exclude=null, veinFoll
                     log(bot, `↪ scan empty but ${_raw.name}@${_p.x},${_p.y},${_p.z} within reach — direct-dig fallback.`);
                     try {
                         await bot.tool.equipForBlock(_raw);
+                        if (interrupted()) break;
                         const _id = bot.heldItem ? bot.heldItem.type : null;
                         if (!_raw.canHarvest(_id)) {
                             log(bot, `Don't have right tools to harvest ${_raw.name} — need a better pickaxe.`);
                             break;
                         }
                         const r = await safeDig(bot, _raw, { maxMs: 15000, equip: false, requireLOS: false });
+                        if (interrupted()) break;
                         if (r === 'ok') {
                             try { await goToPosition(bot, _p.x, _p.y, _p.z, 1); } catch (e) {}
+                            if (interrupted()) break;
                             await pickupNearbyItems(bot);
                             collected++;
                             bot._collectSticky = null;
@@ -2135,6 +2150,7 @@ export async function collectBlock(bot, blockType, num=1, exclude=null, veinFoll
             block = null;
             let _checked = 0;
             for (const cand of blocks) {
+                if (interrupted()) break;
                 if (_checked >= 4) break;   // bound pathfinds/pass; exclude grows so we probe outward next pass
                 _checked++;
                 if (await _oreReachable(cand)) { block = cand; break; }
@@ -2142,6 +2158,7 @@ export async function collectBlock(bot, blockType, num=1, exclude=null, veinFoll
                 exclude.push(cand.position);
                 log(bot, `↪ ${cand.name}@${cand.position.x},${cand.position.y},${cand.position.z} no short reach-path (across gap/wall) — skip, not mining through.`);
             }
+            if (interrupted()) break;
             if (!block) {
                 log(bot, `No reachable ${blockType} (nearest candidates all across gaps / behind walls) — not x-ray-mining.`);
                 _mineDBG(`★C304 pass: ${blocktypes.join('/')} — ${blocks.length} cand all unreachable (collected=${collected}) → ${collected > 0 ? 'stop' : 'reprobe'}`);
@@ -2159,6 +2176,7 @@ export async function collectBlock(bot, blockType, num=1, exclude=null, veinFoll
             bot._collectSticky = { key: _stickyKey, pos: { x: block.position.x, y: block.position.y, z: block.position.z }, ts: Date.now() };
         try {
         await bot.tool.equipForBlock(block);
+        if (interrupted()) break;
         // ★Never harvest WOOD with a SWORD (chops slowly + burns the sword durability we need
         // for combat). equipForBlock leaves a combat-equipped sword in hand when we have no axe
         // → the bot "用木剑砍树". For logs/wood, if we're holding a sword and have no axe, drop
@@ -2167,6 +2185,7 @@ export async function collectBlock(bot, blockType, num=1, exclude=null, veinFoll
             && !bot.inventory.items().some(i => /_axe$/.test(i.name))) {
             try { await bot.unequip('hand'); } catch (e) {}
         }
+        if (interrupted()) break;
         if (isLiquid) {
             const bucket = bot.inventory.findInventoryItem('bucket');
             if (!bucket) {
@@ -2175,6 +2194,7 @@ export async function collectBlock(bot, blockType, num=1, exclude=null, veinFoll
             }
             await bot.equip(bucket, 'hand');
         }
+        if (interrupted()) break;
         const itemId = bot.heldItem ? bot.heldItem.type : null
         if (!block.canHarvest(itemId)) {
             log(bot, `Don't have right tools to harvest ${blockType}.`);
@@ -2206,25 +2226,31 @@ export async function collectBlock(bot, blockType, num=1, exclude=null, veinFoll
                 const _isOre = /_ore$/.test(block.name || '');
                 const gainBeforeDig = gainOf();
                 let r = await safeDig(bot, block, { maxMs: 15000, equip: false, pickup: _isOre, requireLOS: _isOre });
+                if (interrupted()) break;
                 // ★C304-T (2026-07-09 "凿隧道直达"): 埋铁被 safeDig 判 unreachable/occluded 时不再直接
                 //  exclude 放弃整条矿脉 — 先朝它凿一条密封隧道(防坠/防淹/防x-ray, 任一不安全即停),
                 //  逼近到臂展再重试一次 safeDig(requireLOS 仍锁, 绝不 x-ray)。隧道失败=旧行为 exclude。
                 if (_isOre && (r === 'unreachable' || r === 'occluded') && _tunnelTries < _TUNNEL_MAX_TRIES) {
                     _tunnelTries++;
-                    if (await tunnelToOre(bot, block))
+                    const reached = await tunnelToOre(bot, block);
+                    if (interrupted()) break;
+                    if (reached)
                         r = await safeDig(bot, block, { maxMs: 15000, equip: false, pickup: true, requireLOS: true });
                 }
+                if (interrupted()) break;
                 if (r === 'ok') {
                     // ★Actually COLLECT the drop (fixes "挖了树不捡木头"): step ONTO the broken
                     // block's spot via a dig-capable path so mineflayer auto-vacuums the item,
                     // THEN sweep any stragglers (drops land a couple blocks off through leaves/vines).
                     if (gainOf() === gainBeforeDig) {
                         try { await goToPosition(bot, block.position.x, block.position.y, block.position.z, 1); } catch (e) {}
+                        if (interrupted()) break;
                         try { await ensurePickupAt(bot, block.position, { radius: 6, maxDescend: 3, timeoutMs: 6000 }); } catch (e) {}
                     }
                     // ★WATER-DRIFT SWEEP: a drop broken next to water floats and drifts out of the
                     // first pickup's reach (root cause of the -79,168 lakeside chop that logged 4
                     // logs but banked 0). If the drop item still didn't land, chase once wider.
+                    if (interrupted()) break;
                     if (gainOf() === gainBeforeDig) {
                         try { await pickupNearbyItems(bot, 12); } catch (e) {}
                     }
@@ -2240,6 +2266,7 @@ export async function collectBlock(bot, blockType, num=1, exclude=null, veinFoll
                     continue;
                 }
             }
+            if (interrupted()) break;
             if (success) {
                 collected++;
                 // Exhaust the rest of this connected ore vein so we never leave
@@ -2247,6 +2274,7 @@ export async function collectBlock(bot, blockType, num=1, exclude=null, veinFoll
                 if (veinActive)
                     collected += await harvestConnectedVein(bot, block.position, blocktypes);
             }
+            if (interrupted()) break;
             await autoLight(bot);
         }
         catch (err) {
@@ -2272,7 +2300,7 @@ export async function collectBlock(bot, blockType, num=1, exclude=null, veinFoll
             }
         }
         
-        if (bot.interrupt_code)
+        if (interrupted())
             break;  
     }
     // ★Report/judge on the REAL inventory delta, not the broken-block count. `collected`

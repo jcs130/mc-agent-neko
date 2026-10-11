@@ -3157,3 +3157,21 @@
   756 full native and 24 existing host Minecraft tool-loop tests pass. Counts
   overlap. Natural task dispatch and deployment remain separate acceptance gates;
   see the quest-query handoff report.
+
+### 2026-10-11 — Honour collection cancellation through retry branches
+- Evidence: repeated collectBlocks deadlines were followed by the real
+  15-second action-refused-stop reconnect; 45 seconds of live observations
+  showed no action or inventory progress. A functional regression performed
+  16 digs after its first dig requested cancellation.
+- Mechanism: failure/gone/exception branches continued past the only interrupt
+  check, while awaited scans could resume body work after cancellation. The
+  reconnect then cleared the host's correctly session-scoped failure context.
+- Change: check interruption, death and captured action generation at retry
+  and asynchronous body boundaries. Keep inventory-delta results, safety,
+  permissions and the bounded terminal stop watchdog.
+- Falsifiable prediction: this loop yields cancellation without another dig
+  or a forced reconnect. Missing tools/payment remain planner prerequisites;
+  this patch does not claim a completed quest or cross-world memory retention.
+- Validation: initial regression 3 pass/8 fail; focused suites 24 pass; final
+  complete contribution suite 773 pass/0 fail. See local-autonomy-cancellation.md
+  for the deployment/observation acceptance boundary.
