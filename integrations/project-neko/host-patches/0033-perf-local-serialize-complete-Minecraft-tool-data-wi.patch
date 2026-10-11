@@ -1,0 +1,86 @@
+From 972ea61fe919d64d9da5653c07d6299148cd57b3 Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Mon, 12 Oct 2026 04:49:31 +0800
+Subject: [PATCH] perf(local): serialize complete Minecraft tool data without
+ separator whitespace
+
+---
+ main_logic/omni_offline_client/_tools.py | 14 +++++++++++--
+ tests/unit/test_tool_calling.py          | 25 ++++++++++++++++++++++++
+ 2 files changed, 37 insertions(+), 2 deletions(-)
+
+diff --git a/main_logic/omni_offline_client/_tools.py b/main_logic/omni_offline_client/_tools.py
+index eef63f8..3d997ea 100644
+--- a/main_logic/omni_offline_client/_tools.py
++++ b/main_logic/omni_offline_client/_tools.py
+@@ -48,6 +48,16 @@ from ._genai_support import (
+ )
+ 
+ 
++def _serialized_tool_result(result):
++    """Remove JSON separator whitespace, never data or whitespace in strings."""
++    if result.name in {'minecraft_observe', 'minecraft_server', 'minecraft_task', 'minecraft_chat', 'minecraft_wait'} and not isinstance(result.output, str):
++        try:
++            return json.dumps(result.output, ensure_ascii=False, separators=(',', ':'))
++        except (TypeError, ValueError):
++            pass
++    return result.output_as_json_string()
++
++
+ def _minecraft_speech_chunks(chunks):
+     """Scrub explicitly marked reasoning from an already buffered game round.
+ 
+@@ -644,7 +654,7 @@ class _ToolingMixin:
+                     # 必须与原 function_call name 完全一致）。OpenAI-compat 不需要
+                     # 这个字段也不会因此报错——它只用 tool_call_id 关联。
+                     "name": tool_call.name,
+-                    "content": result.output_as_json_string(),
++                    "content": _serialized_tool_result(result),
+                 }
+                 messages.append(tool_result_message)
+                 tool_results.append(tool_result_message)
+@@ -891,7 +901,7 @@ class _ToolingMixin:
+             # role=tool messages stay adjacent. Refresh the matching message
+             # after annotating the result to make the omission model-visible.
+             if isinstance(tool_result_message, dict):
+-                tool_result_message["content"] = result.output_as_json_string()
++                tool_result_message["content"] = _serialized_tool_result(result)
+ 
+         if not content:
+             return None
+diff --git a/tests/unit/test_tool_calling.py b/tests/unit/test_tool_calling.py
+index 3a9931c..6ca096d 100644
+--- a/tests/unit/test_tool_calling.py
++++ b/tests/unit/test_tool_calling.py
+@@ -34,6 +34,31 @@ if str(_ROOT) not in sys.path:
+     sys.path.insert(0, str(_ROOT))
+ 
+ 
++@pytest.mark.parametrize('name', ['minecraft_observe', 'minecraft_server', 'minecraft_task', 'minecraft_chat', 'minecraft_wait'])
++def test_mc_tool_json_compaction_preserves_complete_data_and_string_whitespace(name):
++    from main_logic.omni_offline_client._tools import _serialized_tool_result
++    from main_logic.tool_calling import ToolResult
++    value = {'messages': ['  原始指引\n不得改写  '] * 180,
++             'quotes': [{'id': index, 'cost': [3, None], 'enabled': False,
++                         'description': '完整报价\\n保留反斜杠'} for index in range(200)],
++             'decision': {'status': 'ready_if_authorized', 'stopOrPauseOverrides': True}}
++    result = ToolResult(call_id='same-call', name=name, output=value)
++    text = _serialized_tool_result(result)
++    assert json.loads(text) == json.loads(result.output_as_json_string()) == value
++    assert len(text) < len(result.output_as_json_string())
++    assert json.loads(text)['quotes'][-1]['id'] == 199
++
++
++@pytest.mark.parametrize('name,output', [('minecraft_observe', '  原样字符串\n  '),
++                                       ('other_plugin', {'nested': [1, 2]}),
++                                       ('minecraft_server', {'unsupported': object()})])
++def test_tool_json_compaction_preserves_text_other_plugins_and_encoding_fallback(name, output):
++    from main_logic.omni_offline_client._tools import _serialized_tool_result
++    from main_logic.tool_calling import ToolResult
++    result = ToolResult(call_id='same-call', name=name, output=output)
++    assert _serialized_tool_result(result) == result.output_as_json_string()
++
++
+ def test_offline_package_state_reexports_follow_canonical_owner(monkeypatch):
+     sentinel_genai = object()
+     sentinel_types = object()

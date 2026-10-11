@@ -1,7 +1,7 @@
 {
   "upstreamRepository": "https://github.com/Project-N-E-K-O/N.E.K.O",
   "baseCommit": "fb2a2e731a8c954478d08678b0c8cf40e8145a54",
-  "sourceCommit": "4c327b6ef6720d3809dcd3e9a7aed6257d789d05",
+  "sourceCommit": "972ea61fe919d64d9da5653c07d6299148cd57b3",
   "scope": "plugin/plugins/game_agent_minecraft",
   "resultPluginTree": "0e7d20653317135bebb53ad65ed1f06250c61503",
   "patches": [
@@ -710,6 +710,14 @@
     {
       "file": "host-patches/0032-fix-context-preserve-live-action-eligibility-after-e.patch",
       "sha256": "3a4f86f3a45e8854f6190a8aa17ae0b2f02f446ed430547a6a0f1a968630bd57",
+      "scopePaths": [
+        "main_logic/omni_offline_client/_tools.py",
+        "tests/unit/test_tool_calling.py"
+      ]
+    },
+    {
+      "file": "host-patches/0033-perf-local-serialize-complete-Minecraft-tool-data-wi.patch",
+      "sha256": "499d87cab8d8ca69d2bc8aa082b077126f9c435e6bef59a4da4b33bb877b0c20",
       "scopePaths": [
         "main_logic/omni_offline_client/_tools.py",
         "tests/unit/test_tool_calling.py"
@@ -1610,7 +1618,7 @@
   },
   "completeInformationVerification": {
     "date": "2026-10-12",
-    "sourceCommit": "4c327b6ef6720d3809dcd3e9a7aed6257d789d05",
+    "sourceCommit": "972ea61fe919d64d9da5653c07d6299148cd57b3",
     "nativeCommit": "cea378f7fa7f0d2223e64e6da9ae22bfe103d7b0",
     "runtimeCommit": "ef306922ec066a3bb7da0126f8d3c9d2f2cb8133",
     "nativeRelatedPassed": 243,
@@ -1647,7 +1655,7 @@
       "maxContext": 32768,
       "result": "rejected_context_overflow"
     },
-    "runtimeAcceptance": "pending actual query/action and surface recovery deployment",
+    "runtimeAcceptance": "pending compact tool JSON host loading and long-round acceptance",
     "explicitExecutionDecision": true,
     "explicitWaitWithoutGameplayForcing": true,
     "persistentEvidenceUsesRuntimeDataRoot": true,
@@ -1681,6 +1689,9 @@
     "surfaceStallPluginRegressionPassed": 437,
     "surfaceStallSubtestsPassed": 44,
     "surfaceStallNativeRegressionPassed": 45,
-    "measuredNonLethalSurfaceHandoff": true
+    "measuredNonLethalSurfaceHandoff": true,
+    "compactToolJsonRegressionPassed": 445,
+    "compactToolJsonSubtestsPassed": 44,
+    "toolJsonAllFieldsAndStringWhitespacePreserved": true
   }
 }
