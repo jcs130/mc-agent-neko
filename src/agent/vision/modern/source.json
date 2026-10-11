@@ -2,7 +2,7 @@
   "repository": "https://github.com/jcs130/Cortico",
   "revision": "f0db612ce5075287330ab3e095ffa449c6e8e71c",
   "entry": "src/worlds/minecraft/modern-viewer.ts",
-  "bundleSha256": "1dbf5d0dc1d92d7b0c5c903004ee77e87e7e38a7eb28c989569ff5f3d62eab10",
+  "bundleSha256": "209f763bdac160cb4a94260033d3940d5d2664eeabe8632c9fc048470d568561",
   "inputs": [
     "src/worlds/minecraft/viewer-biome.ts",
     "src/worlds/minecraft/viewer-light.ts",
@@ -71,6 +71,7 @@
     "Observe original particle, map and TextDisplay packets through the shared renderer bridge; remove the duplicate legacy particle path.",
     "Serve original font ZIP resources through the shared bounded asset server.",
     "Use the shared appearance/asset bridge; observer registration remains opt-in for spectator consumers.",
-    "Optionally serve a validated local 64x64 PNG for the own bot; preserve server skins for other players."
+    "Optionally serve a validated local 64x64 PNG for the own bot; preserve server skins for other players.",
+    "Replay same-connection login mana and abilities through the strict parser, retaining the original timestamp and marking cached cooldowns unknown."
   ]
 }

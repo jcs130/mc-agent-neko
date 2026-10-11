@@ -3,7 +3,22 @@ import { createRequire } from 'node:module';
 import { startViewerLanProxy } from './viewer_lan_proxy.js';
 const require = createRequire(import.meta.url);
 
-export async function addBrowserViewer(bot, count_id = 0) {
+// GameInformation owns the connection's early login packets. Never replay a
+// different bot/session or a partially decoded packet as our player state.
+export function cachedViewerSkills(bot, gameInformation) {
+    if (!gameInformation || gameInformation.bot !== bot || gameInformation.closed !== false) return null;
+    const channel = 'mcagent:state';
+    const entry = gameInformation.presentation?.channels?.[channel];
+    if (!entry || entry.encoding !== 'json' || !Array.isArray(entry.truncated) || entry.truncated.length
+        || !Number.isFinite(entry.observedAt) || entry.observedAt <= 0 || entry.observedAt > Date.now() + 30000
+        || !Number.isInteger(entry.byteLength) || entry.byteLength < 1 || entry.byteLength > 65536) return null;
+    try {
+        const data = Buffer.from(JSON.stringify(entry.value));
+        return data.length <= 65536 ? { channel, data, observedAt: entry.observedAt } : null;
+    } catch { return null; }
+}
+
+export async function addBrowserViewer(bot, count_id = 0, { gameInformation } = {}) {
     if (!settings.render_bot_view) return;
     const port = Number(settings.viewer_port ?? 3000) + count_id;
     if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Invalid viewer port');
@@ -24,6 +39,7 @@ export async function addBrowserViewer(bot, count_id = 0) {
         selfSkinPath: settings.modern_viewer_self_skin,
         selfSkinModel: settings.modern_viewer_self_skin_model ?? 'slim',
         observerState: settings.modern_viewer_observer_state === true,
+        initialSkillsPacket: cachedViewerSkills(bot, gameInformation),
         maxSessions: settings.modern_viewer_max_sessions ?? 8 });
     let lan;
     try {

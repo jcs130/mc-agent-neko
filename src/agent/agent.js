@@ -500,7 +500,7 @@ export class Agent {
                 // Browser rendering is opt-in and does not load headless-gl.
                 if (settings.render_bot_view) {
                     const { addBrowserViewer } = await import('./vision/browser_viewer.js');
-                    await addBrowserViewer(this.bot, this.count_id);
+                await addBrowserViewer(this.bot, this.count_id, { gameInformation: wsServer.gameInformation });
                 }
                 console.log('Initializing vision intepreter...');
                 this.vision_interpreter = new VisionInterpreter(this, settings.allow_vision);

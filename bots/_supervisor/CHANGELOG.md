@@ -3029,3 +3029,17 @@
 - 可证伪预测：相同历史聊天拒绝在监工事实和失败分组中保留真实原因，不同原因不再合并为空；无理由的回执仍保留未知。脱困、工具补给、真实交易和语音结束回执不因此验收。
 - 检查：真实sendGameChat校验→buildEvidence回归旧代码2通过/4失败；修复验证及监工独立部署见hourly证据，未据模型结论关单。
 - 部署：相关42项及完整731项通过；源码f0779c4推送个人fork后，08:39通过原启动器协作停止/隐藏重载DSH（8096→45540），游戏、主脑和3090模型进程保持。三个实际历史回执投影均恢复原因，但不冒充新线上事件；T-0045原occurrences=1的deployed回执API已确认，仍待运行验收。无游戏动作/测试聊天，脱困失败和语音结束回执继续保留待办。
+# 2026-10-11 — Replay same-connection login skills into the modern viewer
+
+- Evidence: native observation retained the login mana 26/26 and nine abilities;
+  a real LAN subscriber received no skillsState because viewer startup followed
+  the login packet. The strict host parser already accepted the server schema.
+- Change: explicitly pass same-bot complete cached JSON through that parser,
+  retaining its observation time and marking cached cooldowns unknown. Preserve
+  pinned renderer sources and reproducible importer/hash metadata.
+- Falsifiable prediction: first/third LAN subscribers receive the cached nine
+  abilities before another server packet; later live packets replace the stale
+  reading. Replaying a cached packet cannot prove present mana or cast readiness.
+- Validation: early-login regression failed before the fix; 13 viewer/adapter
+  tests pass afterwards. Live deployment acceptance is recorded separately in
+  docs/neko-viewer-login-state-2026-10-11.md.

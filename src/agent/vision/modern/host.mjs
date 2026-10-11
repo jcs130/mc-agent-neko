@@ -1,4 +1,4 @@
-// ../neko-mc-trial/mc-agent-neko/src/agent/vision/viewer_self_skin.js
+// ../neko-mc-trial/mc-agent-viewer-contrib/src/agent/vision/viewer_self_skin.js
 import { readFile, stat } from "node:fs/promises";
 import { createHash } from "node:crypto";
 async function loadViewerSelfSkin(filename, model = "slim") {
@@ -3321,6 +3321,21 @@ async function startModernViewer(bot, options) {
   let latestSkills = null;
   let agentManaSeen = false;
   let agentStateSeen = false;
+  const initialSkills = options.initialSkillsPacket;
+  if (initialSkills?.channel === VIEWER_STATE_CHANNEL && Number.isFinite(initialSkills.observedAt) && initialSkills.observedAt > 0 && initialSkills.observedAt <= Date.now() + 3e4) {
+    const parsed = parseSkillsPayload(initialSkills.channel, initialSkills.data);
+    if (parsed) {
+      latestSkills = {
+        ...mergeViewerSkillState(null, parsed, initialSkills.channel, false),
+        observedAt: initialSkills.observedAt,
+        stale: true,
+        // A login snapshot cannot prove present cooldown readiness.
+        abilities: parsed.abilities.map((ability) => ({ ...ability, cooldownRemainingMs: null }))
+      };
+      agentManaSeen = true;
+      agentStateSeen = true;
+    }
+  }
   let castSequence = 0;
   let pendingCasts = [];
   let recentChatSuccess = null;

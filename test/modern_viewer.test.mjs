@@ -10,7 +10,7 @@ import { createRequire } from 'node:module';
 import { io } from 'socket.io-client';
 import { Vec3 } from 'vec3';
 import settings from '../src/agent/settings.js';
-import { addBrowserViewer } from '../src/agent/vision/browser_viewer.js';
+import { addBrowserViewer, cachedViewerSkills } from '../src/agent/vision/browser_viewer.js';
 import { startModernViewer } from '../src/agent/vision/modern/host.mjs';
 import { loadViewerSelfSkin } from '../src/agent/vision/viewer_self_skin.js';
 
@@ -143,6 +143,80 @@ test('vendored host matches its recorded source hash', async () => {
     const metadata = JSON.parse(await readFile(new URL('../src/agent/vision/modern/source.json', import.meta.url)));
     const host = await readFile(new URL('../src/agent/vision/modern/host.mjs', import.meta.url));
     assert.equal(sha256(host), metadata.bundleSha256);
+});
+
+test('login mana and abilities received before viewer startup reach local and LAN viewers', async t => {
+    const root = await assets(t), port = await availablePort(), bot = fakeBot();
+    const observedAt = Date.now() - 120000;
+    const value = { schemaVersion: 1, mana: { current: 26, max: 26 },
+        abilities: Array.from({ length: 9 }, (_, i) => ({ id: `mycli:ability_${i}`,
+            name: `Ability ${i}`, level: 1, cooldownMs: 8000, cooldownRemainingMs: 0 })) };
+    const gameInformation = { bot, closed: false, presentation: { channels: {
+        'mcagent:state': { channel: 'mcagent:state', encoding: 'json', observedAt,
+            byteLength: Buffer.byteLength(JSON.stringify(value)), truncated: [], value },
+    } } };
+    Object.assign(settings, { render_bot_view: true, viewer_type: 'modern', viewer_port: port,
+        modern_viewer_assets_dir: root, modern_viewer_max_sessions: 4,
+        modern_viewer_lan_address: '127.0.0.2', modern_viewer_lan_prefix: 8 });
+    await addBrowserViewer(bot, 0, { gameInformation });
+    t.after(() => bot.viewer.close());
+    for (const [base, socketPath] of [[`http://127.0.0.1:${port}`, '/socket.io/'],
+        [`http://127.0.0.2:${port}`, '/third/socket.io/']]) {
+        const socket = io(base, { path: socketPath, transports: ['websocket'], reconnection: false });
+        t.after(() => socket.close());
+        const state = await contentEvent(socket, 'skillsState');
+        assert.deepEqual(state.mana, { current: 26, max: 26 });
+        assert.equal(state.abilities.length, 9);
+        assert.equal(state.observedAt, observedAt, 'replaying a login packet cannot make its reading fresh');
+        assert.equal(state.stale, true, 'the renderer must label a cached reading as last known');
+        assert.ok(state.abilities.every(ability => ability.cooldownRemainingMs === null),
+            'a login-only snapshot cannot prove current cooldown readiness');
+        socket.close();
+    }
+    bot._client.emit('custom_payload', { channel: 'mcagent:state',
+        data: Buffer.from(JSON.stringify({ ...value, mana: { current: 13, max: 26 } })) });
+    const late = io(`http://127.0.0.1:${port}`, { transports: ['websocket'], reconnection: false });
+    t.after(() => late.close());
+    const live = await contentEvent(late, 'skillsState');
+    assert.deepEqual(live.mana, { current: 13, max: 26 });
+    assert.notEqual(live.observedAt, observedAt);
+    assert.notEqual(live.stale, true);
+});
+
+test('early skills replay rejects foreign, closed, truncated and oversized cache entries', () => {
+    const bot = fakeBot(), observedAt = Date.now();
+    const value = { schemaVersion: 1, mana: { current: 26, max: 26 }, abilities: [] };
+    const entry = { encoding: 'json', observedAt, byteLength: 100, truncated: [], value };
+    const cache = update => ({ bot, closed: false, presentation: { channels: {
+        'mcagent:state': { ...entry, ...update },
+    } } });
+    assert.equal(cachedViewerSkills(bot, { ...cache(), bot: fakeBot() }), null);
+    assert.equal(cachedViewerSkills(bot, { ...cache(), closed: true }), null);
+    for (const invalid of [{ encoding: 'hex' }, { truncated: ['$.abilities'] }, { truncated: null },
+        { observedAt: NaN }, { observedAt: Date.now() + 60000 }, { byteLength: 65537 },
+        { value: { ...value, extra: 'x'.repeat(65536) } }]) {
+        assert.equal(cachedViewerSkills(bot, cache(invalid)), null);
+    }
+    const cyclic = {}; cyclic.value = cyclic;
+    assert.equal(cachedViewerSkills(bot, cache({ value: cyclic })), null);
+    assert.equal(cachedViewerSkills(bot, cache()).observedAt, observedAt);
+});
+
+test('invalid early skill schemas do not prevent startup or suppress later real packets', async t => {
+    const root = await assets(t), port = await availablePort(), bot = fakeBot();
+    const handle = await startModernViewer(bot, { port, assetsDir: root,
+        initialSkillsPacket: { channel: 'mcagent:state', observedAt: Date.now(),
+            data: Buffer.from('{"schemaVersion":99,"mana":{"current":26,"max":26}}') } });
+    t.after(() => handle.close());
+    const socket = io(handle.url, { transports: ['websocket'], reconnection: false });
+    t.after(() => socket.close());
+    const states = []; socket.on('skillsState', value => states.push(value));
+    await contentEvent(socket, 'avatarState');
+    assert.deepEqual(states, []);
+    const updated = contentEvent(socket, 'skillsState');
+    bot._client.emit('custom_payload', { channel: 'mcagent:state',
+        data: Buffer.from('{"schemaVersion":1,"mana":{"current":12,"max":26},"abilities":[]}') });
+    assert.equal((await updated).mana.current, 12);
 });
 
 test('local YUI skin is bounded and sent only as the own avatar, without game packets', async t => {

@@ -106,6 +106,21 @@ const result = await build({
                     "socket.emit(view === 'third' ? 'entity' : 'playerEntity', presentOwnEntity());", 'initial own skin');
                 source = replaceOnce(source, "  protocol.on('world_particles', onParticle);", '', 'legacy particle registration');
                 source = replaceOnce(source, "      protocol.off('world_particles', onParticle);", '', 'legacy particle cleanup');
+                source = replaceOnce(source, '  let agentStateSeen = false;', `  let agentStateSeen = false;
+  const initialSkills = options.initialSkillsPacket;
+  if (initialSkills?.channel === VIEWER_STATE_CHANNEL
+      && Number.isFinite(initialSkills.observedAt) && initialSkills.observedAt > 0
+      && initialSkills.observedAt <= Date.now() + 30000) {
+    const parsed = parseSkillsPayload(initialSkills.channel, initialSkills.data);
+    if (parsed) {
+      latestSkills = { ...mergeViewerSkillState(null, parsed, initialSkills.channel, false),
+        observedAt: initialSkills.observedAt, stale: true,
+        // A login snapshot cannot prove present cooldown readiness.
+        abilities: parsed.abilities.map(ability => ({ ...ability, cooldownRemainingMs: null })) };
+      agentManaSeen = true;
+      agentStateSeen = true;
+    }
+  }`, 'early login skills replay');
                 return { contents: source, loader: 'ts', resolveDir: path.dirname(filename) };
             });
         },
@@ -140,7 +155,8 @@ await writeFile(path.join(destination, 'source.json'), JSON.stringify({
         'Observe original particle, map and TextDisplay packets through the shared renderer bridge; remove the duplicate legacy particle path.',
         'Serve original font ZIP resources through the shared bounded asset server.',
         'Use the shared appearance/asset bridge; observer registration remains opt-in for spectator consumers.',
-        'Optionally serve a validated local 64x64 PNG for the own bot; preserve server skins for other players.'],
+        'Optionally serve a validated local 64x64 PNG for the own bot; preserve server skins for other players.',
+        'Replay same-connection login mana and abilities through the strict parser, retaining the original timestamp and marking cached cooldowns unknown.'],
 }, null, 2) + '\n');
 await writeFile(path.join(destination, 'renderer-source.json'), JSON.stringify(rendererSource, null, 2) + '\n');
 console.log(`Imported modern viewer host (${bundle.length} bytes).`);
