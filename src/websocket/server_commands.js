@@ -6,7 +6,7 @@ const READ_ONLY = /^\/mycli (?:help(?: .*)?|guide(?: .*)?|list(?: .*)?|explain(?
 // Metadata for the execution planner, not an extension of serverQuery's
 // permission gate above. These exact catalogue forms are documented/observed
 // on the live server; accept/claim/cast and unknown arguments remain actions.
-const CATALOGUE_QUERY = /^\/mycli (?:guild (?:market (?:list|tm_[a-z0-9_]{1,64})|engineering list)|world board|village villagers)$/;
+const CATALOGUE_QUERY = /^\/mycli (?:guild (?:market (?:list|tm_[a-z0-9_]{1,64})|engineering list)|world board|village villagers|quests(?: explain tm_[a-z0-9_]{1,64})?|commission(?: mine| info tm_[a-z0-9_]{1,64})?)$/;
 
 export async function sendServerCommand(bot, { command, readOnly = false } = {}, { timeoutMs = 2500, quietMs = 180 } = {}) {
     if (!bot?.entity || typeof bot.chat !== 'function') return { status: 'failed', reason: 'offline' };

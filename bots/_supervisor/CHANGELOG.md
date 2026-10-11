@@ -3109,3 +3109,18 @@
   claiming server protection. The focused case failed before the fix; exact
   production guard/dispatch, stale evidence and emergency cases now pass.
   Full regression and natural deployment acceptance remain separately recorded.
+
+### 2026-10-11 — Keep observed commission queries in the query-only handoff
+- Evidence: 91 samples over 90 seconds showed no movement or inventory change;
+  after a failed trade the host repeatedly inspected commissions and hit its
+  three-round cap without tools. The real bridge marked these queries non-read-only.
+- Mechanism: mixed query receipts therefore disabled the existing optional
+  final execution opportunity. Add exact observed quest/commission catalogue
+  forms only to receipt metadata, retaining the serverQuery permission gate.
+- Falsifiable prediction: these receipts retain readOnly=true, so they no longer
+  alone disqualify an otherwise eligible final opportunity. Acceptance, claims,
+  unknown arguments, busy/stop handling and bounded model calls remain unchanged.
+- Validation: the new bridge regression failed before the change; 15 bridge,
+  756 full native and 24 existing host Minecraft tool-loop tests pass. Counts
+  overlap. Natural task dispatch and deployment remain separate acceptance gates;
+  see the quest-query handoff report.

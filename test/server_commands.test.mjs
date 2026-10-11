@@ -118,6 +118,32 @@ test('reply metadata distinguishes allowlisted queries from mutations and unknow
     }
 });
 
+test('observed quest and commission queries remain queries at the planner handoff', async () => {
+    const send = await bridge(), bot = fakeBot(b => b.emit('messagestr', 'MC_COMMISSION_LIST {"contracts":[]}', 'system'));
+    for (const command of ['/mycli quests', '/mycli quests explain tm_trail_supply',
+        '/mycli commission', '/mycli commission mine', '/mycli commission info tm_trail_supply']) {
+        const result = await send(bot, { command }, { quietMs: 2, timeoutMs: 20 });
+        assert.equal(result.readOnly, true, command);
+        assert.equal(result.confirmed, false, 'inspection is not acceptance or completion');
+        assert.equal(result.records[0].kind, 'MC_COMMISSION_LIST', 'retain actual server replies');
+    }
+});
+
+test('quest receipt classification neither grants query permission nor guesses unknown grammar', async () => {
+    const send = await bridge(), bot = fakeBot(b => b.emit('messagestr', 'reply', 'system'));
+    for (const command of ['/mycli quests', '/mycli commission info tm_trail_supply']) {
+        const count = bot.sent.length;
+        assert.equal((await send(bot, { command, readOnly: true })).status, 'failed', command);
+        assert.equal(bot.sent.length, count, 'metadata must not widen the serverQuery gate');
+    }
+    for (const command of ['/mycli quests accept tm_trail_supply', '/mycli quests claim tm_trail_supply',
+        '/mycli commission accept tm_trail_supply', '/mycli commission claim tm_trail_supply',
+        '/mycli commission mine extra', '/mycli commission info', '/mycli commission info tm_trail_supply extra',
+        '/mycli quests explain tm_trail_supply extra', '/mycli quests unknown']) {
+        assert.equal((await send(bot, { command }, { quietMs: 2, timeoutMs: 20 })).readOnly, false, command);
+    }
+});
+
 test('reply metadata recognizes documented market, engineering and world catalogue queries', async () => {
     const send = await bridge(), bot = fakeBot(b => b.emit('messagestr', 'catalogue', 'system'));
     for (const command of ['/mycli guild market list', '/mycli guild market tm_trail_supply',
