@@ -2,7 +2,7 @@
   "repository": "https://github.com/jcs130/Cortico",
   "revision": "f0db612ce5075287330ab3e095ffa449c6e8e71c",
   "entry": "src/worlds/minecraft/modern-viewer.ts",
-  "bundleSha256": "209f763bdac160cb4a94260033d3940d5d2664eeabe8632c9fc048470d568561",
+  "bundleSha256": "9c593722f77a5358971f4a8aa571d8469a65024a55537a2a737029032b1b275e",
   "inputs": [
     "src/worlds/minecraft/viewer-biome.ts",
     "src/worlds/minecraft/viewer-light.ts",
@@ -72,6 +72,7 @@
     "Serve original font ZIP resources through the shared bounded asset server.",
     "Use the shared appearance/asset bridge; observer registration remains opt-in for spectator consumers.",
     "Optionally serve a validated local 64x64 PNG for the own bot; preserve server skins for other players.",
-    "Replay same-connection login mana and abilities through the strict parser, retaining the original timestamp and marking cached cooldowns unknown."
+    "Replay same-connection login mana and abilities through the strict parser, retaining the original timestamp and marking cached cooldowns unknown.",
+    "Preserve prior mana observation time when enriching abilities from a server spell catalogue."
   ]
 }

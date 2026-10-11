@@ -173,6 +173,17 @@ test('login mana and abilities received before viewer startup reach local and LA
             'a login-only snapshot cannot prove current cooldown readiness');
         socket.close();
     }
+    const catalogueSocket = io(`http://127.0.0.1:${port}`, { transports: ['websocket'], reconnection: false });
+    t.after(() => catalogueSocket.close());
+    await contentEvent(catalogueSocket, 'skillsState');
+    const enriched = contentEvent(catalogueSocket, 'skillsState');
+    bot.emit('message', { toString: () => '探索咏唱：跃步(mycli:ability_0,3魔力/8秒)' }, 'system');
+    const catalogueState = await enriched;
+    assert.equal(catalogueState.abilities[0].manaCost, 3);
+    assert.equal(catalogueState.observedAt, observedAt,
+        'receiving a spell catalogue must not freshen a cached mana reading');
+    assert.equal(catalogueState.stale, true);
+    catalogueSocket.close();
     bot._client.emit('custom_payload', { channel: 'mcagent:state',
         data: Buffer.from(JSON.stringify({ ...value, mana: { current: 13, max: 26 } })) });
     const late = io(`http://127.0.0.1:${port}`, { transports: ['websocket'], reconnection: false });

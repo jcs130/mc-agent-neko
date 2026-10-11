@@ -1547,7 +1547,7 @@ function mergeViewerSpellCatalogue(previous, catalogue, agentStateSeen) {
   return {
     ...previous ?? { schemaVersion: 1, mana: null, skills: [] },
     abilities,
-    observedAt: Date.now()
+    observedAt: previous?.observedAt ?? Date.now()
   };
 }
 

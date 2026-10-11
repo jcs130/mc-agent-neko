@@ -3043,3 +3043,12 @@
 - Validation: early-login regression failed before the fix; 13 viewer/adapter
   tests pass afterwards. Live deployment acceptance is recorded separately in
   docs/neko-viewer-login-state-2026-10-11.md.
+
+### 2026-10-11 — Catalogue enrichment preserves mana freshness
+- Evidence: a received spell catalogue updated cached login mana's observedAt
+  despite containing no new mana measurement; the socket regression reproduced it.
+- Change: reproducible importer preserves previous observedAt when merging the
+  catalogue, retaining costs, abilities and subsequent live packet updates.
+- Falsifiable prediction: a catalogue alone cannot make the last mana reading
+  fresh; a real state packet can. All 13 viewer/adapter tests pass after the
+  failing regression. Runtime acceptance is recorded in the viewer report.

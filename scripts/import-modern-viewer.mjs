@@ -51,6 +51,14 @@ const result = await build({
             build.onResolve({ filter: /^\.\/viewer-asset-server\.ts$/ }, () => ({
                 path: path.join(rendererHost, 'viewer-asset-server.mjs'),
             }));
+            build.onLoad({ filter: /[\\/]viewer-state\.ts$/ }, async ({ path: filename }) => {
+                const source = (await readFile(filename, 'utf8')).replace(/\r\n/g, '\n');
+                return { contents: replaceOnce(source,
+                    '    abilities, observedAt: Date.now() };',
+                    '    abilities, observedAt: previous?.observedAt ?? Date.now() };',
+                    'catalogue preserves prior mana observation time'),
+                    loader: 'ts', resolveDir: path.dirname(filename) };
+            });
             build.onLoad({ filter: /[\\/]modern-viewer\.ts$/ }, async ({ path: filename }) => {
                 let source = (await readFile(filename, 'utf8')).replace(/\r\n/g, '\n');
                 const speechSetup = / {2}const speechBubbleScript = await readFile\([\s\S]*? {2}const speechRelay = new ViewerSpeechRelay\([^;]+;/;
@@ -156,7 +164,8 @@ await writeFile(path.join(destination, 'source.json'), JSON.stringify({
         'Serve original font ZIP resources through the shared bounded asset server.',
         'Use the shared appearance/asset bridge; observer registration remains opt-in for spectator consumers.',
         'Optionally serve a validated local 64x64 PNG for the own bot; preserve server skins for other players.',
-        'Replay same-connection login mana and abilities through the strict parser, retaining the original timestamp and marking cached cooldowns unknown.'],
+        'Replay same-connection login mana and abilities through the strict parser, retaining the original timestamp and marking cached cooldowns unknown.',
+        'Preserve prior mana observation time when enriching abilities from a server spell catalogue.'],
 }, null, 2) + '\n');
 await writeFile(path.join(destination, 'renderer-source.json'), JSON.stringify(rendererSource, null, 2) + '\n');
 console.log(`Imported modern viewer host (${bundle.length} bytes).`);
