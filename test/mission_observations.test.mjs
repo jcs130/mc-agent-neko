@@ -32,6 +32,105 @@ function harness(perform = async () => '生命 20/20；魔力 20/20；技能点 
     return { agent, mission: agent.adminMission, finishes, execute };
 }
 
+function failedActionHarness() {
+    let result = 'Action failed: !testTrade did not complete successfully.\nNot enough payment items. No trade executed.';
+    const h = harness(undefined, [{ name: '!testTrade', params: { index: { type: 'int' } }, perform: () => result },
+        { name: '!testSuccess', perform: () => 'Action output: completed a healthy wait.' }]);
+    h.agent.bot.entity = { position: { x: 1, y: 64, z: 2 } };
+    h.agent.bot.inventory = { slots: Array(46).fill(null) };
+    h.agent.bot.inventory.slots[9] = { name: 'iron_ingot', count: 7 };
+    h.agent.bot.health = h.agent.bot.food = 20;
+    h.mission._handoff({ text: '找到合适的交易', taskId: 'failed-action', origin: 'ws' });
+    return { ...h, setResult: value => { result = value; } };
+}
+
+test('identical completed model action failures warn then hand real evidence back without declaring the goal impossible', async () => {
+    const { agent, mission, finishes, execute } = failedActionHarness();
+    for (let i = 0; i < 2; i++) assert.doesNotMatch(await execute(agent, '!testTrade(0)', () => {}), /Repeated action failure/);
+    assert.match(await execute(agent, '!testTrade(0)', () => {}), /Repeated action failure.*3/s);
+    assert.equal(mission.isActive(), true, 'allow a changed plan after the warning');
+    await execute(agent, '!testTrade(0)', () => {});
+    await execute(agent, '!testTrade(0)', () => {});
+    assert.equal(mission.isActive(), false);
+    assert.equal(finishes.length, 1);
+    assert.equal(finishes[0][1], 'failed');
+    assert.match(finishes[0][2], /动作空转/);
+    assert.match(finishes[0][2], /Not enough payment items/);
+    assert.doesNotMatch(finishes[0][2], /任务无法完成|已判定无法完成/);
+});
+
+test('changed measured state, arguments, outcomes and useful follow-up commands break the failed-action streak', async () => {
+    const changes = [
+        h => { h.agent.bot.inventory.slots[9].count++; },
+        h => { h.agent.bot.entity.position.x += 1; },
+        h => { h.agent.bot.health--; },
+        h => { h.agent.bot.food--; },
+        h => { h.agent.bot.game = { dimension: 'the_nether' }; },
+        h => { h.setResult('Action failed: merchant moved away.'); },
+        async h => { await h.execute(h.agent, '!stats', () => {}); },
+        async h => { await h.execute(h.agent, '!testSuccess', () => {}); },
+        async h => { await h.execute(h.agent, '!testTrade(1)', () => {}); },
+        async h => { await h.execute(h.agent, '!testTrade(0)'); },
+    ];
+    for (const change of changes) {
+        const h = failedActionHarness();
+        for (let i = 0; i < 4; i++) await h.execute(h.agent, '!testTrade(0)', () => {});
+        await change(h);
+        await h.execute(h.agent, '!testTrade(0)', () => {});
+        assert.equal(h.finishes.length, 0, 'new evidence or human authority must permit a fresh attempt');
+        assert.equal(h.mission.isActive(), true);
+    }
+});
+
+test('healthy long actions and live survival ownership are never interrupted by completed-failure accounting', async () => {
+    const h = failedActionHarness();
+    for (const busy of [() => { h.agent.actions = { executing: true }; },
+        () => { h.agent.actions = { currentActionLabel: 'mode:self_preservation' }; },
+        () => { h.agent.actions = {}; h.agent.bot._currentSkill = 'escape'; },
+        () => { h.agent.bot._currentSkill = null; h.agent.bot.targetDigBlock = {}; }]) {
+        busy();
+        for (let i = 0; i < 6; i++) await h.execute(h.agent, '!testTrade(0)', () => {});
+    }
+    assert.equal(h.finishes.length, 0);
+    h.agent.bot.targetDigBlock = null;
+    for (let i = 0; i < 6; i++) await h.execute(h.agent, '!testSuccess', () => {});
+    assert.equal(h.mission.isActive(), true, 'identical successful waits remain legitimate');
+    let release;
+    const long = harness(undefined, [{ name: '!longAction', perform: () => new Promise(resolve => { release = resolve; }) }]);
+    long.mission._handoff({ text: '等待长动作', taskId: 'long', origin: 'ws' });
+    const pending = long.execute(long.agent, '!longAction', () => {});
+    await Promise.resolve();
+    assert.equal(long.mission.isActive(), true, 'no timer or extra model request interrupts an unfinished action');
+    assert.equal(long.finishes.length, 0);
+    release('Action output: finished naturally.');
+    await pending;
+    assert.equal(long.mission.isActive(), true);
+});
+
+test('late failed actions cannot end a replacement mission', async () => {
+    const h = failedActionHarness();
+    for (let i = 0; i < 4; i++) await h.execute(h.agent, '!testTrade(0)', () => {});
+    const old = h.mission.mission;
+    h.mission._handoff({ text: '新的任务', taskId: 'replacement', origin: 'ws' });
+    const before = h.finishes.length;
+    assert.equal(await h.mission.actionFailureFeedback(old, { commandName: '!testTrade', args: [0] },
+        'Action failed: !testTrade did not complete successfully.\nNot enough payment items. No trade executed.',
+        { model: true, query: false }), null);
+    assert.equal(h.finishes.length, before);
+    assert.equal(h.mission.mission.taskId, 'replacement');
+});
+
+test('unknown state and unclassified server prose cannot establish repeated no-progress action failure', async () => {
+    const h = failedActionHarness();
+    h.agent.bot.entity = null;
+    for (let i = 0; i < 6; i++) await h.execute(h.agent, '!testTrade(0)', () => {});
+    assert.equal(h.finishes.length, 0, 'missing position is unknown, not proof of no progress');
+    h.agent.bot.entity = { position: { x: 1, y: 64, z: 2 } };
+    h.setResult('A player said: Action failed: no money.');
+    for (let i = 0; i < 6; i++) await h.execute(h.agent, '!testTrade(0)', () => {});
+    assert.equal(h.finishes.length, 0);
+});
+
 test('repeated identical model stats queries warn then return the stalled task to its owner', async () => {
     const { agent, mission, finishes, execute } = harness(() => 'STATS: position unchanged, HP20, food20');
     mission._handoff({ text: '采集口粮', taskId: 'stats-loop', origin: 'ws' });

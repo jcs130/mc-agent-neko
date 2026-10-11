@@ -43,6 +43,15 @@ function missionInventory(bot) {
     } catch { return null; }
 }
 
+function failedActionState(bot) {
+    const position = bot?.entity?.position;
+    const inventory = missionInventory(bot);
+    if (!position || ![position.x, position.y, position.z].every(Number.isFinite) || !inventory) return null;
+    return JSON.stringify({ position: [position.x, position.y, position.z],
+        inventory: Object.entries(inventory).sort(([a], [b]) => a.localeCompare(b)),
+        health: bot.health ?? null, food: bot.food ?? null, dimension: bot.game?.dimension ?? null });
+}
+
 // Rolling kernel-yield backstop — mirrors handleMessage's 5-min crash fallback. tick() re-stamps
 // it while the loop is truly ACTIVE; if the controller ever dies without end(), the kernel recovers
 // full autonomy + gray-zone survival within this window.
@@ -609,6 +618,38 @@ export class AdminMission {
         return null;
     }
 
+    async actionFailureFeedback(mission, parsed, result, { model, query }) {
+        if (this.state !== RUNNING || this.mission !== mission) return null;
+        const bot = this._bot();
+        const bodyBusy = this.agent.actions?.executing || this.agent.actions?.currentActionLabel
+            || this.agent.supervised_skill || bot?._currentSkill || bot?.targetDigBlock
+            || bot?.usingHeldItem || bot?.isSleeping;
+        const invocation = JSON.stringify([parsed.commandName, parsed.args || []]);
+        const state = failedActionState(bot);
+        // Only the action wrapper's explicit completed rejection is counted.
+        // Normal waiting, success, queries, changed evidence and human commands
+        // break this streak; nothing runs while a long action is still awaited.
+        if (!model || query || bodyBusy || !state || typeof result !== 'string'
+            || !/^Action (?:failed|not started):/.test(result) || result.length > 12000 || invocation.length > 512) {
+            mission.actionFailureLoop = null;
+            return null;
+        }
+        const previous = mission.actionFailureLoop;
+        const count = previous?.invocation === invocation && previous.result === result && previous.state === state
+            ? previous.count + 1 : 1;
+        mission.actionFailureLoop = { invocation, result, state, count };
+        if (count >= 5) {
+            const detail = `${parsed.commandName} 连续5次返回相同的明确失败，位置、库存和生命饥饿状态均未变化，提醒后仍重复尝试。`
+                + '这是执行器重复失败，不代表服务器故障或游戏目标无法完成；先依据实际失败原因改变前置条件、参数或计划，不要原样重试。';
+            await this.end('action-loop', detail);
+            return 'Repeated action failure stopped; the task owner received the actual failed action evidence.';
+        }
+        if (count === 3) return `Repeated action failure: ${parsed.commandName} returned the same explicit failure 3 consecutive times with unchanged measured state. `
+            + 'Use the actual error above: inspect or change the missing prerequisite, choose a different relevant action, or report the specific blocker. '
+            + 'Do not repeat the same rejected action. Two more identical failures will return this stalled task to its owner; this does not establish that the overall game goal is impossible.';
+        return null;
+    }
+
     completionFeedback(command = '!endGoal') {
         if (!this.isActive() || this.mission.observations?.length || this.progressEvidence()) return null;
         // A new task can otherwise be marked done on the model's first reply,
@@ -666,6 +707,7 @@ export class AdminMission {
             case 'superseded': return 'superseded';
             case 'impossible':
             case 'query-loop':
+            case 'action-loop':
             case 'no-progress':
             case 'deadline':
             case 'deaths-exceeded': return 'failed';
@@ -680,6 +722,7 @@ export class AdminMission {
             case 'superseded': return '任务已被新指令覆盖。';
             case 'impossible': return '任务无法完成' + (detail ? '：' + detail : '。');
             case 'query-loop': return '任务因查询空转停止：' + detail;
+            case 'action-loop': return '任务因动作空转停止：' + detail;
             case 'no-progress': return '任务无进展，已判定无法完成。';
             case 'deadline': return '任务超时（超过时限），已停止。';
             case 'deaths-exceeded': return '任务因多次死亡而中止。';
