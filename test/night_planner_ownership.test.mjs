@@ -71,3 +71,17 @@ test('both non-vital hold and mobility respect the same measured protected-retre
     f.bot.lastDamageTime = f.clock.now;
     assert.equal(f.mode.yieldProtectedRetreat(f.agent), false, 'new damage immediately revokes the soft handoff');
 });
+
+test('a running sealed wait re-evaluates ownership without waiting for sunrise', async () => {
+    const f=fixture({external:false}); let owner=false, waits=0;
+    f.agent.hasExternalAutonomyOwner=()=>owner;
+    f.mode.coveredNightHoldStatus=()=>({hold:false});
+    const start=source.indexOf('            for (let w = 0; w < 110 && !this.isDay(bot); w++)');
+    const end=source.indexOf('\n        },',start);
+    assert(start>0 && end>start);
+    Object.assign(f.context,{bot:f.bot,agent:f.agent,mode:f.mode,yieldBlockedRetreat:()=>false,
+        fs:{appendFileSync(){}},skills:{wait:async()=>{ waits++; owner=true; }}});
+    await vm.runInContext('(async function(){'+source.slice(start,end)+'}).call(mode)',f.context);
+    assert.equal(waits,1,'external ownership gained after one normal dwell ends the old wait');
+    assert.equal(f.bot.time.timeOfDay,18000,'the test never changes the time to daylight');
+});

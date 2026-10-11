@@ -462,3 +462,9 @@ generation still controls avatar emotion. Joint reply requests follow the
 actual session locale without changing exact tool/player identifiers or adding
 inference calls. See the [regression and deployment report](../../docs/local-speech-task-context.md)
 for before/after evidence, measured speech delay and open gameplay acceptance.
+
+The companion host/plugin pair was loaded at an owned idle boundary on
+2026-10-11. Native preventive night ownership and protected recovery were
+subsequently repaired separately; see [the night policy report](../../docs/night-planner-ownership.md).
+These changes target local inference latency and continuity without adding model
+calls or suppressing genuine player communication or reactive emergencies.

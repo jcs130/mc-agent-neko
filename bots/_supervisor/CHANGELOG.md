@@ -1,5 +1,13 @@
 # Neko 改动台账（科学家模式）
 
+## 2026-10-11：外部主脑夜间所有权与保护区恢复
+
+- 实证：160 帧/约5分钟满血满饥饿，身体在避险与机动间切换；天亮后仍反复挖村庄保护方块，并出现附魔 concat 报错。随后自然回到地表发生在本次原生加载前，不归因于新夜间修改。
+- 机制/改动：外部主脑的任务间隙仍被原生预防夜宿占用；已存在的安全保护区恢复窗口没有约束被动等待和机动挖掘。三者共享同一有界窗口，运行中长等待重评；独立模式与实际受击/苦力怕/环境自救保留。组件附魔对象转消费者既定 name/lvl 数组，不丢真实等级或修改原组件。
+- 可证伪预测：天黑本身不再抢外部身体；保护区无进展让位不会紧接着被另一反射挖墙夺回；新危险立即撤销。没有增加LLM心跳或注入游戏指令。
+- 验证/部署：夜间相关55、最终聚焦8、fork完整761、实际运行树706项通过；组件原文独立补丁回放哈希一致。17:07:35安全边界加载5f1034b（fork a0ed547），其他后台和观战进程连续，守护归属先停后恢复。随后90秒49帧在线且健康，但无位移/库存变化，下一夜及自然委托/交易/战斗仍未验收。回执deployed，T-0006原基线367→368导致API pending，保持工单开放。详见docs/night-planner-ownership.md。
+- 后续归因：连续5分钟160帧含94帧真实夜间（13036–16536），生命/饥饿满值、无预防避险占身。17:15:26的石镐存入公共箱有原生存入日志和接收回执，只证明物品存入，不证明委托结算。17:15–17:17本机约1.5万TIME_WAIT时接口/LLM连接失败，等待回收后约580且接口恢复；来源未确认，没有据此重启后台或认定服务器故障。语音结束回执超时仍开放。
+
 ## 2026-10-11：慢语音句尾不能阻塞明确中断
 
 - 实证：文本结束标记后等待全部合成，旧worker不能读取后续interrupt。两个独立短句PCM到达慢于播放，分别需额外3.606/9.064秒缓冲；不能由HTTP成功认定连续播放。
@@ -3191,3 +3199,8 @@
 - Validation: plugin 236 tests plus 26 subtests; related host 920 tests; isolated
   Chinese PCM/CPU ASR contains no style description. Full companion replay
   matches the source tree. See local-speech-task-context.md for runtime acceptance.
+- Deployment/attribution: 16:39:11 loaded host/plugin 02c325c (fork e08fd50),
+  retaining native session, model, TTS and spectator. The later real failed task
+  kept its full goal and matched received ID; it still timed out. Speech ticket
+  baseline 436 writeback accepted as deployed; continuity baseline 352 advanced,
+  so that receipt remains pending. Audio continuity and productive play stay open.

@@ -1241,7 +1241,28 @@
     "independentChinesePcmAndCpuAsrPassed": true,
     "audibleLiveAcceptance": "open",
     "productiveGameplayAcceptance": "open",
-    "deploymentPhase": "prepared",
-    "fullReplayMatchesSource": true
+    "deploymentPhase": "deployed",
+    "fullReplayMatchesSource": true,
+    "deployedAt": 1791707951342,
+    "deploymentCommit": "e08fd50381b6d64eb28ccc2b7f762484979f235b",
+    "originalNativeSessionPreservedOnHostDeployment": true,
+    "actualMatchedFailedTaskReceiptObserved": true
+  },
+  "nativeNightPolicyVerification": {
+    "date": "2026-10-11",
+    "forkCodeCommit": "a0ed5477df6e992e4eb91038b144541b4efe5914",
+    "runtimeCommit": "5f1034b110e80fd8eee03113fe1f65e1bf6ce286",
+    "deploymentPhase": "deployed",
+    "deployedAt": 1791709655836,
+    "forkTests": 761,
+    "runtimeTests": 706,
+    "focusedTests": 8,
+    "dependentTestCountsOverlap": true,
+    "dependencyPatchReplayed": true,
+    "liveNightFrames": 94,
+    "preventiveHoldObserved": false,
+    "otherOwnedServicesPreserved": true,
+    "broadGameplayAcceptance": "open",
+    "audioContinuityAcceptance": "open"
   }
 }
