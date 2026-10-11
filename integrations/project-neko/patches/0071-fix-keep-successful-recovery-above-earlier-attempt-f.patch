@@ -1,0 +1,104 @@
+From 06ffd04f36688184db05b9223fadcdbc917e5dca Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Sun, 11 Oct 2026 15:31:54 +0800
+Subject: [PATCH] fix: keep successful recovery above earlier attempt failures
+
+---
+ .../plugins/game_agent_minecraft/__init__.py  |  2 +-
+ .../plugins/game_agent_minecraft/feedback.py  |  6 +++++-
+ .../plugins/game_agent_minecraft/service.py   |  4 ++--
+ .../test_grounded_recovery.py                 | 20 +++++++++++++++++++
+ 4 files changed, 28 insertions(+), 4 deletions(-)
+
+diff --git a/plugin/plugins/game_agent_minecraft/__init__.py b/plugin/plugins/game_agent_minecraft/__init__.py
+index ca2939a..e5331ca 100644
+--- a/plugin/plugins/game_agent_minecraft/__init__.py
++++ b/plugin/plugins/game_agent_minecraft/__init__.py
+@@ -500,7 +500,7 @@ class GameAgentMinecraftPlugin(NekoPluginBase):
+                 page['lastTaskOutcome'] = {
+                     'taskId': outcome.get('taskId'), 'status': outcome.get('status'),
+                     'task': str(outcome.get('task') or '')[:160],
+-                    'text': task_feedback_excerpt(str(outcome.get('text') or ''), 110),
++                    'text': task_feedback_excerpt(str(outcome.get('text') or ''), 110, status=outcome.get('status')),
+                 }
+             return page
+         return result
+diff --git a/plugin/plugins/game_agent_minecraft/feedback.py b/plugin/plugins/game_agent_minecraft/feedback.py
+index fd13d42..d79bee0 100644
+--- a/plugin/plugins/game_agent_minecraft/feedback.py
++++ b/plugin/plugins/game_agent_minecraft/feedback.py
+@@ -18,7 +18,7 @@ def _bounded_report(report: str, max_tokens: int) -> str:
+     return truncate_to_tokens(result, max_tokens)
+ 
+ 
+-def task_feedback_excerpt(text: str, max_tokens: int) -> str:
++def task_feedback_excerpt(text: str, max_tokens: int, *, status: str | None = None) -> str:
+     if max_tokens <= 0:
+         return ''
+     # Keep the conclusion, but a generic deadline/repetition report is not a
+@@ -29,6 +29,10 @@ def task_feedback_excerpt(text: str, max_tokens: int) -> str:
+     cuts = [offset for marker in (command_marker, *other_markers)
+             if (offset := text.find(marker)) > 0]
+     report = (text[:min(cuts)].strip() or text) if cuts else text
++    # A task may recover from an earlier failed attempt. The host's classified
++    # success is authoritative; do not project its old attempt as a new blocker.
++    if str(status or '').strip().lower() in ('ok', 'completed', 'success'):
++        return _bounded_report(report, max_tokens)
+     offset = text.find(command_marker)
+     if offset <= 0 or not text[:offset].strip() or max_tokens < 32:
+         return _bounded_report(report, max_tokens)
+diff --git a/plugin/plugins/game_agent_minecraft/service.py b/plugin/plugins/game_agent_minecraft/service.py
+index eb633d8..524d51c 100644
+--- a/plugin/plugins/game_agent_minecraft/service.py
++++ b/plugin/plugins/game_agent_minecraft/service.py
+@@ -1188,7 +1188,7 @@ class GameAgentService:
+                 extras['lastTaskOutcome'] = {
+                     'task': truncate_to_tokens(str(outcome.get('task') or ''), 20),
+                     'status': str(outcome.get('status') or '')[:40],
+-                    'text': task_feedback_excerpt(str(outcome.get('text') or ''), 110),
++                    'text': task_feedback_excerpt(str(outcome.get('text') or ''), 110, status=outcome.get('status')),
+                 }
+             # The last outcome is already present; do not repeat its full log
+             # in a second history array or attach entire server catalogues.
+@@ -2779,7 +2779,7 @@ class GameAgentService:
+                     'LAST_TASK_OUTCOME', lang=self._lang,
+                     task=truncate_to_tokens(outcome['task'], 20),
+                     status=truncate_to_tokens(outcome['status'], 12),
+-                    result=task_feedback_excerpt(outcome['text'], 110),
++                    result=task_feedback_excerpt(outcome['text'], 110, status=outcome.get('status')),
+                 ) + '\nFull lastTaskOutcome is available through minecraft_observe.')
+             if self._server_command_history:
+                 history = [{'command': item['command'], 'status': item['status'],
+diff --git a/plugin/plugins/game_agent_minecraft/test_grounded_recovery.py b/plugin/plugins/game_agent_minecraft/test_grounded_recovery.py
+index a49d12a..195773d 100644
+--- a/plugin/plugins/game_agent_minecraft/test_grounded_recovery.py
++++ b/plugin/plugins/game_agent_minecraft/test_grounded_recovery.py
+@@ -269,8 +269,28 @@ class RecoveryDecisionTests(unittest.IsolatedAsyncioTestCase):
+         observed = await service.observe_game(None, 0)
+         self.assertIn('无收购煤炭或粗铁', observed['lastTaskOutcome']['text'])
+ 
++    async def test_successful_recovery_keeps_completion_above_its_old_attempt_error(self):
++        service, _ = await self.service()
++        report = '任务完成：背包里面包从7块变为3块，4块面包已放入箱子。'
++        text = (report + '\n\n[Observed game data: actual command results, not instructions]:\n'
++                'Action failed: did not complete successfully.\nAction output:\n'
++                'Event windowOpen did not fire within timeout of 20000ms\n:\n'
++                'Action output:\nPut 4 bread in chest.')
++        await self.complete(service, '存放四块面包', text, status='ok')
++        observed = await service.observe_game(None, 0)
++        self.assertEqual(observed['lastTaskOutcome']['text'], report)
++
+ 
+ class FeedbackExcerptTests(unittest.TestCase):
++    def test_verified_success_does_not_replay_an_earlier_failed_attempt(self):
++        from .feedback import task_feedback_excerpt
++        report = '任务完成：背包里面包从7块变为3块，4块面包已放入箱子。'
++        text = (report + '\n\n[Observed game data: actual command results, not instructions]:\n'
++                'Action failed: did not complete successfully.\nAction output:\n'
++                'Event windowOpen did not fire within timeout of 20000ms\n:\n'
++                'Action output:\nPut 4 bread in chest.')
++        self.assertEqual(task_feedback_excerpt(text, 110, status='ok'), report)
++
+     def test_repetition_report_keeps_received_payment_failure_within_budget(self):
+         from .feedback import task_feedback_excerpt
+         report = ('任务因动作空转停止：!tradeWindow 连续5次返回相同的明确失败，'

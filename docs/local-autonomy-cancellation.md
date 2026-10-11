@@ -101,3 +101,48 @@ callback origin, tool-loop, cancellation, joint-emotion and budget regressions
 pass 1626 cases, with only existing deprecation warnings. Ruff passes. The
 complete companion series replays to the saved source plugin tree and 46 host
 files. Live deployment and actual productive gameplay remain separate gates.
+
+## Final deployment and natural limits
+
+- Native commit `810ae103635aefaed07e1c3541cd0c28ae999962` loads the cancellation
+  change from contribution commit `6b56edab76abaaa18d7119e9b6129cd6524b6a05`.
+  The actual runtime full suite passes 719 cases; contribution full suite 773.
+- Neko commits `e501511852c0fb483a79b6d53cf74f9b7c842d61` (received feedback),
+  `fb5f33f1c852e817d089291cdb9f7d17382127c1` (mixed rendering) and
+  `06ffd04f36688184db05b9223fadcdbc917e5dca` (classified success) are deployed.
+  Plugin patch 0071 uses the host-classified outcome status so a successful
+  recovery does not replay an earlier failed attempt as a current blocker.
+  This arose naturally when an initial chest-open timeout was followed by a
+  successful four-bread storage operation. Two more regressions fail before
+  the status-aware change; the final plugin suite passes 232 cases/26 subtests.
+- The final complete companion replay matches the plugin tree and 46 host
+  files, with all 88 patch hashes checked. The 1626 host regressions above
+  cover the unchanged host rendering patch; counts are overlapping.
+- A natural task stored four bread, and the received inventory changed from
+  seven to three. This is an observed material transfer step, not a claim that
+  the server accepted or settled the entire food commission.
+- After all changes, 97 samples over three minutes stayed online with health
+  and hunger 20. Maximum displacement was 21.17 blocks; observed actions
+  included `showVillagerTrades` and self-preservation. Inventory did not change
+  in that final window. The iron-selling task still ended at its deadline.
+  Repeated planning around unmet merchant/material prerequisites remains open;
+  successful trade, commission settlement and autonomous combat are unverified.
+- One later LoginGuard network-loss reconnect occurred. It was not an
+  `action-refused-stop` reconnect; a single loss does not establish a server
+  fault. Session-scoped permissions/outcomes were not copied into a new world.
+- Main/model/MindServer/voice/spectator continuity was preserved during the
+  native reload; the host reload preserved the native process and game session,
+  model and voice. The final plugin-only reload preserved its game session and
+  every listener PID. No game action or chat was manually injected.
+- The existing authenticated live listener was restored via its normal entry.
+  An initial connection attempt hit actual DNS/transport errors; one bounded
+  retry after DNS recovery returned authenticated receiving/listening. No QR,
+  credentials or test messages were generated.
+- Playback-end watchdog messages still occur; audible continuity and the
+  associated delay remain open. The broad autonomy ticket is deployed, not
+  verified or closed. No extra model calls, higher wake frequency, model switch
+  or inference-slot changes were introduced.
+- LAN observation received 183/182 avatar frames and 81 chunks on both viewer
+  sockets, plus a skills snapshot containing mana 28/28 and nine abilities.
+  That skills snapshot was marked stale, with nine unknown cooldowns; this
+  verifies frame transport and preserved data, not fresh cooldown telemetry.

@@ -85,6 +85,10 @@ reintroduce "speak first" into an execution turn. Pure social attention,
 passive messages and unrelated plugins retain normal behaviour. The recovery
 report includes the required host Regression Report and runtime limits.
 
+Plugin patch 0071 passes the host-classified outcome status into the bounded
+projection. A verified successful recovery keeps its conclusion above errors
+from earlier attempts; failed tasks still retain the actual received cause.
+
 Native task endings now require current game evidence, and inventory
 observations follow player slots in initialized open merchant/container windows.
 This prevents an unobserved first reply from completing or abandoning a task,

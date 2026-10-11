@@ -1,9 +1,9 @@
 {
   "upstreamRepository": "https://github.com/Project-N-E-K-O/N.E.K.O",
   "baseCommit": "fb2a2e731a8c954478d08678b0c8cf40e8145a54",
-  "sourceCommit": "fb5f33f1c852e817d089291cdb9f7d17382127c1",
+  "sourceCommit": "06ffd04f36688184db05b9223fadcdbc917e5dca",
   "scope": "plugin/plugins/game_agent_minecraft",
-  "resultPluginTree": "b9adac7fd83b625c0ee3b38f2f3bd912db404cbc",
+  "resultPluginTree": "7607916c8251a32175b99b215cfa69366c859468",
   "patches": [
     {
       "file": "0001-chore-configure-text-only-local-Qwen-Minecraft-trial.patch",
@@ -284,6 +284,10 @@
     {
       "file": "0070-fix-keep-received-failure-reasons-in-bounded-Minecra.patch",
       "sha256": "a593501429be75736c1d34a36ab7c196a732f499eaf90513dc5173ca052fb15f"
+    },
+    {
+      "file": "0071-fix-keep-successful-recovery-above-earlier-attempt-f.patch",
+      "sha256": "a1ef7cf22fb18a71582493034c25150d3d43fd10d6d3fd42d7aa5dca1d80297b"
     }
   ],
   "verification": {
@@ -1147,11 +1151,11 @@
   },
   "receivedFailureFeedbackVerification": {
     "date": "2026-10-11",
-    "sourceCommit": "e501511852c0fb483a79b6d53cf74f9b7c842d61",
+    "sourceCommit": "06ffd04f36688184db05b9223fadcdbc917e5dca",
     "beforeFixFailures": 3,
     "focusedCasesPassed": 30,
     "focusedSubtestsPassed": 11,
-    "pluginCasesPassed": 230,
+    "pluginCasesPassed": 232,
     "pluginSubtestsPassed": 26,
     "fullReplayMatchesSource": true,
     "sameFeedbackBudget": true,
@@ -1160,7 +1164,10 @@
     "extraModelCalls": 0,
     "deploymentPhase": "deployed",
     "productiveGameplayVerified": false,
-    "deploymentEvidence": "runtime/autonomy-20261011-1500/feedback-plugin-deployment.json"
+    "classifiedSuccessOverridesOldAttemptFailure": true,
+    "deploymentEvidence": "runtime/autonomy-20261011-1500/success-feedback-plugin-deployment.json",
+    "finalPluginCasesPassed": 232,
+    "successRegressionsBeforeFixFailed": 2
   },
   "mixedExecutionRenderingVerification": {
     "date": "2026-10-11",
@@ -1174,7 +1181,13 @@
     "foreignSourceAuthorityUnchanged": true,
     "extraModelCalls": 0,
     "forcedToolChoice": false,
-    "deploymentPhase": "prepared",
-    "productiveGameplayVerified": false
+    "deploymentPhase": "deployed",
+    "productiveGameplayVerified": false,
+    "deploymentEvidence": "runtime/autonomy-20261011-1500/mixed-host-deployment.json",
+    "naturalObservationSeconds": 180,
+    "naturalSamples": 97,
+    "naturalMaximumDisplacement": 21.17489362489529,
+    "naturalInventoryChanged": false,
+    "prerequisitePlanningStillOpen": true
   }
 }
