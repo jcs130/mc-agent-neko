@@ -40,19 +40,21 @@ export function protectedWaterExitRoute(bot, { radius = 20, maxNodes = 1200 } = 
 }
 
 // Only relinquish a failed, non-lethal surface reflex to the external planner.
-// An actual nearby denial is required; water, a roof, or a village alone is not
-// evidence that excavation is forbidden. This never issues a game command.
+// A denial changes the diagnosis, not whether a measured failed swim can yield.
+// Missing oxygen packets alone do not prove drowning: require a non-submerged
+// head and sustained health stability. This never issues a game command.
 export function protectedSurfaceSwimHandoff(bot, {
     externalOwner = false, inWater = false, headWater = true, closeThreat = true, now = Date.now(),
 } = {}) {
     const p = bot?.entity?.position;
     const safe = externalOwner && inWater && !headWater && p?.y >= 55 && bot.health >= 8
-        && Number.isFinite(bot.oxygenLevel) && bot.oxygenLevel >= 18 && !closeThreat
+        && (bot.oxygenLevel == null || Number.isFinite(bot.oxygenLevel) && bot.oxygenLevel >= 18) && !closeThreat
         && !bot.entity.isInLava && !bot.entity.isOnFire && !bot._currentSkill && !bot.isSleeping;
     const clear = () => { if (bot) { watches.delete(bot); bot._surfaceSwimRecovery = null; } return false; };
     if (!safe) return clear();
     const dimension = bot.game?.dimension;
     const world = typeof dimension === 'string' ? (dimension.includes(':') ? dimension : `minecraft:${dimension}`) : null;
+    if (!world) return clear();
     const protection = bot.serverProtection?.snapshot();
     const denial = [protection?.lastBlocked, ...(protection?.denied || [])].find(value =>
         value?.status === 'deny' && value.allowed === false && value.action === 'break' && value.world === world
@@ -62,14 +64,14 @@ export function protectedSurfaceSwimHandoff(bot, {
         && world && denial.world === world && ['x', 'y', 'z'].every(k => Number.isFinite(denial[k]))
         && Number.isFinite(denial.observedAt) && denial.observedAt <= now && now - denial.observedAt <= 300000
         && distance(p, denial) <= 5;
-    if (!known) return clear();
     let watch = watches.get(bot);
+    if (watch && bot.health < watch.health) return clear();
     if (!watch || watch.world !== world || now < watch.checkedAt || now - watch.checkedAt > 15000
         || distance(p, watch.anchor) >= 4) {
-        watch = { world, anchor: { x: p.x, y: p.y, z: p.z }, firstAt: now, checkedAt: now, samples: 0 };
+        watch = { world, anchor: { x: p.x, y: p.y, z: p.z }, firstAt: now, checkedAt: now, health: bot.health, samples: 0 };
         watches.set(bot, watch); bot._surfaceSwimRecovery = null;
     }
-    watch.checkedAt = now; watch.samples++;
+    watch.checkedAt = now; watch.health = bot.health; watch.samples++;
     if (watch.yieldUntil && now < watch.yieldUntil) return true;
     if (watch.yieldUntil) {
         watch.yieldUntil = 0; watch.firstAt = now; watch.samples = 1;
@@ -77,10 +79,11 @@ export function protectedSurfaceSwimHandoff(bot, {
     }
     if (now - watch.firstAt < 45000 || watch.samples < 3) return false;
     watch.yieldUntil = now + 90000;
-    const recovery = { type: 'protected-surface-swim-stall', observedAt: now, expiresAt: watch.yieldUntil,
+    const recovery = { type: known ? 'protected-surface-swim-stall' : 'surface-swim-stall', observedAt: now, expiresAt: watch.yieldUntil,
         noProgressSeconds: Math.floor((now - watch.firstAt) / 1000),
-        reason: 'Nearby excavation was explicitly denied; surface escape remained within four blocks.',
-        next: 'Use an existing passage or an actually available escape ability; do not repeat denied digging or claim escape without measured movement.' };
+        reason: known ? 'Nearby excavation was explicitly denied; surface escape remained within four blocks.'
+            : 'Surface escape remained within four blocks with no measured health loss and a non-submerged head; excavation permission is not established.',
+        next: 'Use an existing passage or an actually available escape ability; respect actual protection checks and verify escape by measured movement.' };
     bot._surfaceSwimRecovery = recovery;
     bot.emit?.('autonomyRecovery', recovery);
     return true;

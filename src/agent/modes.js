@@ -2136,7 +2136,7 @@ const modes_list = [
                         let protectedRoute = null, protectedRouteAt = 0;
                         let boatTried = false;   // ★C350: 每次 execute 至多一次上船尝试 (闭包局部, 无模块态)
                         for (let i = 0; i < 80; i++) {
-                            if (yieldProtectedSwim()) { _tr('yield: protected surface escape made no progress; external planner owns next step'); break; }
+                            if (yieldProtectedSwim()) { _tr('yield: measured surface escape made no progress; external planner owns next step'); break; }
                             if (bot.interrupt_code || bot.health <= 0) {
                                 const _oxyCrit = bot.oxygenLevel !== undefined && bot.oxygenLevel <= 8;
                                 const _cancelWin = !!(bot._supervisorCancelAt && Date.now() - bot._supervisorCancelAt < 30000);

@@ -36,13 +36,34 @@ test('the yield ends immediately on drowning, fire, lava, threat, or low health'
     }
 });
 
-test('unknown oxygen and unconfirmed, distant, stale, or other-world denials cannot yield', () => {
-    for (const mutation of [f => { f.bot.oxygenLevel = undefined; }, f => { f.denial.status = 'unknown'; },
+test('unconfirmed, distant, stale, or other-world denials never claim protection', () => {
+    for (const mutation of [f => { f.denial.status = 'unknown'; },
         f => { f.denial.allowed = null; }, f => { f.denial.x = 12; },
         f => { f.denial.world = 'minecraft:the_nether'; }, f => { f.denial.observedAt = -300000; },
         f => { f.denial.observedAt = 500000; }, f => { f.denial.action = 'place'; }]) {
-        const f = fixture(); mutation(f); assert.equal(f.stalled().some(Boolean), false);
+        const f = fixture(); mutation(f); assert.equal(f.stalled().at(-1), true);
+        assert.equal(f.bot._surfaceSwimRecovery.type, 'surface-swim-stall');
+        assert.doesNotMatch(f.bot._surfaceSwimRecovery.reason, /denied/);
     }
+});
+
+test('a measured non-damaging surface stall can yield without an oxygen packet or protection denial', () => {
+    for (const oxygen of [undefined, null, 20]) {
+        const f = fixture();
+        f.bot.oxygenLevel = oxygen;
+        f.bot.serverProtection = undefined;
+        assert.deepEqual(f.stalled(), [false, false, false, false, true]);
+        assert.equal(f.bot._surfaceSwimRecovery.type, 'surface-swim-stall');
+        assert.equal(f.events.length, 1);
+    }
+});
+
+test('damage above the health floor cancels the yield and resets sustained safety evidence', () => {
+    const f = fixture(); f.stalled();
+    f.bot.health = 19;
+    assert.equal(f.sample(150000), false);
+    assert.equal(f.bot._surfaceSwimRecovery, null);
+    assert.equal(f.sample(160000), false);
 });
 
 test('actual movement and long observation gaps reset the failed-escape window', () => {
