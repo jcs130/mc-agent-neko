@@ -72,6 +72,19 @@ consume the result's entire budget. Full feedback remains queryable. See
 [the feedback report](../../docs/neko-task-feedback-2026-10-10.md)
 for the two reproduced losses and verification limits.
 
+Plugin patch 0070 additionally retains one bounded actual failure receipt when
+the conclusion is only a generic deadline or repetition warning. It preserves
+payment, zero-yield and missing-tool evidence without increasing the feedback
+budget or promoting game data to authority. The matching native cancellation
+repair and its separate natural acceptance are documented in
+[the autonomous recovery report](../../docs/local-autonomy-cancellation.md).
+
+Host patch 0017 aligns mixed trusted Minecraft batches with their existing
+execution scope: player evidence remains present, while its wrapper cannot
+reintroduce "speak first" into an execution turn. Pure social attention,
+passive messages and unrelated plugins retain normal behaviour. The recovery
+report includes the required host Regression Report and runtime limits.
+
 Native task endings now require current game evidence, and inventory
 observations follow player slots in initialized open merchant/container windows.
 This prevents an unobserved first reply from completing or abandoning a task,

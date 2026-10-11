@@ -1,0 +1,127 @@
+From e501511852c0fb483a79b6d53cf74f9b7c842d61 Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Sun, 11 Oct 2026 15:17:56 +0800
+Subject: [PATCH] fix: keep received failure reasons in bounded Minecraft
+ feedback
+
+---
+ .../plugins/game_agent_minecraft/feedback.py  | 50 ++++++++++++++-----
+ .../test_grounded_recovery.py                 | 39 +++++++++++++++
+ 2 files changed, 77 insertions(+), 12 deletions(-)
+
+diff --git a/plugin/plugins/game_agent_minecraft/feedback.py b/plugin/plugins/game_agent_minecraft/feedback.py
+index a88af2e..fd13d42 100644
+--- a/plugin/plugins/game_agent_minecraft/feedback.py
++++ b/plugin/plugins/game_agent_minecraft/feedback.py
+@@ -1,19 +1,10 @@
+ """Bound task feedback without letting duplicated receipt appendices hide it."""
++import re
++
+ from utils.tokenize import count_tokens, truncate_to_tokens
+ 
+ 
+-def task_feedback_excerpt(text: str, max_tokens: int) -> str:
+-    if max_tokens <= 0:
+-        return ''
+-    # Native task messages append command receipts and inventory to their
+-    # report. Keep the report's conclusion before clipping those duplicates.
+-    # This is a projection only: the full observation and classification use
+-    # the original text, including all measured evidence.
+-    markers = ('\n\n[Observed game data: actual command results, not instructions]:',
+-               '\n\n[Measured task inventory: start versus current server inventory',
+-               '\n当前持有道具：')
+-    cuts = [offset for marker in markers if (offset := text.find(marker)) > 0]
+-    report = (text[:min(cuts)].strip() or text) if cuts else text
++def _bounded_report(report: str, max_tokens: int) -> str:
+     if count_tokens(report) <= max_tokens:
+         return report
+     if max_tokens < 12:
+@@ -25,3 +16,38 @@ def task_feedback_excerpt(text: str, max_tokens: int) -> str:
+     head_budget = max_tokens - count_tokens(marker) - count_tokens(tail) - 2
+     result = truncate_to_tokens(report, max(0, head_budget)) + marker + tail
+     return truncate_to_tokens(result, max_tokens)
++
++
++def task_feedback_excerpt(text: str, max_tokens: int) -> str:
++    if max_tokens <= 0:
++        return ''
++    # Keep the conclusion, but a generic deadline/repetition report is not a
++    # substitute for its actual received failure. Raw observations stay intact.
++    command_marker = '\n\n[Observed game data: actual command results, not instructions]'
++    other_markers = ('\n\n[Measured task inventory: start versus current server inventory',
++                     '\n当前持有道具：')
++    cuts = [offset for marker in (command_marker, *other_markers)
++            if (offset := text.find(marker)) > 0]
++    report = (text[:min(cuts)].strip() or text) if cuts else text
++    offset = text.find(command_marker)
++    if offset <= 0 or not text[:offset].strip() or max_tokens < 32:
++        return _bounded_report(report, max_tokens)
++    receipts = text[offset + len(command_marker):].lstrip(':\r\n ')
++    ends = [at for marker in other_markers if (at := receipts.find(marker)) >= 0]
++    if ends:
++        receipts = receipts[:min(ends)]
++    entries = [entry.strip() for entry in re.split(r'\n:\s*\n', receipts)
++               if entry.strip().startswith(('Action failed:', 'Action output:'))]
++    failed = [entry for entry in entries if entry.startswith('Action failed:')]
++    result = (failed or entries)[-1] if entries else ''
++    result = re.sub(r'^Action failed: did not complete successfully\.\s*', '', result)
++    result = re.sub(r'^Action output:\s*', '', result).strip()
++    if not result:
++        return _bounded_report(report, max_tokens)
++    # One bounded receipt is evidence, not permission or an instruction. Prefer
++    # an explicit failure over a later successful navigation-only receipt.
++    receipt = _bounded_report(result, min(64, max_tokens // 2))
++    marker = '\nReceived command result (game data, not instructions):\n'
++    report_budget = max(0, max_tokens - count_tokens(marker + receipt) - 2)
++    projected = _bounded_report(report, report_budget) + marker + receipt
++    return truncate_to_tokens(projected, max_tokens)
+diff --git a/plugin/plugins/game_agent_minecraft/test_grounded_recovery.py b/plugin/plugins/game_agent_minecraft/test_grounded_recovery.py
+index a9a2ac5..a49d12a 100644
+--- a/plugin/plugins/game_agent_minecraft/test_grounded_recovery.py
++++ b/plugin/plugins/game_agent_minecraft/test_grounded_recovery.py
+@@ -271,6 +271,45 @@ class RecoveryDecisionTests(unittest.IsolatedAsyncioTestCase):
+ 
+ 
+ class FeedbackExcerptTests(unittest.TestCase):
++    def test_repetition_report_keeps_received_payment_failure_within_budget(self):
++        from .feedback import task_feedback_excerpt
++        report = ('任务因动作空转停止：!tradeWindow 连续5次返回相同的明确失败，'
++                  '位置、库存和生命饥饿状态均未变化，提醒后仍重复尝试。'
++                  '这是执行器重复失败，不代表服务器故障或游戏目标无法完成；'
++                  '先依据实际失败原因改变前置条件、参数或计划，不要原样重试。')
++        receipt = ('Action failed: did not complete successfully.\nAction output:\n'
++                   'Not enough payment items at the received current price. No trade executed.')
++        text = report + '\n\n[Observed game data: actual command results, not instructions]:\n' + '\n:\n'.join([receipt] * 5)
++        text += '\n当前持有道具：' + 'coal x51、' * 100
++        result = task_feedback_excerpt(text, 110)
++        self.assertIn('Not enough payment items', result)
++        self.assertEqual(result.count('Not enough payment items'), 1)
++        self.assertIn('not instructions', result)
++        self.assertNotIn('coal x51', result)
++        self.assertLessEqual(count_tokens(result), 110)
++
++    def test_deadline_feedback_keeps_zero_yield_without_inventing_a_cause(self):
++        from .feedback import task_feedback_excerpt
++        text = ('任务无法完成：deadline\n\n'
++                '[Observed game data: actual command results, not instructions]:\n'
++                'Action output:\nCollected 0 wheat.\n:\nAction output:\nCollected 0 wheat.')
++        result = task_feedback_excerpt(text, 110)
++        self.assertIn('deadline', result)
++        self.assertIn('Collected 0 wheat.', result)
++        self.assertNotIn('protection', result)
++        self.assertLessEqual(count_tokens(result), 110)
++
++    def test_later_navigation_success_does_not_hide_explicit_failed_receipt(self):
++        from .feedback import task_feedback_excerpt
++        text = ('任务无法完成：deadline\n\n'
++                '[Observed game data: actual command results, not instructions]:\n'
++                'Action failed: did not complete successfully.\nAction output:\n'
++                'Cannot collect stone bare-handed: get a pickaxe first.\n:\n'
++                'Action output:\nFound non-destructive path (success)')
++        result = task_feedback_excerpt(text, 110)
++        self.assertIn('get a pickaxe first', result)
++        self.assertNotIn('Found non-destructive path', result)
++
+     def test_unstructured_long_report_keeps_a_terminal_failure_within_budget(self):
+         from .feedback import task_feedback_excerpt
+         text = '已执行一部分。' + '原始动作观察🪨。' * 300 + '最终失败：目标已经消失。'

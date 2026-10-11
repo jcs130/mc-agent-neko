@@ -1,9 +1,9 @@
 {
   "upstreamRepository": "https://github.com/Project-N-E-K-O/N.E.K.O",
   "baseCommit": "fb2a2e731a8c954478d08678b0c8cf40e8145a54",
-  "sourceCommit": "9387a5ec7e5341f7605422806c6aeeba0ceb1f6e",
+  "sourceCommit": "fb5f33f1c852e817d089291cdb9f7d17382127c1",
   "scope": "plugin/plugins/game_agent_minecraft",
-  "resultPluginTree": "0eb7f71201478f5e469000d2856cf798fb987c92",
+  "resultPluginTree": "b9adac7fd83b625c0ee3b38f2f3bd912db404cbc",
   "patches": [
     {
       "file": "0001-chore-configure-text-only-local-Qwen-Minecraft-trial.patch",
@@ -280,6 +280,10 @@
     {
       "file": "0069-fix-minecraft-focus-measured-retreat-decisions-on-su.patch",
       "sha256": "e2c50a840740cddafad54e8bfdc086dcd14de5198f6f6dc3bd31820a4d9820a5"
+    },
+    {
+      "file": "0070-fix-keep-received-failure-reasons-in-bounded-Minecra.patch",
+      "sha256": "a593501429be75736c1d34a36ab7c196a732f499eaf90513dc5173ca052fb15f"
     }
   ],
   "verification": {
@@ -477,6 +481,15 @@
         "tests/unit/test_local_voxcpm_primary.py",
         "tests/unit/test_openai_compatible_tts.py",
         "tests/unit/test_tts_audio_done_emit.py"
+      ]
+    },
+    {
+      "file": "host-patches/0017-fix-keep-mixed-Minecraft-execution-batches-free-of-s.patch",
+      "sha256": "75ab149e2e832fa6bd3d858ea031dc6c05fc307f1c25d4390e4e70bd1b351153",
+      "sourceCommit": "fb5f33f1c852e817d089291cdb9f7d17382127c1",
+      "scopePaths": [
+        "main_logic/core/callback_render.py",
+        "tests/unit/test_minecraft_execution_rendering.py"
       ]
     }
   ],
@@ -1131,5 +1144,37 @@
     "playbackWatchdogStillObserved": true,
     "desktopRefreshAt": "2026-10-11T14:26:24+08:00",
     "repairReceiptWriteback": "pending-baseline-changed"
+  },
+  "receivedFailureFeedbackVerification": {
+    "date": "2026-10-11",
+    "sourceCommit": "e501511852c0fb483a79b6d53cf74f9b7c842d61",
+    "beforeFixFailures": 3,
+    "focusedCasesPassed": 30,
+    "focusedSubtestsPassed": 11,
+    "pluginCasesPassed": 230,
+    "pluginSubtestsPassed": 26,
+    "fullReplayMatchesSource": true,
+    "sameFeedbackBudget": true,
+    "rawObservationsRetained": true,
+    "gameDataAuthorityUnchanged": true,
+    "extraModelCalls": 0,
+    "deploymentPhase": "deployed",
+    "productiveGameplayVerified": false,
+    "deploymentEvidence": "runtime/autonomy-20261011-1500/feedback-plugin-deployment.json"
+  },
+  "mixedExecutionRenderingVerification": {
+    "date": "2026-10-11",
+    "sourceCommit": "fb5f33f1c852e817d089291cdb9f7d17382127c1",
+    "beforeFixFailures": 16,
+    "rendererCasesPassed": 42,
+    "relatedHostCasesPassed": 1626,
+    "fullReplayMatchesSource": true,
+    "playerEvidenceRetained": true,
+    "pureAttentionAndPassiveSemanticsRetained": true,
+    "foreignSourceAuthorityUnchanged": true,
+    "extraModelCalls": 0,
+    "forcedToolChoice": false,
+    "deploymentPhase": "prepared",
+    "productiveGameplayVerified": false
   }
 }

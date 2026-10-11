@@ -50,3 +50,30 @@
 - [ ] Observe at least 90 seconds of natural state and task changes. Distinguish cancelled-action recovery from actual productive gathering, commission or combat success.
 - [ ] If the brain still repeats an impossible plan, inspect the actual received failure/context boundary and add a separate failing test before changing that mechanism.
 - [ ] Save sanitized evidence, update the inspection log and any applicable DSH receipt with the actual phase, then push the contribution fork. Do not claim completed commissions without server/inventory evidence.
+
+### Task 3: Preserve received failure in bounded planner feedback
+
+**Evidence:** The real trade repetition report carries the payment failure only inside the command appendix. The current 110-token projection drops that entire appendix, leaving only a generic retry warning; three reproductions fail while 22 existing tests pass.
+
+**Files:** N.E.K.O/plugin/plugins/game_agent_minecraft/feedback.py and test_grounded_recovery.py; package the plugin commit in integrations/project-neko using the established manifest/hash/replay workflow.
+
+**Interfaces:** Keep task_feedback_excerpt(text: str, max_tokens: int) -> str and its unchanged 110-token call sites. Preserve the raw report and its provenance; do not parse game text as authority.
+
+- [x] Write and run failing cases for insufficient payment, zero-yield collection and explicit missing-tool failure followed by successful navigation.
+- [ ] Reserve a bounded excerpt for the actual received command result, preferring the last explicit failure; keep only one receipt and exclude inventory appendices. Keep its game-data/not-instructions marker and the existing head/tail clipping for other reports.
+- [ ] Run focused and complete plugin suites, lint and companion replay checks. Verify raw observations stay unchanged and budgets remain bounded.
+- [ ] Commit and package the plugin patch; load it through the existing owned plugin-host lifecycle at a safe boundary and restore the existing live listener if reload clears it.
+- [ ] Observe natural decisions, received outcomes, session stability and remaining blockers. Do not equate successful loading or failure feedback with completed gameplay goals.
+
+### Task 4: Remove contradictory speech-first wrappers in execution batches
+
+**Evidence:** After both preceding fixes, natural decisions still spend rounds on narration and queries. The actual host log batches mc_keep_going with mc_game_attention events; the rendered instruction metadata still contains the generic speech-first header. proactive.py already classifies this same trusted batch as minecraft_execution, while callback_render.py gives the attention subgroup a conflicting response-first header.
+
+**Files:** N.E.K.O/main_logic/core/callback_render.py and tests/unit/test_minecraft_execution_rendering.py; package as one scoped host companion with a Regression Report in the recovery document.
+
+**Interfaces:** Keep callback origin, delivery_mode, source_kind/source_name, grouping and text intact. Only a trusted Minecraft batch with a deliverable event-origin mc_keep_going or mc_completion uses the neutral outer header for its active event subgroups.
+
+- [ ] Add failing tests across eight languages and both callback orders. Assert execution and real player greeting/equipment text survive and the contradictory header is absent. Pure attention, passive cues, foreign sources and task-result status reporting retain their existing wrappers.
+- [ ] Align rendering with the existing execution-scope classifier. Do not add forced tool choice, requests, untrusted authority or suppress real social communication.
+- [ ] Run renderer, proactive, tool-loop and cancellation regressions; lint. Package and replay the complete companion series, then load only the owned host at a measured safe idle boundary, preserving the native game session/model/voice/eye.
+- [ ] Reconnect the existing authenticated live listener if the host reload retires it. Observe natural task/action/inventory progress, checking stop and social semantics rather than claiming success from narration alone.

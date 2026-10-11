@@ -1,0 +1,84 @@
+From fb5f33f1c852e817d089291cdb9f7d17382127c1 Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Sun, 11 Oct 2026 15:25:11 +0800
+Subject: [PATCH] fix: keep mixed Minecraft execution batches free of
+ speech-first policy
+
+---
+ main_logic/core/callback_render.py            | 13 ++++++++++--
+ .../test_minecraft_execution_rendering.py     | 21 +++++++++++++++----
+ 2 files changed, 28 insertions(+), 6 deletions(-)
+
+diff --git a/main_logic/core/callback_render.py b/main_logic/core/callback_render.py
+index f5d58cd..3c47f6f 100644
+--- a/main_logic/core/callback_render.py
++++ b/main_logic/core/callback_render.py
+@@ -175,7 +175,11 @@ def _build_callback_instruction(
+     status/action — the concept doesn't apply to passive event streams.
+     Host-routed Minecraft execution events use the neutral event header:
+     their body already contains the conditional execution/stop policy.
+-    They remain separate from player attention and unrelated sources.
++    Player attention stays in a separate group with its original content. If
++    it shares a trusted batch with a deliverable execution cue, its outer
++    header is neutral too; otherwise it would reintroduce speech-first policy
++    into the same execution turn. Pure attention and unrelated sources retain
++    their normal response semantics.
+     ``lang`` is normalized to a prompt-dict key *here* rather than at the call
+     sites. Every template this renders (SYSTEM_NOTIFICATION_*, SOURCE_DESCRIPTORS,
+     TASK_STATUS_PHRASES, ...) carries a ``zh-TW`` row, and ``_loc`` degrades a
+@@ -192,6 +196,11 @@ def _build_callback_instruction(
+ 
+     game_batch = all(cb.get("source_kind") == "plugin"
+                      and cb.get("source_name") == "game_agent_minecraft" for cb in callbacks)
++    execution_batch = game_batch and not passive and any(
++        cb.get("origin") == "event" and cb.get("delivery_mode") != "passive"
++        and cb.get("coalesce_key") in ("mc_keep_going", "mc_completion")
++        for cb in callbacks
++    )
+ 
+     grouped: "OrderedDict[tuple, list]" = OrderedDict()
+     for cb in callbacks:
+@@ -225,7 +234,7 @@ def _build_callback_instruction(
+     parts: list[str] = []
+     for (cb_passive, origin, status, _src_kind, _src_name, execution_cue), cbs in grouped.items():
+         source_text = _format_callback_source(cbs[0], lang)
+-        if execution_cue:
++        if execution_cue or (execution_batch and origin == "event" and not cb_passive):
+             header = _loc(SYSTEM_NOTIFICATION_EVENT_PASSIVE, lang).format(source=source_text)
+         elif origin == "task_result":
+             if cb_passive:
+diff --git a/tests/unit/test_minecraft_execution_rendering.py b/tests/unit/test_minecraft_execution_rendering.py
+index 955868d..762f2a9 100644
+--- a/tests/unit/test_minecraft_execution_rendering.py
++++ b/tests/unit/test_minecraft_execution_rendering.py
+@@ -40,13 +40,26 @@ def test_attention_and_untrusted_cues_keep_normal_response_semantics(changes):
+     assert normal_header(callback, "zh") in render([callback])
+ 
+ 
+-def test_mixed_game_attention_is_preserved_in_a_separate_response_group():
++@pytest.mark.parametrize("lang", ["zh", "zh-TW", "en", "ja", "ko", "ru", "es", "pt"])
++@pytest.mark.parametrize("attention_first", [False, True])
++def test_mixed_game_attention_preserves_player_evidence_without_speech_first(lang, attention_first):
+     execution = cue()
+     attention = cue("mc_game_attention:player", summary="Exact player greeting and offered equipment.")
+-    output = render([execution, attention])
++    callbacks = [attention, execution] if attention_first else [execution, attention]
++    output = render(callbacks, lang)
+     assert execution["summary"] in output and attention["summary"] in output
+-    assert output.index(attention["summary"]) > output.index(normal_header(attention, "zh"))
+-    assert output.index(normal_header(attention, "zh")) > output.index(execution["summary"])
++    assert normal_header(attention, lang) not in output
++    assert normal_header(execution, lang) not in output
++    assert (output.index(attention["summary"]) < output.index(execution["summary"])) == attention_first
++
++
++@pytest.mark.parametrize("changes", [
++    {"delivery_mode": "passive"}, {"origin": "task_result"},
++    {"source_name": "another_plugin"},
++])
++def test_non_deliverable_execution_key_cannot_change_player_attention_wrapper(changes):
++    attention = cue("mc_game_attention:player", summary="Real player requests help.")
++    assert normal_header(attention, "zh") in render([cue(**changes), attention])
+ 
+ 
+ def test_foreign_batch_and_passive_drain_do_not_gain_execution_semantics():
