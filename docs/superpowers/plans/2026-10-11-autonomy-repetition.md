@@ -60,7 +60,7 @@ which streamed text before its receipt classification. The observed exact
 
 - [x] Reproduce final-round query prelude delivery and missing catalogue metadata; keep unknown commands and mutation forms conservative.
 - [x] Apply the same receipt-based speech classification to that existing final round, preserve final answers, stop and cancellation; label only the exact observed village catalogue in reply metadata without expanding query permissions.
-- [ ] Run relevant regression, export/replay matching companion patches, deploy only required owned components at idle and record natural results.
+- [x] Run relevant regression, export/replay matching companion patches, deploy only required owned components at idle and record natural results. Final reload at 10:24 preserved model/TTS; 95 seconds still showed no displacement, so acceptance remains unsuccessful and the additional mixed-batch cause below was investigated.
 
 ### Task 4: Route current measured recovery ahead of unrelated catalogue work
 
@@ -69,4 +69,15 @@ turns still browsed help/villager catalogues without any physical action.
 
 - [x] Reproduce the ordinary gameplay context/goal being selected during a measured idle retreat window.
 - [x] During only that validated window, select the existing survival context and the current escape priority; retain stop/authority, prerequisites, player communication and normal gameplay routing outside it. The model still chooses its action, with no forced command or extra request.
-- [ ] Run full plugin regression, export the companion and verify actual natural action separately from successful escape.
+- [x] Run full plugin regression, export the companion and verify actual natural action separately from successful escape. Plugin regression passed 227 cases; no productive escape was observed after deployment.
+
+### Task 5: Preserve execution scope in real mixed Minecraft batches
+
+**Evidence:** After the final owned reload, the local request metadata still
+showed `minecraft` for batches containing both idle/completion and game-attention
+callbacks. The host required every key to be an execution key, so one incoming
+chat/feedback cue bypassed the query-prelude and bounded execution paths.
+
+- [x] Reproduce this through the real callback delivery method, including mixed player feedback, expired execution cues and foreign-plugin boundaries. Two mixed cases failed and five boundary cases passed before the change.
+- [x] Retain execution scope when an already deliverable trusted Minecraft batch includes an execution cue; keep attention-only and foreign batches conservative, preserving all message text and permission checks. All 492 related regressions passed; 82 patch hashes and all 42 scoped host files replay exactly.
+- [ ] Run callback delivery and cancellation/tool regressions, export the scoped companion, reload only the owned host at idle and assess natural gameplay separately from dispatch success.

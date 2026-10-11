@@ -37,6 +37,10 @@ Plugin patch 0069 selects the existing survival context during that measured
 idle window and prioritizes its current blocker before unrelated catalogues.
 Host patch 0012 also classifies the existing final tool opportunity before
 speaking its prelude. Neither change adds a model request or forces a tool.
+Host patch 0013 preserves this execution scope when a deliverable idle/completion
+cue is batched with Minecraft player or server attention. Attention-only,
+expired execution cues and foreign-plugin batches retain their earlier scope;
+received messages are not removed to obtain this behavior.
 See [the regression and runtime report](../../docs/neko-protected-retreat-query-speech-2026-10-11.md).
 
 Metadata-only native and host timings distinguish preparation, SDK return,

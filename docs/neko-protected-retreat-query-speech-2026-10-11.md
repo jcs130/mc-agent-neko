@@ -151,3 +151,35 @@ The final companion series has 69 plugin and 12 host patches. All 81 hashes,
 the declared plugin tree and 41 affected host files replay to N.E.K.O. source
 `bf4b3c6fdb72fe13a5787cbffd5c6470c009b0b7`. The final deployment and natural
 acceptance must be assessed separately from these regression results.
+
+At 10:24 Beijing time the final source was loaded once at an observed idle
+boundary. The previous natural trade task had already ended. Main/plugin/native
+PIDs became 39784/44304/26184; Qwen 37292, MindServer 37492 and VoxCPM2 6619
+(zero restarts) were preserved. Startup needed one bounded API-readiness retry.
+Both actual LAN streams then delivered 183 avatar frames, 81 chunks, 28/28 mana
+and nine abilities without errors; the rendered page confirmed 28/28.
+A 95-second/96-frame observation still had zero displacement and unchanged
+inventory, with health/food 20. A nearby merchant was opened naturally, but its
+offers did not buy iron. Neither that failure nor an open window proves escape.
+
+## Mixed game callback Regression Report
+
+**Before:** after the final reload, actual host metadata still recorded
+`minecraft` for batches containing idle/completion and game-attention cues.
+The host required every key to be an execution key, so received player/server
+feedback bypassed the execution receipt and query-prelude paths when batched
+with an idle cue. This is an additional routing bug, not evidence that incoming
+messages should be discarded. The separate 45-second voice-play-end watchdog
+also occurred and is not fixed by a scope change.
+
+**After:** host patch 0013 retains `minecraft_execution` when an already
+deliverable, entirely trusted Minecraft batch includes an idle/completion cue.
+Attention-only batches stay `minecraft`, foreign batches remain unscoped, and
+expired/retracted cues are still removed before classification. All delivered
+player/server text is retained. Task authorization, stop, current body ownership
+and optional tool choice remain unchanged; there is no extra model request.
+
+**Validation:** the real callback delivery regression failed the two mixed cases
+before the fix; the five boundary cases already passed. All 492 callback,
+delivery, tool, cancellation and budget tests then passed. Scoped companion
+replay and live acceptance are recorded separately from those unit results.

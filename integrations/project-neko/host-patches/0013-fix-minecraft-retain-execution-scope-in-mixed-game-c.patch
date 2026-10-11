@@ -1,0 +1,82 @@
+From 20a8158f745f439cf9c69bbdf70299ddd199b04f Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Sun, 11 Oct 2026 10:33:02 +0800
+Subject: [PATCH] fix(minecraft): retain execution scope in mixed game
+ callbacks
+
+---
+ main_logic/core/proactive.py                |  8 +++-
+ tests/unit/test_proactive_sm_integration.py | 41 +++++++++++++++++++++
+ 2 files changed, 48 insertions(+), 1 deletion(-)
+
+diff --git a/main_logic/core/proactive.py b/main_logic/core/proactive.py
+index 90c4183..885f5c6 100644
+--- a/main_logic/core/proactive.py
++++ b/main_logic/core/proactive.py
+@@ -1854,7 +1854,13 @@ class ProactiveMixin:
+                         for cb in active_callbacks
+                     ):
+                         request_options['request_scope'] = 'minecraft'
+-                        if all(cb.get('coalesce_key') in ('mc_keep_going', 'mc_completion')
++                        # Player/server attention can share the same delivered
++                        # batch with an idle/completion cue. It must not erase
++                        # that cue's bounded execution and receipt-based speech
++                        # handling. The all-Minecraft source check stays above;
++                        # expiry/retraction was already checked at this boundary.
++                        # This scope does not authorize a task or override stop.
++                        if any(cb.get('coalesce_key') in ('mc_keep_going', 'mc_completion')
+                                for cb in active_callbacks):
+                             request_options['request_scope'] = 'minecraft_execution'
+                     delivered = await self.session.prompt_ephemeral(
+diff --git a/tests/unit/test_proactive_sm_integration.py b/tests/unit/test_proactive_sm_integration.py
+index 5feaf9f..ebcc407 100644
+--- a/tests/unit/test_proactive_sm_integration.py
++++ b/tests/unit/test_proactive_sm_integration.py
+@@ -1209,6 +1209,47 @@ async def test_text_mode_resolves_delivery_ack_false_when_prompt_has_no_committe
+     assert mgr.pending_agent_callbacks == [cb]
+ 
+ 
++@pytest.mark.parametrize("keys,foreign,expired,expected", [
++    (["mc_keep_going", "mc_game_attention:player"], False, False, "minecraft_execution"),
++    (["mc_game_attention:server", "mc_completion"], False, False, "minecraft_execution"),
++    (["mc_keep_going"], False, False, "minecraft_execution"),
++    (["mc_game_attention:player"], False, False, "minecraft"),
++    (["mc_alert", "mc_in_progress"], False, False, "minecraft"),
++    (["mc_keep_going", "mc_game_attention:player"], False, True, "minecraft"),
++    (["mc_keep_going", "mc_game_attention:player"], True, False, None),
++])
++async def test_text_mode_preserves_execution_scope_in_deliverable_game_batch(
++    keys, foreign, expired, expected,
++):
++    session = _FakeOmniOffline(delivered=True)
++    session.prompt_ephemeral = AsyncMock(return_value=True)
++    manager = _make_mgr(session=session)
++    callbacks = []
++    for index, key in enumerate(keys):
++        callback = {
++            "_callback_delivery_id": f"mixed-game-{index}",
++            "status": "completed", "summary": f"received game evidence {index}",
++            "source_kind": "plugin", "source_name": "game_agent_minecraft",
++            "coalesce_key": key,
++        }
++        if foreign and index == 1:
++            callback["source_name"] = "another_plugin"
++        if expired and key == "mc_keep_going":
++            callback[CALLBACK_EXPIRES_AT_KEY] = time.monotonic() - 1
++        callbacks.append(callback)
++    manager.pending_agent_callbacks = list(callbacks)
++
++    assert await core_module.LLMSessionManager.trigger_agent_callbacks(manager) is True
++
++    session.prompt_ephemeral.assert_awaited_once()
++    call = session.prompt_ephemeral.await_args
++    assert call.kwargs.get("request_scope") == expected
++    for index, callback in enumerate(callbacks):
++        if not (expired and callback["coalesce_key"] == "mc_keep_going"):
++            assert f"received game evidence {index}" in call.args[0]
++    assert manager.pending_agent_callbacks == []
++
++
+ async def test_text_mode_requeues_callbacks_when_no_session_or_websocket_after_claim():
+     mgr = _make_mgr(session=None)
+     cb = {"_callback_delivery_id": "id-no-session", "status": "completed", "summary": "keep queued"}

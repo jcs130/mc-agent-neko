@@ -1,7 +1,7 @@
 {
   "upstreamRepository": "https://github.com/Project-N-E-K-O/N.E.K.O",
   "baseCommit": "fb2a2e731a8c954478d08678b0c8cf40e8145a54",
-  "sourceCommit": "bf4b3c6fdb72fe13a5787cbffd5c6470c009b0b7",
+  "sourceCommit": "20a8158f745f439cf9c69bbdf70299ddd199b04f",
   "scope": "plugin/plugins/game_agent_minecraft",
   "resultPluginTree": "0eb7f71201478f5e469000d2856cf798fb987c92",
   "patches": [
@@ -437,6 +437,15 @@
       "scopePaths": [
         "main_logic/omni_offline_client/_tools.py",
         "tests/unit/test_tool_calling.py"
+      ]
+    },
+    {
+      "file": "host-patches/0013-fix-minecraft-retain-execution-scope-in-mixed-game-c.patch",
+      "sha256": "848866b910a2c9b7e2d76a66da079e6cdd3818360a9eda14e71da7c14517feeb",
+      "sourceCommit": "20a8158f745f439cf9c69bbdf70299ddd199b04f",
+      "scopePaths": [
+        "main_logic/core/proactive.py",
+        "tests/unit/test_proactive_sm_integration.py"
       ]
     }
   ],
@@ -997,7 +1006,9 @@
     "forcedToolChoice": false,
     "sameContextBudget": true,
     "extraModelCalls": 0,
-    "deploymentPhase": "prepared"
+    "deploymentPhase": "deployed",
+    "deploymentEvidence": "runtime/repair-20261011-0915/final-owned-deployment.json",
+    "productiveEscapeObserved": false
   },
   "finalQueryPreludeVerification": {
     "date": "2026-10-11",
@@ -1010,6 +1021,20 @@
     "extraModelCalls": 0,
     "nativeCatalogueCommit": "52285ffc839a922f42546ece87e88db44361c1a0",
     "serverQueryPermissionsExpanded": false,
-    "deploymentPhase": "prepared"
+    "deploymentPhase": "deployed",
+    "deploymentEvidence": "runtime/repair-20261011-0915/final-owned-deployment.json"
+  },
+  "mixedGameCallbackVerification": {
+    "date": "2026-10-11",
+    "sourceCommit": "20a8158f745f439cf9c69bbdf70299ddd199b04f",
+    "pythonCasesPassed": 492,
+    "mixedBatchRegressions": 7,
+    "playerAndServerMessageTextPreserved": true,
+    "expiredExecutionCuesDoNotPromoteAttention": true,
+    "foreignSourcesDoNotReceiveGameExecutionScope": true,
+    "stopAndTaskAuthorizationUnchanged": true,
+    "extraModelCalls": 0,
+    "deploymentPhase": "prepared",
+    "fullReplayMatchesSource": true
   }
 }
