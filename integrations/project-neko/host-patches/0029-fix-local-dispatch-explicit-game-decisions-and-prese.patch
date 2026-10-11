@@ -1,0 +1,65 @@
+From d898ff9d25783a98005a85e6451311161c153294 Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Mon, 12 Oct 2026 02:31:23 +0800
+Subject: [PATCH] fix(local): dispatch explicit game decisions and preserve
+ private evidence
+
+---
+ main_logic/omni_offline_client/_tools.py | 10 ++++++++++
+ tests/unit/test_tool_calling.py          | 22 ++++++++++++++++++++++
+ 2 files changed, 32 insertions(+)
+
+diff --git a/main_logic/omni_offline_client/_tools.py b/main_logic/omni_offline_client/_tools.py
+index 7e3f7d6..649aaa3 100644
+--- a/main_logic/omni_offline_client/_tools.py
++++ b/main_logic/omni_offline_client/_tools.py
+@@ -1226,6 +1226,16 @@ class _ToolingMixin:
+         for tool_iter in range(self.max_tool_iterations):
+             if not generation_is_active():
+                 return
++            if minecraft_execution_turn and tools_payload and any(
++                tool.get('function', {}).get('name') == 'minecraft_wait' for tool in tools_payload
++            ):
++                # An execution decision has a structured outcome: act, query
++                # or explicitly wait. Natural speech alone cannot dispatch an
++                # announced action. Social/user chat keeps auto tool choice.
++                if tool_iter == 0:
++                    overrides['tool_choice'] = 'required'
++                else:
++                    overrides.pop('tool_choice', None)
+             deltas_per_chunk: list = []
+             finish_reason: Optional[str] = None
+             # 累积本轮已 yield 给上游的 text，下面 finish_reason=tool_calls
+diff --git a/tests/unit/test_tool_calling.py b/tests/unit/test_tool_calling.py
+index 22df1a8..59fb7df 100644
+--- a/tests/unit/test_tool_calling.py
++++ b/tests/unit/test_tool_calling.py
+@@ -3440,6 +3440,28 @@ async def test_minecraft_query_cap_preserves_one_existing_action_opportunity(
+         assert "tools" not in options
+ 
+ 
++@pytest.mark.asyncio
++@pytest.mark.parametrize('execution', [True, False])
++async def test_execution_decision_has_explicit_wait_opt_out_without_forcing_a_game_action(execution):
++    from utils.llm_client import LLMStreamChunk
++    from main_logic.tool_calling import ToolDefinition, ToolResult
++    llm = _FakeLLM([
++        [LLMStreamChunk(content='', tool_call_deltas=[{'index': 0, 'id': 'wait-1',
++            'type': 'function', 'function': {'name': 'minecraft_wait',
++                'arguments': '{"reason":"human stop"}'}}], finish_reason='tool_calls')],
++        [LLMStreamChunk(content='Stopped.', finish_reason='stop')]])
++    executed = []
++    async def handler(call):
++        executed.append(call.name)
++        return ToolResult(call_id=call.call_id, name=call.name, output={'status': 'stopped'})
++    client = _bare_tool_client(llm, ToolDefinition(name='minecraft_wait', description=''), handler, cap=3)
++    async for _ in client._astream_with_tools([], _minecraft_execution_turn=execution):
++        pass
++    assert executed == ['minecraft_wait']
++    assert llm.calls[0][1].get('tool_choice') == ('required' if execution else None)
++    assert llm.calls[1][1].get('tool_choice') != 'required'
++
++
+ @pytest.mark.asyncio
+ @pytest.mark.parametrize("scope,delivered", [("minecraft_execution", True), ("minecraft", False), (None, False)])
+ async def test_silent_minecraft_execution_tool_turn_is_not_requeued(scope, delivered, monkeypatch):
