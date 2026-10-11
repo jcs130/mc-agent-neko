@@ -1,0 +1,9 @@
+# Original model resources are hashed byte-for-byte; keep Windows checkouts stable.
+*.json text eol=lf
+*.mjs text eol=lf
+*.py text eol=lf
+*.html text eol=lf
+*.md text eol=lf
+.gitattributes text eol=lf
+*.png -text
+*.zip -text
