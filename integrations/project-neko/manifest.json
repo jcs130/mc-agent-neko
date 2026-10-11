@@ -1,7 +1,7 @@
 {
   "upstreamRepository": "https://github.com/Project-N-E-K-O/N.E.K.O",
   "baseCommit": "fb2a2e731a8c954478d08678b0c8cf40e8145a54",
-  "sourceCommit": "b390fc7ed6ce57e3ced324cfda87c88df14b235b",
+  "sourceCommit": "30fbea9463f71f3c4d1d26b98eda3d9f174820c4",
   "scope": "plugin/plugins/game_agent_minecraft",
   "resultPluginTree": "51bcc254ea91d7be6bf26026b50ee7eeff16aa48",
   "patches": [
@@ -542,6 +542,27 @@
         "tests/unit/test_slow_tts_speech_ownership.py",
         "tests/unit/test_tts_audio_done_forward.py",
         "tests/unit/test_tts_handoff_ownership.py"
+      ]
+    },
+    {
+      "file": "host-patches/0021-fix-audio-keep-active-streams-open-across-late-text-.patch",
+      "sha256": "2e362141b274a0eaffede49da0e90761b79d3b49ce6ed6b7126d0c28b08c34d8",
+      "sourceCommit": "75a1455233756108e77a17be7808b64adc8cb8c8",
+      "scopePaths": [
+        "static/app/app-audio-playback.js",
+        "tests/unit/test_assistant_speech_finalize_static.py"
+      ]
+    },
+    {
+      "file": "host-patches/0022-fix-tts-honor-declared-local-stream-completion-acros.patch",
+      "sha256": "1aa5b29ee6c4279d7e44f5fa8aa2e0d414b4749bddeb6f8d136976dcf6c3ec5b",
+      "sourceCommit": "30fbea9463f71f3c4d1d26b98eda3d9f174820c4",
+      "scopePaths": [
+        "main_logic/core/tts_runtime.py",
+        "static/app/app-audio-playback.js",
+        "static/app/app-websocket.js",
+        "tests/unit/test_assistant_speech_finalize_static.py",
+        "tests/unit/test_slow_tts_speech_ownership.py"
       ]
     }
   ],
@@ -1287,12 +1308,15 @@
   },
   "localSpeechOwnershipVerification": {
     "date": "2026-10-11",
-    "sourceCommit": "b390fc7ed6ce57e3ced324cfda87c88df14b235b",
-    "relatedPassed": 2126,
+    "sourceCommit": "30fbea9463f71f3c4d1d26b98eda3d9f174820c4",
+    "relatedPassed": 2130,
     "baselineLoggerCaptureFailureExcluded": 1,
     "sourceIdentityAndFallbackLedgerPreserved": true,
     "lateFrontendCompletionPreserved": true,
     "duplicateTerminalNoticeIsIdempotent": true,
+    "localFinalDoneContractDeclared": true,
+    "declaredDoneGraceMs": 45000,
+    "unknownProviderGraceUnchanged": true,
     "longLocalSpeechUsesLastActualAudioWatchdog": true,
     "otherProviderDefaultsUnchanged": true,
     "diagnostics": "IDs, timestamps, counts and SHA-256 only",

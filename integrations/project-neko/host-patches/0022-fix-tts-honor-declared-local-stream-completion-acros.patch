@@ -1,0 +1,268 @@
+From 30fbea9463f71f3c4d1d26b98eda3d9f174820c4 Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Sun, 11 Oct 2026 18:51:57 +0800
+Subject: [PATCH] fix(tts): honor declared local stream completion across
+ synthesis gaps
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+回归报告 / Regression Report
+
+Natural VoxCPM2 playback still finished between sentences because the legacy
+missing-audio_done fallback forced completion after only 700ms. Actual local
+sentence synthesis gaps exceeded ten seconds, opening the proactive gate
+before the original reply finished and causing more overlapping narration.
+
+Declare the final audio_done contract in local-primary headers and forward
+it to the frontend stream ledger. Only declared streams get a bounded 45s
+missing-done grace, renewed by actual audio activity; their inter-sentence
+gaps do not take the legacy 700ms or 30s sticky-speaking exit. Completion
+still finalizes immediately and cancellation remains available. Unknown
+providers retain the existing fallback. No model calls or text muting added.
+
+The 700ms inter-sentence regression failed before the fix. Explicit missing
+done recovery is also covered. Final related regression: 2130 passed, one
+unchanged baseline logger-capture failure deselected. Ruff, Node syntax for
+both playback and websocket modules, and diff checks pass. Natural playback
+verification is separate and must reject early ends, not merely count final
+acknowledgements. Both header producer and desktop consumer need this update.
+---
+ main_logic/core/tts_runtime.py                |  4 ++
+ static/app/app-audio-playback.js              | 38 +++++++++++++----
+ static/app/app-websocket.js                   |  7 ++--
+ .../test_assistant_speech_finalize_static.py  | 42 ++++++++++++++++++-
+ tests/unit/test_slow_tts_speech_ownership.py  |  2 +
+ 5 files changed, 81 insertions(+), 12 deletions(-)
+
+diff --git a/main_logic/core/tts_runtime.py b/main_logic/core/tts_runtime.py
+index ad5daea..b547cde 100644
+--- a/main_logic/core/tts_runtime.py
++++ b/main_logic/core/tts_runtime.py
+@@ -2353,11 +2353,15 @@ class TtsRuntimeMixin:
+         writing.result()
+ 
+     def _audio_chunk_header(self, effective_speech_id: str) -> dict:
++        from main_logic.tts_client.local_primary import LOCAL_PRIMARY_PROVIDER
++
+         header = {
+             "type": "audio_chunk",
+             "speech_id": effective_speech_id,
+             "turn_id": effective_speech_id,
+         }
++        if getattr(self, '_tts_active_provider_key', None) == LOCAL_PRIMARY_PROVIDER:
++            header['audio_done_expected'] = True
+         correlation_id = self._game_speech_correlation_for(effective_speech_id)
+         if correlation_id:
+             header["sdk_speech_correlation_id"] = correlation_id
+diff --git a/static/app/app-audio-playback.js b/static/app/app-audio-playback.js
+index fe61b98..33ee432 100644
+--- a/static/app/app-audio-playback.js
++++ b/static/app/app-audio-playback.js
+@@ -398,6 +398,7 @@
+     // 而跳过收尾——那正好是要兜的场景。漏发 audio_done 的 provider 靠它保证
+     // 每轮最多多等这么久，而不是一路卡到 30s 看门狗。
+     const ASSISTANT_AUDIO_STREAM_CLOSE_GIVEUP_MS = 700;
++    const DECLARED_AUDIO_STREAM_CLOSE_GIVEUP_MS = 45000;
+     let _assistantTurnCompletionFallbackTimer = 0;
+     let _assistantTurnCompletionFallbackTurnId = null;
+     let _audioStreamCloseGiveUpTimer = 0;
+@@ -904,9 +905,17 @@
+         return normalizeAssistantTurnId(S.assistantAudioStreamClosedTurnId) === normalizedTurnId;
+     }
+ 
+-    // 音频头只带 speech_id，audio_done 也只能按 speech_id 对账，所以在音频头
+-    // 到达时把当时解析出的 turnId 记下来。
+-    function rememberAssistantAudioSpeechTurn(speechId, turnId) {
++    // Keep stream ownership separate from text turns. audio_done resolves its
++    // speech_id through the turn identity supplied by the original audio head.
++    function isDeclaredAudioStreamOpen(turnId) {
++        var normalizedTurnId = normalizeAssistantTurnId(turnId);
++        return Array.from(assistantAudioStreams.values()).some(function (stream) {
++            return stream.epoch === S.incomingAudioEpoch && stream.turnId === normalizedTurnId &&
++                stream.audioDoneExpected && !stream.closed && !stream.finished;
++        });
++    }
++
++    function rememberAssistantAudioSpeechTurn(speechId, turnId, options) {
+         var sid = normalizeAssistantTurnId(speechId);
+         var normalizedTurnId = normalizeAssistantTurnId(turnId);
+         if (!sid || !normalizedTurnId) {
+@@ -916,7 +925,8 @@
+             if (stream.epoch !== S.incomingAudioEpoch || stream.finished) assistantAudioStreams.delete(key);
+         });
+         assistantAudioStreams.set(sid, {
+-            turnId: normalizedTurnId, epoch: S.incomingAudioEpoch, closed: false, finished: false
++            turnId: normalizedTurnId, epoch: S.incomingAudioEpoch, closed: false, finished: false,
++            audioDoneExpected: !!(options && options.audioDoneExpected)
+         });
+         // Metadata only; queued audio is retained if a broken sender floods IDs.
+         while (assistantAudioStreams.size > 128) assistantAudioStreams.delete(assistantAudioStreams.keys().next().value);
+@@ -988,16 +998,19 @@
+         clearAudioStreamCloseGiveUp();
+ 
+         _audioStreamCloseGiveUpTurnId = normalizedTurnId;
++        var delayMs = isDeclaredAudioStreamOpen(normalizedTurnId)
++            ? DECLARED_AUDIO_STREAM_CLOSE_GIVEUP_MS : ASSISTANT_AUDIO_STREAM_CLOSE_GIVEUP_MS;
+         logAudioLifecycle('audioStreamCloseGiveUp:armed', {
+             turnId: normalizedTurnId,
+-            delayMs: ASSISTANT_AUDIO_STREAM_CLOSE_GIVEUP_MS
++            delayMs: delayMs
+         });
+         _audioStreamCloseGiveUpTimer = window.setTimeout(function () {
+             var pendingTurnId = _audioStreamCloseGiveUpTurnId;
+             _audioStreamCloseGiveUpTimer = 0;
+             _audioStreamCloseGiveUpTurnId = null;
+ 
+-            if (!pendingTurnId || S.assistantTurnCompletedId !== pendingTurnId) {
++            if (!pendingTurnId || (S.assistantTurnCompletedId !== pendingTurnId &&
++                S.assistantSpeechActiveTurnId !== pendingTurnId)) {
+                 logAudioLifecycle('audioStreamCloseGiveUp:skip_completion_mismatch', {
+                     turnId: pendingTurnId || normalizedTurnId
+                 });
+@@ -1010,7 +1023,7 @@
+             // maybeFinalizeAssistantSpeech 自己的 drained 检查会拦住，
+             // 等那阵播完再重新排 —— 所以这里不需要也不该再复查一遍。
+             maybeFinalizeAssistantSpeech(pendingTurnId, { force: true });
+-        }, ASSISTANT_AUDIO_STREAM_CLOSE_GIVEUP_MS);
++        }, delayMs);
+     }
+ 
+     // 4 个队列 + 3 个 in-flight async flag，覆盖所有"音频还在路上"的状态。
+@@ -1045,6 +1058,14 @@
+         if (_stuckSpeakingFallbackTimer) return;
+         var flagsSet = !!(S.isPlaying || S.assistantSpeechActiveTurnId);
+         if (_hasPendingAudioWork() || !flagsSet) return;
++        // A local sentence worker explicitly promises a final audio_done.
++        // Its synthesis gap is not a dropped text completion or stream end.
++        var activeTurnId = S.assistantSpeechActiveTurnId;
++        if (isDeclaredAudioStreamOpen(activeTurnId) &&
++            (S.assistantTurnCompletedId === activeTurnId || S.assistantTurnId !== activeTurnId)) {
++            scheduleAudioStreamCloseGiveUp(activeTurnId);
++            return;
++        }
+ 
+         logAudioLifecycle('stuckSpeakingFallback:armed', {
+             isPlaying: S.isPlaying,
+@@ -1258,7 +1279,8 @@
+         var ownsTextCompletion = S.assistantTurnCompletedId === normalizedTurnId &&
+             (!S.assistantTurnId || S.assistantTurnId === normalizedTurnId);
+         var ownsLateAudio = S.assistantSpeechActiveTurnId === normalizedTurnId &&
+-            S.assistantTurnId !== normalizedTurnId && isAssistantAudioStreamClosed(normalizedTurnId);
++            S.assistantTurnId !== normalizedTurnId &&
++            (isAssistantAudioStreamClosed(normalizedTurnId) || force);
+         if (!normalizedTurnId || (!ownsTextCompletion && !ownsLateAudio)) {
+             logAudioLifecycle('maybeFinalizeAssistantSpeech:skip_completion_mismatch', {
+                 requestedTurnId: normalizedTurnId
+diff --git a/static/app/app-websocket.js b/static/app/app-websocket.js
+index 48e6817..e59e274 100644
+--- a/static/app/app-websocket.js
++++ b/static/app/app-websocket.js
+@@ -3677,13 +3677,14 @@
+                         typeof window.appAudioPlayback.schedulePendingAudioMetaStallCheck === 'function') {
+                         window.appAudioPlayback.schedulePendingAudioMetaStallCheck();
+                     }
+-                    // 记下 speech_id 属于哪一轮：随后的 audio_done 只带 speech_id，
+-                    // 音频通道上从来没有服务端权威的 turn_id。
++                    // Remember the source turn and declared final-done protocol;
++                    // audio_done itself resolves its speech_id through this map.
+                     if (!shouldSkip && window.appAudioPlayback &&
+                         typeof window.appAudioPlayback.rememberAssistantAudioSpeechTurn === 'function') {
+                         window.appAudioPlayback.rememberAssistantAudioSpeechTurn(
+                             speechId || S.currentPlayingSpeechId || null,
+-                            resolveAssistantLifecycleTurnId(response.turn_id)
++                            resolveAssistantLifecycleTurnId(response.turn_id),
++                            { audioDoneExpected: response.audio_done_expected === true }
+                         );
+                     }
+                     S.skipNextAudioBlob = false;
+diff --git a/tests/unit/test_assistant_speech_finalize_static.py b/tests/unit/test_assistant_speech_finalize_static.py
+index 6e09e6e..a46958d 100644
+--- a/tests/unit/test_assistant_speech_finalize_static.py
++++ b/tests/unit/test_assistant_speech_finalize_static.py
+@@ -123,6 +123,14 @@ function createHarness() {
+     }
+   }
+ 
++  function flushShortTimers() {
++    for (const [id, timer] of Array.from(timers.entries())) {
++      if (!timers.has(id) || timer.ms > 1000) continue;
++      timers.delete(id);
++      timer.fn();
++    }
++  }
++
+   function speechEnds() {
+     return dispatched
+       .filter((e) => e.type === 'neko-assistant-speech-end')
+@@ -152,13 +160,35 @@ function createHarness() {
+ 
+   return {
+     win, S, mod, timers,
+-    flushTimers, speechEnds, primeSpeakingTurn, turnEnd,
++    flushTimers, flushShortTimers, speechEnds, primeSpeakingTurn, turnEnd,
+     pendingTimers() { return timers.size; },
+   };
+ }
+ 
+ const report = {};
+ 
++// Local sentence gaps are longer than the legacy 700ms missing-done grace.
++{
++  const h = createHarness();
++  h.primeSpeakingTurn('declared-local');
++  h.mod.rememberAssistantAudioSpeechTurn('declared-local', 'declared-local', { audioDoneExpected: true });
++  h.turnEnd('declared-local');
++  h.flushShortTimers();
++  report.declared_local_gap_ends = h.speechEnds();
++  h.mod.noteAssistantAudioStreamClosed('declared-local');
++  report.declared_local_done_ends = h.speechEnds();
++}
++
++{
++  const h = createHarness();
++  h.primeSpeakingTurn('declared-missing');
++  h.mod.rememberAssistantAudioSpeechTurn('declared-missing', 'declared-missing', { audioDoneExpected: true });
++  h.turnEnd('declared-missing');
++  report.declared_missing_delay_ms = Math.max(...Array.from(h.timers.values()).map(t => t.ms));
++  h.flushTimers();
++  report.declared_missing_bounded_ends = h.speechEnds();
++}
++
+ // Text turn-start clears the legacy started marker. A delayed text completion
+ // must still wait for the active audio stream, including inter-sentence gaps.
+ {
+@@ -466,3 +496,13 @@ def test_delayed_text_completion_waits_for_the_active_audio_stream(report):
+ def test_active_audio_waits_when_text_start_clears_legacy_started_marker(report):
+     assert report['cleared_started_marker_gap_ends'] == []
+     assert report['cleared_started_marker_final_ends'] == ['gap-same']
++
++
++def test_declared_local_done_does_not_give_up_after_700ms(report):
++    assert report['declared_local_gap_ends'] == []
++    assert report['declared_local_done_ends'] == ['declared-local']
++
++
++def test_declared_local_missing_done_still_has_bounded_recovery(report):
++    assert report['declared_missing_delay_ms'] == 45000
++    assert report['declared_missing_bounded_ends'] == ['declared-missing']
+diff --git a/tests/unit/test_slow_tts_speech_ownership.py b/tests/unit/test_slow_tts_speech_ownership.py
+index dd6660a..65bc716 100644
+--- a/tests/unit/test_slow_tts_speech_ownership.py
++++ b/tests/unit/test_slow_tts_speech_ownership.py
+@@ -44,6 +44,7 @@ async def test_slow_local_audio_keeps_source_turn_and_identical_new_reply_is_not
+         ws = _RecordingWebsocket()
+         manager = _make_mgr(ws)
+         manager.current_speech_id = 'reply-b'
++        manager._tts_active_provider_key = LOCAL_PRIMARY_PROVIDER
+         manager.tts_response_queue = responses
+         handler = await _start_handler(manager)
+         gate.set()
+@@ -52,6 +53,7 @@ async def test_slow_local_audio_keeps_source_turn_and_identical_new_reply_is_not
+         headers = [value for kind, value in ws.calls if kind == 'json' and value['type'] == 'audio_chunk']
+         assert {header['speech_id'] for header in headers} == {'reply-a', 'reply-b'}
+         assert all(header['turn_id'] == header['speech_id'] for header in headers)
++        assert all(header['audio_done_expected'] is True for header in headers)
+         by_speech = {'reply-a': bytearray(), 'reply-b': bytearray()}
+         active = None
+         for kind, value in ws.calls:

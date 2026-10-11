@@ -1,0 +1,124 @@
+From 75a1455233756108e77a17be7808b64adc8cb8c8 Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Sun, 11 Oct 2026 18:37:41 +0800
+Subject: [PATCH] fix(audio): keep active streams open across late text
+ completion
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+回归报告 / Regression Report
+
+Natural playback still exposed an end signal between sentences before TTS
+finished. Text turn-start clears the legacy speech-start marker, and a late
+completion from A could overwrite B's completion and prematurely finish A.
+
+Wait for audio_done while the real audio turn is active, independently of
+the cleared text marker. Associate text completion with its own current
+turn; a late A notice may finalize A audio but cannot replace B state.
+
+Two new ordering regressions fail before this change and pass after it.
+Related regression: 2128 passed, with the one previously proven baseline
+logger-capture failure deselected. Ruff, Node syntax and diff checks pass.
+Cancellation, missing-done fallback, interleaved decoding and stream reopening
+remain covered. This UI-only follow-up requires a desktop refresh, not a
+second main/game/model reload. Natural and audible acceptance remain separate.
+---
+ static/app/app-audio-playback.js              | 12 +++++-
+ .../test_assistant_speech_finalize_static.py  | 42 +++++++++++++++++++
+ 2 files changed, 52 insertions(+), 2 deletions(-)
+
+diff --git a/static/app/app-audio-playback.js b/static/app/app-audio-playback.js
+index 1f95812..fe61b98 100644
+--- a/static/app/app-audio-playback.js
++++ b/static/app/app-audio-playback.js
+@@ -1255,7 +1255,8 @@
+             requestedTurnId: normalizedTurnId,
+             force: force
+         });
+-        var ownsTextCompletion = S.assistantTurnCompletedId === normalizedTurnId;
++        var ownsTextCompletion = S.assistantTurnCompletedId === normalizedTurnId &&
++            (!S.assistantTurnId || S.assistantTurnId === normalizedTurnId);
+         var ownsLateAudio = S.assistantSpeechActiveTurnId === normalizedTurnId &&
+             S.assistantTurnId !== normalizedTurnId && isAssistantAudioStreamClosed(normalizedTurnId);
+         if (!normalizedTurnId || (!ownsTextCompletion && !ownsLateAudio)) {
+@@ -1276,7 +1277,8 @@
+         // 已被清，没人再收尾）→ isPlaying 卡到 30s 看门狗。等后端的 audio_done，
+         // 或等 give-up 计时器到点（force）。
+         if (!force &&
+-            normalizeAssistantTurnId(S.assistantSpeechStartedTurnId) === normalizedTurnId &&
++            (normalizeAssistantTurnId(S.assistantSpeechStartedTurnId) === normalizedTurnId ||
++             normalizeAssistantTurnId(S.assistantSpeechActiveTurnId) === normalizedTurnId) &&
+             !isAssistantAudioStreamClosed(normalizedTurnId)) {
+             scheduleAudioStreamCloseGiveUp(normalizedTurnId);
+             logAudioLifecycle('maybeFinalizeAssistantSpeech:await_audio_done', {
+@@ -1346,6 +1348,12 @@
+             if (!turnId) {
+                 return;
+             }
++            // A delayed completion belongs to its original text turn; it must
++            // not replace B's completion while A's audio is still draining.
++            if (S.assistantTurnId && S.assistantTurnId !== turnId) {
++                maybeFinalizeAssistantSpeech(turnId);
++                return;
++            }
+             // Some flows only emit the agent callback turn-end before audio drains.
+             S.assistantTurnCompletedId = turnId;
+             S.assistantTurnCompletionSource = source || null;
+diff --git a/tests/unit/test_assistant_speech_finalize_static.py b/tests/unit/test_assistant_speech_finalize_static.py
+index 92fe315..6e09e6e 100644
+--- a/tests/unit/test_assistant_speech_finalize_static.py
++++ b/tests/unit/test_assistant_speech_finalize_static.py
+@@ -159,6 +159,37 @@ function createHarness() {
+ 
+ const report = {};
+ 
++// Text turn-start clears the legacy started marker. A delayed text completion
++// must still wait for the active audio stream, including inter-sentence gaps.
++{
++  const h = createHarness();
++  h.primeSpeakingTurn('gap-A');
++  h.mod.rememberAssistantAudioSpeechTurn('gap-A', 'gap-A');
++  h.S.assistantTurnId = 'text-B';
++  h.win.dispatchEvent(new CustomEventLike('neko-assistant-turn-start', {
++    detail: { turnId: 'text-B' },
++  }));
++  h.turnEnd('text-B');
++  h.turnEnd('gap-A');
++  report.late_text_completion_gap_ends = h.speechEnds();
++  h.mod.noteAssistantAudioStreamClosed('gap-A');
++  report.late_text_completion_final_ends = h.speechEnds();
++  report.late_text_completion_keeps_new_completion = h.S.assistantTurnCompletedId;
++}
++
++{
++  const h = createHarness();
++  h.primeSpeakingTurn('gap-same');
++  h.mod.rememberAssistantAudioSpeechTurn('gap-same', 'gap-same');
++  h.win.dispatchEvent(new CustomEventLike('neko-assistant-turn-start', {
++    detail: { turnId: 'gap-same' },
++  }));
++  h.turnEnd('gap-same');
++  report.cleared_started_marker_gap_ends = h.speechEnds();
++  h.mod.noteAssistantAudioStreamClosed('gap-same');
++  report.cleared_started_marker_final_ends = h.speechEnds();
++}
++
+ // A's synthesis/playback can outlive its text. Starting B must not orphan A.
+ {
+   const h = createHarness();
+@@ -424,3 +455,14 @@ def test_new_text_turn_does_not_orphan_old_audio_or_duplicate_end(report):
+     assert report['late_previous_speech_ends'] == ['late-A']
+     assert report['late_keeps_current_text_turn'] == 'new-B'
+     assert report['late_no_playing_flag'] is True
++
++
++def test_delayed_text_completion_waits_for_the_active_audio_stream(report):
++    assert report['late_text_completion_gap_ends'] == []
++    assert report['late_text_completion_final_ends'] == ['gap-A']
++    assert report['late_text_completion_keeps_new_completion'] == 'text-B'
++
++
++def test_active_audio_waits_when_text_start_clears_legacy_started_marker(report):
++    assert report['cleared_started_marker_gap_ends'] == []
++    assert report['cleared_started_marker_final_ends'] == ['gap-same']

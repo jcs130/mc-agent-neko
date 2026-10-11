@@ -468,3 +468,24 @@ The companion host/plugin pair was loaded at an owned idle boundary on
 subsequently repaired separately; see [the night policy report](../../docs/night-planner-ownership.md).
 These changes target local inference latency and continuity without adding model
 calls or suppressing genuine player communication or reactive emergencies.
+
+## Slow local speech ownership
+
+Host patches 0020–0022 preserve the original speech/turn ID through local
+VoxCPM2 synthesis, fallback acknowledgement and desktop playback. Audio may
+outlive its text turn: a new text turn must not discard the old stream's
+completion or mistake an inter-sentence gap for its final end. Cancellation,
+bounded missing-end recovery and legitimate repeated replies remain available.
+
+Apply the complete host series. Patch 0020 needs the owned host reload; the
+UI-only 0021 follow-up needs a desktop refresh and keeps the host, game, local
+LLM and TTS processes running. No extra inference calls or text-based muting
+are introduced. Metadata-only hashes and actual playback acknowledgements
+separate repeated generation from repeated audio delivery. See the
+[regression and deployment report](../../docs/local-speech-ownership.md) for
+failed initial natural acceptance, the follow-up and remaining listening limits.
+
+Patch 0022 declares the local worker's final `audio_done` contract in audio
+headers. Its consumer waits through synthesis gaps with a bounded 45-second
+missing-done recovery, rather than the legacy 700ms fallback. Apply it to both
+the host and desktop consumer; merely refreshing the desktop is insufficient.
