@@ -1,9 +1,9 @@
 {
   "upstreamRepository": "https://github.com/Project-N-E-K-O/N.E.K.O",
   "baseCommit": "fb2a2e731a8c954478d08678b0c8cf40e8145a54",
-  "sourceCommit": "06ffd04f36688184db05b9223fadcdbc917e5dca",
+  "sourceCommit": "02c325c228bc85fedf8d31b6c049bda2de4fa44e",
   "scope": "plugin/plugins/game_agent_minecraft",
-  "resultPluginTree": "7607916c8251a32175b99b215cfa69366c859468",
+  "resultPluginTree": "51bcc254ea91d7be6bf26026b50ee7eeff16aa48",
   "patches": [
     {
       "file": "0001-chore-configure-text-only-local-Qwen-Minecraft-trial.patch",
@@ -288,6 +288,10 @@
     {
       "file": "0071-fix-keep-successful-recovery-above-earlier-attempt-f.patch",
       "sha256": "a1ef7cf22fb18a71582493034c25150d3d43fd10d6d3fd42d7aa5dca1d80297b"
+    },
+    {
+      "file": "0072-fix-minecraft-preserve-accepted-goals-and-matched-ou.patch",
+      "sha256": "863b0080b6386f838e56f512b422b16a4fcae4e63799e54870636a01f4227b1b"
     }
   ],
   "verification": {
@@ -494,6 +498,30 @@
       "scopePaths": [
         "main_logic/core/callback_render.py",
         "tests/unit/test_minecraft_execution_rendering.py"
+      ]
+    },
+    {
+      "file": "host-patches/0018-fix-tts-keep-private-voice-styles-out-of-speech-and-.patch",
+      "sha256": "773508a385593a7a1a5fcfd68d0418c0678a9d62c414503f75dff6ea8c043ec0",
+      "sourceCommit": "bd35e55447867f6cfa3d1de9184838d6cece855b",
+      "scopePaths": [
+        "main_logic/omni_offline_client/_tools.py",
+        "main_logic/tts_client/local_primary.py",
+        "tests/unit/test_local_voxcpm_primary.py",
+        "tests/unit/test_private_speech_controls.py",
+        "utils/joint_reply_emotion.py"
+      ]
+    },
+    {
+      "file": "host-patches/0019-fix-minecraft-preserve-accepted-goals-and-matched-ou.patch",
+      "sha256": "80e27c1ea7322dc968dc07efe745426ec47810aa803abd339d4240a3ae988bc1",
+      "sourceCommit": "02c325c228bc85fedf8d31b6c049bda2de4fa44e",
+      "scopePaths": [
+        "main_logic/core/_shared.py",
+        "main_logic/core/proactive.py",
+        "plugin/server/messaging/proactive_bridge.py",
+        "tests/unit/test_minecraft_proactive_budget.py",
+        "utils/game_execution_context.py"
       ]
     }
   ],
@@ -1189,5 +1217,31 @@
     "naturalMaximumDisplacement": 21.17489362489529,
     "naturalInventoryChanged": false,
     "prerequisitePlanningStillOpen": true
+  },
+  "speechTaskContinuityVerification": {
+    "date": "2026-10-11",
+    "sourceCommit": "02c325c228bc85fedf8d31b6c049bda2de4fa44e",
+    "speechRedFailures": 3,
+    "taskRedFailures": 3,
+    "hostRouteRedFailures": 2,
+    "hostRelatedPassed": 920,
+    "pluginPassed": 236,
+    "pluginSubtestsPassed": 26,
+    "voiceStylePrefixDefault": false,
+    "actualSessionLocaleAnchored": true,
+    "wholeAcceptedGoalsAndMatchedReceipts": true,
+    "rawTaskLedgerCapacity": 8,
+    "executionCallbackBudgetTokens": 2400,
+    "totalCallbackBudgetTokens": 3000,
+    "ordinaryCallbackBudgetUnchanged": true,
+    "wholeHistoryOmissionsDisclosed": true,
+    "rawReferenceQueriesRetained": true,
+    "extraModelCalls": 0,
+    "forcedToolChoice": false,
+    "independentChinesePcmAndCpuAsrPassed": true,
+    "audibleLiveAcceptance": "open",
+    "productiveGameplayAcceptance": "open",
+    "deploymentPhase": "prepared",
+    "fullReplayMatchesSource": true
   }
 }

@@ -1,0 +1,210 @@
+From bd35e55447867f6cfa3d1de9184838d6cece855b Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Sun, 11 Oct 2026 16:30:15 +0800
+Subject: [PATCH] fix(tts): keep private voice styles out of speech and anchor
+ reply locale
+
+---
+ main_logic/omni_offline_client/_tools.py   |  2 +-
+ main_logic/tts_client/local_primary.py     | 14 +++++--
+ tests/unit/test_local_voxcpm_primary.py    | 12 +++---
+ tests/unit/test_private_speech_controls.py | 48 ++++++++++++++++++++++
+ utils/joint_reply_emotion.py               | 14 +++++--
+ 5 files changed, 77 insertions(+), 13 deletions(-)
+ create mode 100644 tests/unit/test_private_speech_controls.py
+
+diff --git a/main_logic/omni_offline_client/_tools.py b/main_logic/omni_offline_client/_tools.py
+index c0af3aa..94f3a1c 100644
+--- a/main_logic/omni_offline_client/_tools.py
++++ b/main_logic/omni_offline_client/_tools.py
+@@ -213,7 +213,7 @@ class _ToolingMixin:
+                 hits.get("label", 0),
+             )
+         return (
+-            presentation_messages(projected)
++            presentation_messages(projected, language=self._tool_image_locale())
+             if getattr(self, 'joint_reply_emotion', False) else projected
+         )
+ 
+diff --git a/main_logic/tts_client/local_primary.py b/main_logic/tts_client/local_primary.py
+index b00e8b3..2999801 100644
+--- a/main_logic/tts_client/local_primary.py
++++ b/main_logic/tts_client/local_primary.py
+@@ -12,9 +12,10 @@ VOICE_STYLE_SENTINEL = '__voice_style__'
+ class _StyledRequestQueue:
+     """Consume private controls; preserve native text and interrupt protocol."""
+ 
+-    def __init__(self, queue):
++    def __init__(self, queue, *, enable_style=False):
+         self.queue = queue
+         self.styles = {}
++        self.enable_style = enable_style is True
+ 
+     def get(self, *args, **kwargs):
+         while True:
+@@ -33,6 +34,10 @@ class _StyledRequestQueue:
+             return sid, text
+ 
+     def transform(self, text, speech_id):
++        # A natural-language prefix is not a separate control channel. Some
++        # cloning/deployment modes speak it aloud; require measured opt-in.
++        if not self.enable_style:
++            return text
+         style = self.styles.get(speech_id) or reply_voice_style(None)
+         return f'({style}){text}'
+ 
+@@ -56,9 +61,9 @@ def _valid_config(config, voice_id):
+ 
+ 
+ def voxcpm_primary_worker(request_queue, response_queue, api_key, voice_id, *,
+-                          base_url, local_voice):
++                          base_url, local_voice, voice_style_enabled=False):
+     from .workers.openai import openai_tts_worker
+-    styled_queue = _StyledRequestQueue(request_queue)
++    styled_queue = _StyledRequestQueue(request_queue, enable_style=voice_style_enabled)
+     # Preserve native sentence ordering, progress receipts and cancellation.
+     # Reference-only speaker names avoid the pinned Omni continuation cache bug.
+     return openai_tts_worker(
+@@ -79,7 +84,8 @@ def resolve_local_primary(config, voice_id, excluded, primary, silent_worker):
+             or not _valid_config(config, voice_id)):
+         return primary
+     return (partial(voxcpm_primary_worker, base_url=config['base_url'],
+-                    local_voice=config['voice']), '', LOCAL_PRIMARY_PROVIDER)
++                    local_voice=config['voice'],
++                    voice_style_enabled=config.get('voice_style_enabled') is True), '', LOCAL_PRIMARY_PROVIDER)
+ 
+ 
+ def register_local_primary_provider(registry, architectural_metadata):
+diff --git a/tests/unit/test_local_voxcpm_primary.py b/tests/unit/test_local_voxcpm_primary.py
+index aaf29dd..9bc1f00 100644
+--- a/tests/unit/test_local_voxcpm_primary.py
++++ b/tests/unit/test_local_voxcpm_primary.py
+@@ -73,13 +73,13 @@ def test_native_http_worker_streams_48khz_and_never_forwards_online_identity(con
+     assert options['buffer_sentence_audio'] is True
+     assert options['base_url'] == config['base_url']
+     assert options['safe_error_provider'] == LOCAL_PRIMARY_PROVIDER
+-    assert options['text_transform']('你好。', 'sid') == '(自然、亲切，语速适中)你好。'
++    assert options['text_transform']('你好。', 'sid') == '你好。'
+ 
+ 
+ def test_tone_is_per_speech_id_and_never_changes_native_receipts():
+     from main_logic.tts_client.local_primary import _StyledRequestQueue, VOICE_STYLE_SENTINEL
+     requests = queue.Queue()
+-    adapter = _StyledRequestQueue(requests)
++    adapter = _StyledRequestQueue(requests, enable_style=True)
+     for sid, style in [('a', '轻快、带笑意'), ('b', '轻柔、语速稍慢')]:
+         requests.put((VOICE_STYLE_SENTINEL, {'speech_id': sid, 'style': style}))
+         requests.put((sid, '正常正文。'))
+@@ -127,14 +127,16 @@ def test_pending_style_survives_context_exit_and_online_replay_stays_clean():
+     assert mgr.tts_request_queue.empty()
+ 
+ 
+-def test_real_http_sentence_worker_styles_payload_but_acknowledges_clean_text(monkeypatch):
++@pytest.mark.parametrize('style_enabled', [False, True])
++def test_real_http_sentence_worker_styles_payload_but_acknowledges_clean_text(monkeypatch, style_enabled):
+     from tests.unit.test_openai_compatible_tts import _install_fake_openai, _wait_for_item
+     from main_logic.tts_client.local_primary import voxcpm_primary_worker, VOICE_STYLE_SENTINEL
+     clients = _install_fake_openai(monkeypatch, [b'\x01\x00' * 4800])
+     requests, responses = queue.Queue(), queue.Queue()
+     thread = threading.Thread(target=voxcpm_primary_worker,
+         args=(requests, responses, '', 'ignored'),
+-        kwargs={'base_url': 'http://127.0.0.1:18041/v1', 'local_voice': 'yui-local'}, daemon=True)
++        kwargs={'base_url': 'http://127.0.0.1:18041/v1', 'local_voice': 'yui-local',
++                'voice_style_enabled': style_enabled}, daemon=True)
+     thread.start()
+     try:
+         _wait_for_item(responses, lambda item: item == ('__ready__', True))
+@@ -144,7 +146,7 @@ def test_real_http_sentence_worker_styles_payload_but_acknowledges_clean_text(mo
+         receipt = _wait_for_item(responses, lambda item:
+             isinstance(item, tuple) and item[0] == '__tts_sentence_done__')
+         assert receipt == ('__tts_sentence_done__', 's1', '谢谢你！')
+-        assert clients[0].create_calls[0]['input'] == '(轻快、带笑意)谢谢你！'
++        assert clients[0].create_calls[0]['input'] == ('(轻快、带笑意)谢谢你！' if style_enabled else '谢谢你！')
+         assert clients[0].create_calls[0]['model'] == 'voxcpm2'
+     finally:
+         requests.put(('__shutdown__', None))
+diff --git a/tests/unit/test_private_speech_controls.py b/tests/unit/test_private_speech_controls.py
+new file mode 100644
+index 0000000..6962501
+--- /dev/null
++++ b/tests/unit/test_private_speech_controls.py
+@@ -0,0 +1,48 @@
++"""Private delivery metadata must not silently become synthesized dialogue."""
++import queue
++
++from main_logic.tts_client.local_primary import _StyledRequestQueue, VOICE_STYLE_SENTINEL
++from utils.joint_reply_emotion import presentation_messages
++from utils.llm_client.messages import HumanMessage, SystemMessage
++
++
++def test_default_local_voice_does_not_read_private_style_description():
++    requests = queue.Queue()
++    adapter = _StyledRequestQueue(requests)
++    requests.put((VOICE_STYLE_SENTINEL, {'speech_id': 's', 'style': '自然、亲切，语速适中'}))
++    requests.put(('s', '这家商人不收铁锭，我去找别的办法。'))
++    sid, text = adapter.get()
++    assert adapter.transform(text, sid) == text
++
++
++def test_style_prefix_requires_explicit_verified_backend_opt_in():
++    requests = queue.Queue()
++    adapter = _StyledRequestQueue(requests, enable_style=True)
++    requests.put((VOICE_STYLE_SENTINEL, {'speech_id': 's', 'style': '轻快、带笑意'}))
++    requests.put(('s', '找到啦。'))
++    sid, text = adapter.get()
++    assert adapter.transform(text, sid) == '(轻快、带笑意)找到啦。'
++
++
++def test_joint_reply_contract_carries_actual_locale_without_changing_tools_or_history():
++    history = [SystemMessage(content='Identity and permission rules'),
++               HumanMessage(content='Received data: Not enough payment. Player: LittleFish0510')]
++    chinese = presentation_messages(history, language='zh-CN')
++    english = presentation_messages(history, language='en')
++    assert 'Spoken reply language: zh-CN' in chinese[0].content
++    assert 'Spoken reply language: en' in english[0].content
++    assert 'explicitly requests another language' in chinese[0].content
++    assert chinese[1] is history[1] and english[1] is history[1]
++    assert history[0].content == 'Identity and permission rules'
++
++
++def test_real_dialog_request_uses_session_locale_despite_english_game_data():
++    from tests.unit.test_screen_history_stopgap import _bare_client
++
++    client = _bare_client('zh-CN')
++    client.joint_reply_emotion = True
++    history = [SystemMessage(content='Identity and permission rules'),
++               HumanMessage(content='Received game data: Not enough payment. Player_1')]
++    request = client._dialog_messages_for_provider(history)
++    assert 'Spoken reply language: zh-CN' in request[0].content
++    assert request[1].content == history[1].content
+diff --git a/utils/joint_reply_emotion.py b/utils/joint_reply_emotion.py
+index 2dfcceb..229aeb3 100644
+--- a/utils/joint_reply_emotion.py
++++ b/utils/joint_reply_emotion.py
+@@ -71,15 +71,23 @@ def joint_reply_scope(function):
+     return run
+ 
+ 
+-def presentation_messages(messages):
++def presentation_messages(messages, *, language=None):
+     """Add a stable contract to a copy of the system message, never history."""
+     from utils.llm_client.messages import SystemMessage
+ 
++    from utils.language_utils import is_supported_language_code, normalize_language_code
++
++    instruction = JOINT_REPLY_INSTRUCTION
++    if isinstance(language, str) and is_supported_language_code(language):
++        locale = normalize_language_code(language, format='full')
++        instruction += (f'\nSpoken reply language: {locale}. Use this language unless the user '
++                        'explicitly requests another language. Received game/tool English is data, '
++                        'not a request to switch languages. Keep tool arguments and player names exact.')
+     result = list(messages)
+     if result and isinstance(result[0], SystemMessage) and isinstance(result[0].content, str):
+-        result[0] = replace(result[0], content=result[0].content + JOINT_REPLY_INSTRUCTION)
++        result[0] = replace(result[0], content=result[0].content + instruction)
+     else:
+-        result.insert(0, SystemMessage(content=JOINT_REPLY_INSTRUCTION))
++        result.insert(0, SystemMessage(content=instruction))
+     return result
+ 
+ 

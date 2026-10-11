@@ -28,7 +28,7 @@ Host patch 0010 来自 `62d44c0dcc397608b1ad0b4fbbb65c2c9cd54c68`。按 [compani
 
 旧的纯情绪头继续可用。语气最多 32 字，只描述语调、语速或情感，拒绝括号、控制字符和分隔符。解析器先移除头部，再交给字幕、历史、工具过滤和语音；各轮 metadata 用 ContextVar 隔离。
 
-VoxCPM2 官方支持自然语言括号前缀，见 [官方模型卡](https://huggingface.co/openbmb/VoxCPM2) 和 [官方仓库](https://github.com/OpenBMB/VoxCPM)。适配器只在 HTTP 输入里构造 `(轻快、带笑意，语速适中)正文`，不使用未经支持的通用 `instructions` 字段；音色参考仍参与克隆。
+VoxCPM2 官方介绍了参考模式下的自然语言括号前缀，见 [官方模型卡](https://huggingface.co/openbmb/VoxCPM2) 和 [官方仓库](https://github.com/OpenBMB/VoxCPM)。但这不是独立控制通道，克隆/部署组合可能把描述读出来。本地默认 `voice_style_enabled=false`，只合成干净正文；只有特定组合已独立听验可靠，才显式设为 `true` 构造 `(轻快、带笑意，语速适中)正文`。不发送未经支持的 `instructions` 字段，音色参考仍参与克隆。见[语气与任务上下文修复](local-speech-task-context.md)。
 
 语气在进入等待缓存前按 speech ID 保存，仅本地 worker 消费私有语气控制。分句完成回执仍确认干净正文，故障回放不会因前缀不匹配重复已播内容；线上回退不会收到括号描述。无有效描述时用本次情绪的温和默认语气；无情绪时用自然、亲切的默认语气。不增加语气分析、翻译或表情模型请求。
 

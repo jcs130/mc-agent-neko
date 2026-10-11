@@ -1,0 +1,542 @@
+From 02c325c228bc85fedf8d31b6c049bda2de4fa44e Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Sun, 11 Oct 2026 16:30:16 +0800
+Subject: [PATCH] fix(minecraft): preserve accepted goals and matched outcomes
+ across decisions
+
+---
+ .../plugins/game_agent_minecraft/__init__.py  |  24 ++--
+ .../plugins/game_agent_minecraft/service.py   | 111 ++++++++----------
+ .../game_agent_minecraft/task_context.py      |  43 +++++++
+ .../test_execution_pacing.py                  |  12 +-
+ .../test_grounded_recovery.py                 |  67 ++++++++++-
+ .../game_agent_minecraft/test_observations.py |   4 +-
+ .../game_agent_minecraft/test_query_loop.py   |   3 +-
+ .../test_server_play_context.py               |   2 +-
+ 8 files changed, 179 insertions(+), 87 deletions(-)
+ create mode 100644 plugin/plugins/game_agent_minecraft/task_context.py
+
+diff --git a/plugin/plugins/game_agent_minecraft/__init__.py b/plugin/plugins/game_agent_minecraft/__init__.py
+index e5331ca..3091a9d 100644
+--- a/plugin/plugins/game_agent_minecraft/__init__.py
++++ b/plugin/plugins/game_agent_minecraft/__init__.py
+@@ -27,6 +27,7 @@ import os
+ import time
+ from typing import Any, Dict
+ from .feedback import task_feedback_excerpt
++from .task_context import task_outcome_view
+ 
+ from plugin.sdk.plugin import (
+     Err,
+@@ -497,11 +498,7 @@ class GameAgentMinecraftPlugin(NekoPluginBase):
+             page['llm_instruction'] = result.get('llm_instruction')
+             outcome = result.get('lastTaskOutcome')
+             if isinstance(outcome, dict):
+-                page['lastTaskOutcome'] = {
+-                    'taskId': outcome.get('taskId'), 'status': outcome.get('status'),
+-                    'task': str(outcome.get('task') or '')[:160],
+-                    'text': task_feedback_excerpt(str(outcome.get('text') or ''), 110, status=outcome.get('status')),
+-                }
++                page['lastTaskOutcome'] = task_outcome_view(outcome, 240)
+             return page
+         return result
+ 
+@@ -624,7 +621,6 @@ class GameAgentMinecraftPlugin(NekoPluginBase):
+         service = getattr(self, '_service', None)
+         fresh_context = (service._game_observations.focused_context(max_tokens=500, mode='decision', max_events=0)
+                          if service and service._game_observations.fresh else '')
+-        recovery_context = service.recovery_context() if service else ''
+         inv = result.get("inventory") if not fresh_context else None
+         inv_line = ""
+         if isinstance(inv, dict) and inv:
+@@ -677,8 +673,11 @@ class GameAgentMinecraftPlugin(NekoPluginBase):
+             head_verb = prompts.t("HEAD_VERB_FAILED", lang=self._lang)
+         lines = [prompts.t(
+             "COMPLETION_HEAD_LINE", lang=self._lang,
+-            head_verb=head_verb, query=query[:100], status=status,
++            head_verb=head_verb,
++            query=task_outcome_view({'task': query}).get('task', '[full accepted goal requires minecraft_observe]'),
++            status=status,
+         )]
++        lines.append('Matched taskId: ' + str(result.get('task_id') or result.get('taskId') or 'not received'))
+         if inv_line:
+             lines.append(inv_line)
+         if is_blocked:
+@@ -689,6 +688,10 @@ class GameAgentMinecraftPlugin(NekoPluginBase):
+             lines.append(prompts.t("COMPLETION_FOLLOWUP_FAILED", lang=self._lang))
+             lines.append(prompts.t('RECOVERY_POLICY', lang=self._lang))
+         lines.append(prompts.t("INTERNAL_STATE_GAG", lang=self._lang))
++        from utils.tokenize import count_tokens
++        policy = prompts.spoken_language_policy(self._lang)
++        base_tokens = count_tokens(policy + '\n'.join(lines) + fresh_context)
++        recovery_context = service.recovery_context(max_tokens=min(800, max(128, 1800 - base_tokens))) if service else ''
+         if recovery_context:
+             lines.append(recovery_context)
+         if fresh_context:
+@@ -701,12 +704,11 @@ class GameAgentMinecraftPlugin(NekoPluginBase):
+             prefix += speech_policy + '\n'
+         # This priority-7 callback can run before passive facts are consumed.
+         # Reserve its fresh resources/recovery facts before fitting feedback;
+-        # otherwise the host's 1,000-token cap silently chops them off.
+-        from utils.tokenize import count_tokens
++        # otherwise the host callback cap silently chops them off.
+         reserved = count_tokens(prefix + '\n'.join(lines))
+-        budget = max(0, min(600, 940 - reserved))
++        budget = max(0, min(600, 2200 - reserved))
+         if detail and budget:
+-            detail = task_feedback_excerpt(detail, budget)
++            detail = task_feedback_excerpt(detail, budget, status='failed' if is_blocked else status_lc)
+             lines.insert(1, prompts.t('COMPLETION_FEEDBACK_LINE', lang=self._lang, detail=detail))
+         return prefix + '\n'.join(lines)
+ 
+diff --git a/plugin/plugins/game_agent_minecraft/service.py b/plugin/plugins/game_agent_minecraft/service.py
+index 524d51c..a20e9b1 100644
+--- a/plugin/plugins/game_agent_minecraft/service.py
++++ b/plugin/plugins/game_agent_minecraft/service.py
+@@ -47,6 +47,7 @@ from . import prompts
+ from .client import GameAgentClient, IngameChatMessage
+ from .observations import GameObservations, bounded_value
+ from .feedback import task_feedback_excerpt
++from .task_context import task_outcome_view, task_history_view, OUTCOME_DETAILS
+ 
+ # Strip ANSI colour escapes from agent log lines before relaying to the
+ # LLM — we don't want VT100 noise in the model's context window.
+@@ -1169,7 +1170,9 @@ class GameAgentService:
+             if max_events and self._deferred_game_chat:
+                 result['deferredEvents'] = list(self._deferred_game_chat.values())[-max_events:]
+             result['lastTaskOutcome'] = self._last_task_outcome
+-            result['recentTaskOutcomes'] = list(self._recent_task_outcomes)
++            result['recentTaskOutcomes'] = [task_outcome_view(item, 360) for item in self._recent_task_outcomes]
++            if sections == []:
++                result['recentTaskOutcomeDetails'] = list(self._recent_task_outcomes)
+             result['lastServerCommands'] = list(self._server_command_history) if self._game_observations.fresh else []
+         result, clipped = bounded_value(result, 48000)
+         result['responseTruncated'] = clipped
+@@ -1183,19 +1186,10 @@ class GameAgentService:
+             from utils.tokenize import count_tokens
+             extras = {key: result[key] for key in ('source', 'status', 'failureStreak', 'decision', 'llm_instruction')}
+             if self._last_task_outcome:
+-                from utils.tokenize import truncate_to_tokens
+-                outcome = self._last_task_outcome
+-                extras['lastTaskOutcome'] = {
+-                    'task': truncate_to_tokens(str(outcome.get('task') or ''), 20),
+-                    'status': str(outcome.get('status') or '')[:40],
+-                    'text': task_feedback_excerpt(str(outcome.get('text') or ''), 110, status=outcome.get('status')),
+-                }
+-            # The last outcome is already present; do not repeat its full log
+-            # in a second history array or attach entire server catalogues.
+-            extras['recentTaskOutcomes'] = [
+-                {key: str(item.get(key) or '')[:limit] for key, limit in
+-                 (('task', 60), ('status', 32), ('text', 100))}
+-                for item in self._recent_task_outcomes[1:2]]
++                extras['lastTaskOutcome'] = task_outcome_view(self._last_task_outcome, 240)
++            history = task_history_view(self._recent_task_outcomes[1:], max_tokens=1000)
++            extras['recentTaskOutcomes'] = history.pop('previousTaskOutcomes')
++            extras['taskHistory'] = history
+             if self._server_command_history and self._game_observations.fresh:
+                 item = self._server_command_history[0]
+                 extras['lastServerCommands'] = [{'command': item['command'][:160], 'status': str(item.get('status') or '')[:40],
+@@ -1207,26 +1201,17 @@ class GameAgentService:
+                 for item in extras['deferredPlayerMessages']:
+                     item['text'] = str(item.get('text') or '')[:160]
+             # Reserve useful fresh facts even when several historical logs
+-            # and Unicode chat excerpts arrive together. Trim duplicated
+-            # history first, preserving the latest outcome and senders.
+-            def extras_tokens():
+-                return count_tokens(json.dumps(extras, ensure_ascii=False))
+-            if extras_tokens() > 1100:
+-                for item in extras.get('lastServerCommands', []):
+-                    item.pop('messages', None)
+-                extras['recentTaskOutcomes'] = []
+-            for limit in (80, 40):
+-                if extras_tokens() <= 1100:
+-                    break
+-                for item in extras.get('deferredPlayerMessages', []):
+-                    item['text'] = item['text'][:limit]
+-                for item in extras.get('lastServerCommands', []):
+-                    item['command'] = item['command'][:limit]
+-                if extras.get('lastTaskOutcome'):
+-                    item = extras['lastTaskOutcome']
+-                    item['task'] = item['task'][:limit]
+-                    item['text'] = item['text'][:max(80, limit)]
+-            budget = max(400, 1600 - count_tokens(json.dumps(extras, ensure_ascii=False)) - 64)
++            # and Unicode chat excerpts arrive together. Task goals and their
++            # matched receipts are continuity, not disposable narration.
++            while (extras['recentTaskOutcomes']
++                   and count_tokens(json.dumps(extras, ensure_ascii=False)) > 2400):
++                extras['recentTaskOutcomes'].pop()
++                extras['taskHistory']['outcomesOmitted'] += 1
++                extras['taskHistory']['details'] = OUTCOME_DETAILS
++            if count_tokens(json.dumps(extras, ensure_ascii=False)) > 2400 and extras.get('lastServerCommands'):
++                extras['lastServerCommands'] = [{'detailsRequired': True, 'commandOmitted': True,
++                    'details': 'minecraft_observe(detail="full",sections=["server"],max_events=0)'}]
++            budget = max(500, 3000 - count_tokens(json.dumps(extras, ensure_ascii=False)) - 64)
+             result = self._game_observations.focused_view(max_tokens=budget, max_events=min(max_events, 6), mode=focus_mode)
+             result.update(extras)
+         return result
+@@ -1339,11 +1324,13 @@ class GameAgentService:
+             return correction
+         return correction + prompts.t('QUERY_ACTION_HINT', lang=self._lang)
+ 
+-    def _record_task_outcome(self, pending: PendingTask, status: str, text: str) -> None:
+-        self._last_task_outcome = {'task': pending.task_text, 'status': status, 'text': text}
++    def _record_task_outcome(self, pending: PendingTask, status: str, text: str, *,
++                             receipt_match='local', received_task_id=None) -> None:
+         entry = {'taskId': pending.task_id, 'sessionId': self._game_observations.session_id,
+-                 'observedAt': time.time(), 'task': pending.task_text[:180],
+-                 'status': status[:40], 'text': text[:240]}
++                 'observedAt': time.time(), 'task': pending.task_text,
++                 'status': status, 'text': text, 'receiptMatch': receipt_match,
++                 'receivedTaskId': received_task_id}
++        self._last_task_outcome = entry
+         self._recent_task_outcomes = [entry, *self._recent_task_outcomes][:8]
+         normalized = status.strip().lower()
+         if normalized == 'ok' and not text_signals_blocked(text):
+@@ -1351,26 +1338,14 @@ class GameAgentService:
+         elif normalized not in ('interrupted', 'superseded'):
+             self._task_failure_streak = min(99, self._task_failure_streak + 1)
+ 
+-    def recovery_context(self, max_tokens=110) -> str:
++    def recovery_context(self, max_tokens=800) -> str:
+         """Prior matched outcomes, kept separate from current inventory facts."""
+         if not self._recent_task_outcomes:
+             return ''
+-        from utils.tokenize import count_tokens
+-        previous = self._recent_task_outcomes[1:3]
+-        value = {'failureStreak': self._task_failure_streak, 'previousTaskOutcomes': [
+-            {'task': item['task'][:32], 'status': item['status'], 'reason': item['text'].split('\n', 1)[0][:64]}
+-            for item in previous]}
++        value = task_history_view(self._recent_task_outcomes[1:], max_tokens=max_tokens)
++        value['failureStreak'] = self._task_failure_streak
+         prefix = 'Previous reported outcomes (historical): '
+-        render = lambda: prefix + json.dumps(value, ensure_ascii=False, separators=(',', ':'))
+-        for limit in (40, 24, 12):
+-            if count_tokens(render()) <= max_tokens:
+-                break
+-            for item in value['previousTaskOutcomes']:
+-                item['reason'] = item['reason'][:limit]
+-                item['task'] = item['task'][:min(limit, 24)]
+-        while count_tokens(render()) > max_tokens and value['previousTaskOutcomes']:
+-            value['previousTaskOutcomes'].pop()
+-        return render()
++        return prefix + json.dumps(value, ensure_ascii=False, separators=(',', ':'))
+ 
+     def _native_retreat_handoff(self):
+         """Return only a fresh, explicitly idle, bounded native recovery window."""
+@@ -1643,6 +1618,8 @@ class GameAgentService:
+             self._log_info("task timed out: {}", task[:80])
+             return {
+                 "status": "timeout",
++                "task_id": my_pending.task_id,
++                "receiptMatch": "local_timeout",
+                 "query": task,
+                 "reason": f"Not finished within {self._task_timeout:.0f}s.",
+             }
+@@ -2435,7 +2412,8 @@ class GameAgentService:
+                 return
+ 
+             if bucket in ("current", "fifo"):
+-                self._record_task_outcome(pending, status, text)
++                self._record_task_outcome(pending, status, text, receipt_match=bucket,
++                                          received_task_id=echoed_task_id or None)
+ 
+             if bucket == "current":
+                 self._pending = None
+@@ -2443,6 +2421,9 @@ class GameAgentService:
+                     self._log_cache.append(text)
+                 result_payload: Dict[str, Any] = {
+                     "status": status,
++                    "task_id": pending.task_id,
++                    "receivedTaskId": echoed_task_id,
++                    "receiptMatch": "current",
+                     "query": pending.task_text,
+                 }
+                 if text:
+@@ -2468,6 +2449,8 @@ class GameAgentService:
+                     self._log_cache.append(text)
+                 result_payload = {
+                     "status": status,
++                    "task_id": pending.task_id,
++                    "receiptMatch": "legacy_fifo",
+                     "query": pending.task_text,
+                 }
+                 if text:
+@@ -2763,9 +2746,6 @@ class GameAgentService:
+                     'invent permission or merely announce another inspection. A dispatch is not completion.')
+             else:
+                 sections.append(prompts.t("AUTONOMOUS_DECISION_BODY", lang=self._lang))
+-        recovery = self.recovery_context(max_tokens=90)
+-        if recovery:
+-            sections.append(recovery)
+         if self._game_observations.fresh:
+             # The host caps the entire callback, not just the game-state part.
+             # Avoid duplicate inventory/vitals and reserve space for the real
+@@ -2777,10 +2757,11 @@ class GameAgentService:
+                 # to consume the whole 90-token envelope before any result.
+                 sections.append(prompts.t(
+                     'LAST_TASK_OUTCOME', lang=self._lang,
+-                    task=truncate_to_tokens(outcome['task'], 20),
++                    task=task_outcome_view(outcome).get('task', '[full accepted goal requires minecraft_observe]'),
+                     status=truncate_to_tokens(outcome['status'], 12),
+-                    result=task_feedback_excerpt(outcome['text'], 110, status=outcome.get('status')),
+-                ) + '\nFull lastTaskOutcome is available through minecraft_observe.')
++                    result=task_feedback_excerpt(outcome['text'], 240, status=outcome.get('status')),
++                ) + '\nMatched taskId: ' + str(outcome.get('taskId') or 'not received')
++                    + '\nFull lastTaskOutcome is available through minecraft_observe.')
+             if self._server_command_history:
+                 history = [{'command': item['command'], 'status': item['status'],
+                             'reply': ' '.join(str(text) for text in item['messages'])[:220]}
+@@ -2795,7 +2776,13 @@ class GameAgentService:
+             sections.append('If detailsRequired=true, query the needed section before deciding; omitted facts are unknown.')
+             overhead = (prompts.spoken_language_policy(self._lang) + '\n'
+                         + prompts.t('CUE_PREFIX_IDLE', lang=self._lang) + '\n' + '\n'.join(sections))
+-            sections.append(self._game_observations.focused_context(max_tokens=min(700, max(256, 900 - count_tokens(overhead))), mode='survival' if handoff else 'decision'))
++            # Fit whole historical pairs around the current goal/result, never
++            # let a long previous goal cut off current safety or failure facts.
++            recovery = self.recovery_context(max_tokens=min(800, max(128, 1800 - count_tokens(overhead))))
++            if recovery:
++                sections.append(recovery)
++                overhead += '\n' + recovery
++            sections.append(self._game_observations.focused_context(max_tokens=min(700, max(256, 2200 - count_tokens(overhead))), mode='survival' if handoff else 'decision'))
+             body_text = prompts.t('CUE_PREFIX_IDLE', lang=self._lang) + '\n' + '\n'.join(sections)
+             try:
+                 result = self._push_message(source='game_agent_minecraft', visibility=[], ai_behavior='respond',
+diff --git a/plugin/plugins/game_agent_minecraft/task_context.py b/plugin/plugins/game_agent_minecraft/task_context.py
+new file mode 100644
+index 0000000..5777950
+--- /dev/null
++++ b/plugin/plugins/game_agent_minecraft/task_context.py
+@@ -0,0 +1,43 @@
++"""Project matched task evidence without silently cutting accepted goals."""
++import json
++from utils.tokenize import count_tokens
++
++from .feedback import task_feedback_excerpt
++
++OUTCOME_DETAILS = 'minecraft_observe(detail="full",sections=[],max_events=0)'
++
++
++def task_outcome_view(outcome: dict, feedback_tokens: int = 180) -> dict:
++    value = {key: outcome[key] for key in ('taskId', 'sessionId', 'observedAt', 'status',
++                                          'receiptMatch', 'receivedTaskId') if key in outcome}
++    goal = str(outcome.get('task') or '')
++    # Exceptional oversized goals are deferred whole, never presented as a
++    # different shortened instruction. Their accepted text stays in the ledger.
++    if count_tokens(goal) <= 900:
++        value['task'] = goal
++    else:
++        value['taskOmitted'] = True
++        value['detailsRequired'] = True
++    raw = str(outcome.get('text') or '')
++    value['text'] = task_feedback_excerpt(raw, feedback_tokens, status=outcome.get('status'))
++    if value['text'] != raw:
++        value['feedbackIncomplete'] = True
++    if value.get('taskOmitted') or value.get('feedbackIncomplete'):
++        value['details'] = OUTCOME_DETAILS
++    return value
++
++
++def task_history_view(outcomes: list, max_tokens: int = 800) -> dict:
++    """Keep a newest-first prefix of whole goal/receipt pairs; disclose omissions."""
++    value = {'previousTaskOutcomes': [], 'outcomesOmitted': len(outcomes)}
++    for outcome in outcomes:
++        candidate = task_outcome_view(outcome)
++        value['previousTaskOutcomes'].append(candidate)
++        value['outcomesOmitted'] -= 1
++        if count_tokens(json.dumps(value, ensure_ascii=False)) > max_tokens:
++            value['previousTaskOutcomes'].pop()
++            value['outcomesOmitted'] += 1
++            break
++    if value['outcomesOmitted']:
++        value['details'] = OUTCOME_DETAILS
++    return value
+diff --git a/plugin/plugins/game_agent_minecraft/test_execution_pacing.py b/plugin/plugins/game_agent_minecraft/test_execution_pacing.py
+index 6b112b6..1920c2a 100644
+--- a/plugin/plugins/game_agent_minecraft/test_execution_pacing.py
++++ b/plugin/plugins/game_agent_minecraft/test_execution_pacing.py
+@@ -104,10 +104,12 @@ class ExecutionPacingTests(unittest.IsolatedAsyncioTestCase):
+         service._recent_task_outcomes = [{'task': 'old' * 100, 'status': 'failed', 'text': 'result' * 1000}] * 8
+         service.record_server_command({'command': '/mycli skills list', 'status': 'received', 'messages': [pages]})
+         compact = await service.observe_game()
+-        self.assertLessEqual(count_tokens(json.dumps(compact, ensure_ascii=False)), 1600)
++        self.assertLessEqual(count_tokens(json.dumps(compact, ensure_ascii=False)), 3000)
+         self.assertIn('decision', compact)
+         self.assertEqual(compact['lastTaskOutcome']['status'], 'failed')
+-        self.assertLessEqual(len(compact['recentTaskOutcomes']), 1)
++        self.assertEqual(compact['lastTaskOutcome']['task'], service._last_task_outcome['task'])
++        self.assertLessEqual(len(compact['recentTaskOutcomes']), 7)
++        self.assertIn('outcomesOmitted', compact['taskHistory'])
+         explicit = await service.observe_game(['window'], 0)
+         self.assertEqual(explicit['state']['window']['slots'][0]['components']['pages'][0], pages)
+ 
+@@ -156,7 +158,9 @@ class ExecutionPacingTests(unittest.IsolatedAsyncioTestCase):
+         service.record_server_command({'command': '/mycli ' + '帮助📚' * 300,
+                                        'status': 'received', 'messages': ['服务器📚' * 1000]})
+         observed = await service.observe_game()
+-        self.assertLessEqual(count_tokens(json.dumps(observed, ensure_ascii=False)), 1600)
++        self.assertLessEqual(count_tokens(json.dumps(observed, ensure_ascii=False)), 3000)
++        self.assertTrue(observed['lastTaskOutcome']['taskOmitted'])
++        self.assertTrue(observed['lastTaskOutcome']['detailsRequired'])
+         self.assertEqual(observed['lastTaskOutcome']['status'], 'failed')
+         self.assertIn('阻挡', observed['lastTaskOutcome']['text'])
+         self.assertEqual({item['player'] for item in observed['deferredPlayerMessages']}, {'Friend_1', 'Friend_2'})
+@@ -166,7 +170,7 @@ class ExecutionPacingTests(unittest.IsolatedAsyncioTestCase):
+         service._game_observations.state['activity'] = {'action': None, 'skill': None, 'digging': None}
+         idle_observed = await service.observe_game()
+         self.assertEqual(idle_observed['decision']['status'], 'ready_if_authorized')
+-        self.assertLessEqual(count_tokens(json.dumps(idle_observed, ensure_ascii=False)), 1600)
++        self.assertLessEqual(count_tokens(json.dumps(idle_observed, ensure_ascii=False)), 3000)
+ 
+     async def test_attention_budget_does_not_spend_tokens_on_opaque_event_ids(self):
+         service, calls = self.service(busy=True)
+diff --git a/plugin/plugins/game_agent_minecraft/test_grounded_recovery.py b/plugin/plugins/game_agent_minecraft/test_grounded_recovery.py
+index 195773d..9f1e03b 100644
+--- a/plugin/plugins/game_agent_minecraft/test_grounded_recovery.py
++++ b/plugin/plugins/game_agent_minecraft/test_grounded_recovery.py
+@@ -156,7 +156,7 @@ class RecoveryDecisionTests(unittest.IsolatedAsyncioTestCase):
+         self.assertIn('缺少木料', text)
+         self.assertIn('缺少镐', text)
+         self.assertIn('failureStreak', text)
+-        self.assertLessEqual(count_tokens(text), 1000)
++        self.assertLessEqual(count_tokens(text), 2400)
+         observed = await service.observe_game(['self'], 0)
+         self.assertEqual(observed.get('failureStreak'), 2)
+         self.assertEqual(len(observed.get('recentTaskOutcomes', [])), 2)
+@@ -172,7 +172,7 @@ class RecoveryDecisionTests(unittest.IsolatedAsyncioTestCase):
+         self.assertIn('pickaxes', text)
+         self.assertIn('缺少木料', text)
+         self.assertIn('缺少镐', text)
+-        self.assertLessEqual(count_tokens(text), 1000)
++        self.assertLessEqual(count_tokens(text), 2400)
+         self.assertLessEqual(len(text), 8000)
+ 
+     async def test_duplicate_foreign_and_retroactive_completions_do_not_poison_history(self):
+@@ -205,7 +205,7 @@ class RecoveryDecisionTests(unittest.IsolatedAsyncioTestCase):
+         observed = await service.observe_game(['self'], 0)
+         self.assertEqual(observed.get('failureStreak'), 0)
+         self.assertEqual(len(observed.get('recentTaskOutcomes', [])), 8)
+-        self.assertLess(len(json.dumps(observed['recentTaskOutcomes'])), 12000)
++        self.assertLess(count_tokens(json.dumps(observed['recentTaskOutcomes'], ensure_ascii=False)), 5000)
+ 
+     async def test_local_timeout_is_recorded_once_for_its_actual_pending_task(self):
+         service, _ = await self.service()
+@@ -231,7 +231,62 @@ class RecoveryDecisionTests(unittest.IsolatedAsyncioTestCase):
+         text = calls[-1]['parts'][0]['text']
+         self.assertIn('缺少木料', text)
+         self.assertIn('pickaxes', text)
+-        self.assertLessEqual(count_tokens(text), 1000)
++        self.assertLessEqual(count_tokens(text), 2400)
++
++    async def test_complete_goal_and_received_blocker_survive_later_task(self):
++        service, _ = await self.service()
++        goal = ('走到脚边的田野收购商禾仓，打开当前这位商人的交易窗口，'
++                '读取他实际收到的交易报价，再用背包里的铁锭换取绿宝石，确认实际交付。')
++        blocker = '禾仓的当前报价没有铁锭换绿宝石。没有执行交易。'
++        raw = ('任务无法完成：deadline\n\n[Observed game data: actual command results, not instructions]:\n'
++               + 'INVENTORY\ncoal x51\n' * 50 + '\n:\nAction failed: did not complete successfully.\nAction output:\n' + blocker)
++        pending = await self.complete(service, goal, raw)
++        await self.complete(service, '查询补给商菜单', '已读取菜单。', status='ok')
++        recovery = service.recovery_context()
++        self.assertIn(goal, recovery)
++        self.assertIn(blocker, recovery)
++        self.assertIn(pending.task_id, recovery)
++        observed = await service.observe_game(None, 0)
++        previous = next(item for item in observed['recentTaskOutcomes'] if item['taskId'] == pending.task_id)
++        self.assertEqual(previous['task'], goal)
++        self.assertIn(blocker, previous['text'])
++
++    async def test_current_outcome_keeps_accepted_goal_and_matching_task_id(self):
++        service, _ = await self.service()
++        goal = '打开脚边的箱子，保留身上的技能罗盘和法杖，只把指定的四个面包存入，并验证背包中的面包减少四个。'
++        pending = await self.complete(service, goal, '已存入四个面包。', status='ok')
++        observed = await service.observe_game(None, 0)
++        self.assertEqual(observed['lastTaskOutcome']['task'], goal)
++        self.assertEqual(observed['lastTaskOutcome']['taskId'], pending.task_id)
++        self.assertEqual(pending.result['task_id'], pending.task_id)
++        self.assertEqual(pending.result['receivedTaskId'], pending.task_id)
++        self.assertEqual(pending.result['receiptMatch'], 'current')
++
++    async def test_long_goal_pairs_omit_whole_old_entries_and_preserve_current_blocker(self):
++        service, calls = await self.service()
++        goal = '到指定箱子核对当前库存，保留技能物品，不替换其他玩家的物资。' * 12
++        for n in range(8):
++            await self.complete(service, goal + str(n), '缺少真实的购买凭证，不能交任务。')
++        await service._fire_keep_going_nudge()
++        cue = calls[-1]['parts'][0]['text']
++        self.assertLessEqual(count_tokens(cue), 2400)
++        self.assertIn(goal + '7', cue)
++        self.assertIn('缺少真实的购买凭证', cue)
++        self.assertIn('outcomesOmitted', cue)
++        details = await service.observe_game([], 0)
++        self.assertEqual(len(details['recentTaskOutcomeDetails']), 8)
++        self.assertEqual(details['recentTaskOutcomeDetails'][-1]['task'], goal + '0')
++
++    async def test_idle_decision_keeps_prior_goal_predicate_and_actual_failure(self):
++        service, calls = await self.service()
++        goal = '到商人禾仓处读当前报价，然后把背包里的铁锭换取绿宝石；需要真实扣除物资并收到绿宝石。'
++        reason = '禾仓的当前报价没有铁锭收购项，不能卖铁锭。'
++        await self.complete(service, goal, reason)
++        await self.complete(service, '查看公会当前任务', '口粮任务需要一次真实购买。', status='ok')
++        await service._fire_keep_going_nudge()
++        text = calls[-1]['parts'][0]['text']
++        self.assertIn(goal, text)
++        self.assertIn(reason, text)
+ 
+     async def merchant_feedback(self):
+         service, calls = await self.service()
+@@ -253,14 +308,14 @@ class RecoveryDecisionTests(unittest.IsolatedAsyncioTestCase):
+         plugin._lang, plugin._service = 'zh', service
+         text = plugin._format_completion_cue(pending.result)
+         self.assertIn(conclusion, text)
+-        self.assertLessEqual(count_tokens(text), 1000)
++        self.assertLessEqual(count_tokens(text), 2400)
+ 
+     async def test_idle_outcome_reserves_feedback_before_a_long_goal(self):
+         service, calls, _, conclusion, raw = await self.merchant_feedback()
+         await service._fire_keep_going_nudge()
+         text = calls[-1]['parts'][0]['text']
+         self.assertIn('无收购煤炭或粗铁', text)
+-        self.assertLessEqual(count_tokens(text), 1000)
++        self.assertLessEqual(count_tokens(text), 2400)
+         observed = await service.observe_game(['self'], 0)
+         self.assertEqual(observed['lastTaskOutcome']['text'], raw)
+ 
+diff --git a/plugin/plugins/game_agent_minecraft/test_observations.py b/plugin/plugins/game_agent_minecraft/test_observations.py
+index a5522f9..4e7f991 100644
+--- a/plugin/plugins/game_agent_minecraft/test_observations.py
++++ b/plugin/plugins/game_agent_minecraft/test_observations.py
+@@ -270,8 +270,8 @@ class ObservationTests(unittest.IsolatedAsyncioTestCase):
+         service._idle_decision_attempts = 2
+         await service._fire_keep_going_nudge()
+         cue = calls[-1]['parts'][0]['text']
+-        self.assertLessEqual(count_tokens(cue), 1000)
+-        self.assertEqual(truncate_to_tokens(cue[:8000], 1000), cue)
++        self.assertLessEqual(count_tokens(cue), 2400)
++        self.assertEqual(truncate_to_tokens(cue, 2400), cue)
+         self.assertIn('failed', cue)
+         self.assertIn('缺少材料', cue)
+         self.assertIn('minecraft_observe', cue)
+diff --git a/plugin/plugins/game_agent_minecraft/test_query_loop.py b/plugin/plugins/game_agent_minecraft/test_query_loop.py
+index 370115c..26c31b7 100644
+--- a/plugin/plugins/game_agent_minecraft/test_query_loop.py
++++ b/plugin/plugins/game_agent_minecraft/test_query_loop.py
+@@ -132,7 +132,8 @@ class QueryLoopTests(unittest.IsolatedAsyncioTestCase):
+         service.record_server_command({'command': '/mycli spells list 1', 'status': 'received', 'messages': ['技能说明' * 2000]})
+         await service._fire_keep_going_nudge()
+         text = calls[-1]['parts'][0]['text']
+-        self.assertLessEqual(count_tokens(text), 950)
++        self.assertLessEqual(count_tokens(text), 2400)
++        self.assertIn(service._last_task_outcome['task'], text)
+         self.assertIn('minecraft_task', text)
+         self.assertIn('failed', text)
+ 
+diff --git a/plugin/plugins/game_agent_minecraft/test_server_play_context.py b/plugin/plugins/game_agent_minecraft/test_server_play_context.py
+index b4712c9..edc6bad 100644
+--- a/plugin/plugins/game_agent_minecraft/test_server_play_context.py
++++ b/plugin/plugins/game_agent_minecraft/test_server_play_context.py
+@@ -198,4 +198,4 @@ class ServerPlayDecisionTests(unittest.IsolatedAsyncioTestCase):
+         self.assertIn('/mycli guild join', text)
+         self.assertIn('试炼', text)
+         self.assertIn('真实回执', text)
+-        self.assertLessEqual(count_tokens(text), 1000)
++        self.assertLessEqual(count_tokens(text), 2400)

@@ -446,3 +446,19 @@ chat, unmarked content, tool receipts, completion metadata and cancellation
 guards keep their semantics. No extra inference is added. Natural task dispatch
 was observed after 0014, but the merchant did not buy the offered item; this
 does not establish productive autonomous play or an overall latency improvement.
+
+## Local speech controls and matched task context
+
+Plugin patch 0072 and host patches 0018–0019 retain whole accepted goals and
+matched task receipts across later decisions. History omissions are explicit,
+raw details remain queryable, and only trusted Minecraft execution callbacks
+receive the larger per-item budget. Ordinary notification limits, stop/busy
+gates, coalescing and task ownership remain unchanged. Apply both series and
+reload the owned host/plugin processes at an idle boundary.
+
+Local VoxCPM2 now defaults to clean dialogue with `voice_style_enabled=false`;
+natural-language tone prefixes require explicit verified opt-in. The same
+generation still controls avatar emotion. Joint reply requests follow the
+actual session locale without changing exact tool/player identifiers or adding
+inference calls. See the [regression and deployment report](../../docs/local-speech-task-context.md)
+for before/after evidence, measured speech delay and open gameplay acceptance.

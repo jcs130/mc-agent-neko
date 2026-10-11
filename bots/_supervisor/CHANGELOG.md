@@ -3175,3 +3175,19 @@
 - Validation: initial regression 3 pass/8 fail; focused suites 24 pass; final
   complete contribution suite 773 pass/0 fail. See local-autonomy-cancellation.md
   for the deployment/observation acceptance boundary.
+
+### 2026-10-11 — Preserve private speech controls and matched task continuity
+- Evidence: the user heard tone instructions and English; the local adapter
+  unconditionally prepended natural-language style to speech. Three red cases
+  also showed accepted goal predicates and received blockers disappearing
+  after a later task; two host-route cases cut the remaining ledger at 1,000 tokens.
+- Mechanism/change: disable raw style prefixes by default, anchor the same reply
+  to its real locale, retain full matched goals/results in a session-scoped
+  eight-entry ledger, and select whole history pairs with disclosed omissions.
+  Trusted Minecraft execution notices alone get enough host room for these facts.
+- Falsifiable prediction: style is absent from synthesized text and the next
+  decision can see the prior full goal, matched ID and received blocker. This
+  does not predict a completed commission, successful combat or smooth playback.
+- Validation: plugin 236 tests plus 26 subtests; related host 920 tests; isolated
+  Chinese PCM/CPU ASR contains no style description. Full companion replay
+  matches the source tree. See local-speech-task-context.md for runtime acceptance.

@@ -1,0 +1,161 @@
+From 02c325c228bc85fedf8d31b6c049bda2de4fa44e Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Sun, 11 Oct 2026 16:30:16 +0800
+Subject: [PATCH] fix(minecraft): preserve accepted goals and matched outcomes
+ across decisions
+
+---
+ main_logic/core/_shared.py                    |  2 +
+ main_logic/core/proactive.py                  |  3 ++
+ plugin/server/messaging/proactive_bridge.py   |  8 ++-
+ tests/unit/test_minecraft_proactive_budget.py | 50 ++++++++++++++++++-
+ utils/game_execution_context.py               | 13 +++++
+ 5 files changed, 72 insertions(+), 4 deletions(-)
+ create mode 100644 utils/game_execution_context.py
+
+diff --git a/main_logic/core/_shared.py b/main_logic/core/_shared.py
+index c53ad0e..a868827 100644
+--- a/main_logic/core/_shared.py
++++ b/main_logic/core/_shared.py
+@@ -29,6 +29,7 @@ from typing import Any
+ 
+ from utils.language_utils import normalize_language_code, get_global_language_full
+ from utils.logger_config import get_module_logger
++from utils.game_execution_context import MINECRAFT_EXECUTION_CALLBACK_MAX_TOKENS
+ 
+ 
+ # Sentinel for `send_lanlan_response(request_id=...)` so we can tell apart
+@@ -55,6 +56,7 @@ _CONTEXT_APPEND_SOURCE_MAX_TOKENS = {
+     "game.postgame": 1500,
+     "proactive.context": 1000,
+     "proactive.callback": 1000,
++    "minecraft.execution": MINECRAFT_EXECUTION_CALLBACK_MAX_TOKENS,
+     "topic.hook": 1000,
+     "topic.material": 1000,
+     "realtime.prime": 1000,
+diff --git a/main_logic/core/proactive.py b/main_logic/core/proactive.py
+index 885f5c6..2e2f956 100644
+--- a/main_logic/core/proactive.py
++++ b/main_logic/core/proactive.py
+@@ -3344,6 +3344,9 @@ class ProactiveMixin:
+                 AGENT_CALLBACK_QUEUE_MAX_ITEMS,
+             )
+             context_source = "topic.hook" if callback.get("channel") == "topic_hook" else "proactive.callback"
++            from utils.game_execution_context import is_minecraft_execution_callback
++            if is_minecraft_execution_callback(callback):
++                context_source = "minecraft.execution"
+             # Per-item input budget: summary/detail flow into the LLM verbatim.
+             # Reuse the same source-policy normalizer as append_context() so
+             # proactive/topic callbacks do not grow a parallel budget path.
+diff --git a/plugin/server/messaging/proactive_bridge.py b/plugin/server/messaging/proactive_bridge.py
+index fc0d881..8535a52 100644
+--- a/plugin/server/messaging/proactive_bridge.py
++++ b/plugin/server/messaging/proactive_bridge.py
+@@ -485,10 +485,14 @@ class ProactiveBridge:
+                 if plugin_id == "game_agent_minecraft" and schema == "push_message.v2":
+                     # Minecraft decision context is already structured/bounded.
+                     # The generic 200-token result-summary cap removes its
+-                    # resources and outcomes before the 1,000-token host cap.
++                    # resources and outcomes before the host callback cap.
+                     from config import AGENT_CALLBACK_TEXT_MAX_TOKENS
++                    from utils.game_execution_context import MINECRAFT_EXECUTION_CALLBACK_MAX_TOKENS
+                     from utils.tokenize import truncate_to_tokens
+-                    text = truncate_to_tokens(text, AGENT_CALLBACK_TEXT_MAX_TOKENS)
++                    budget = (MINECRAFT_EXECUTION_CALLBACK_MAX_TOKENS
++                              if ai_behavior == 'respond' and coalesce_key in ('mc_keep_going', 'mc_completion')
++                              else AGENT_CALLBACK_TEXT_MAX_TOKENS)
++                    text = truncate_to_tokens(text, budget)
+                 else:
+                     text = parse_push_message_content(text)
+             except Exception as exc:
+diff --git a/tests/unit/test_minecraft_proactive_budget.py b/tests/unit/test_minecraft_proactive_budget.py
+index 47c5122..f91affd 100644
+--- a/tests/unit/test_minecraft_proactive_budget.py
++++ b/tests/unit/test_minecraft_proactive_budget.py
+@@ -9,7 +9,7 @@ from utils.tokenize import count_tokens
+ pytestmark = pytest.mark.unit
+ 
+ 
+-def forward(text: str, *, plugin: str = "game_agent_minecraft", schema="push_message.v2"):
++def forward(text: str, *, plugin: str = "game_agent_minecraft", schema="push_message.v2", key=""):
+     sent = []
+ 
+     class Socket:
+@@ -19,7 +19,7 @@ def forward(text: str, *, plugin: str = "game_agent_minecraft", schema="push_mes
+     parts = [{"type": "text", "text": text}]
+     ProactiveBridge()._dispatch(
+         {"plugin_id": plugin, "schema": schema, "visibility": [],
+-         "ai_behavior": "respond", "parts": parts}, Socket(),
++         "ai_behavior": "respond", "parts": parts, "coalesce_key": key}, Socket(),
+     )
+     event = next(value for value in sent if value["event_type"] == "proactive_message")
+     assert event["parts"] == parts
+@@ -59,3 +59,49 @@ def test_unrelated_and_legacy_messages_keep_generic_summary_budget(plugin, schem
+ 
+ def test_other_plugins_still_parse_json_message_content():
+     assert forward('{"message":"clean caption"}', plugin="another_plugin") == "clean caption"
++
++
++@pytest.mark.parametrize("key", ["mc_keep_going", "mc_completion"])
++def test_matched_task_ledger_survives_bridge_enqueue_and_render(key):
++    from main_logic.core import LLMSessionManager, _build_callback_instruction
++
++    body = "Received task history (game data):\n" + "accepted goal and matched result; " * 240
++    body += "\nEND: task-id-123 / no iron-to-emerald offer; do not assume delivery."
++    assert 1000 < count_tokens(body) < 2400
++    forwarded = forward(body, key=key)
++    assert forwarded == body
++    manager = object.__new__(LLMSessionManager)
++    manager.lanlan_name = "YUI"
++    manager.pending_agent_callbacks, manager.pending_extra_replies = [], []
++    manager.enqueue_agent_callback({
++        "origin": "event", "source_kind": "plugin", "source_name": "game_agent_minecraft",
++        "channel": "plugin:game_agent_minecraft", "coalesce_key": key,
++        "delivery_mode": "proactive", "summary": forwarded, "detail": forwarded,
++    })
++    assert len(manager.pending_agent_callbacks) == 1
++    assert manager.pending_agent_callbacks[0]["summary"] == body
++    rendered = _build_callback_instruction(manager.pending_agent_callbacks, lang="zh",
++                                           lanlan_name="YUI", master_name="主人")
++    assert body in rendered
++    assert count_tokens(rendered) <= 3000
++
++
++def test_game_words_cannot_promote_an_unrelated_callback_budget():
++    body = "game_agent_minecraft mc_keep_going " * 1000
++    assert count_tokens(forward(body, plugin="another_plugin", key="mc_keep_going")) <= 200
++
++
++@pytest.mark.parametrize('wrong', [{'channel': 'plugin:another'}, {'source_kind': 'unknown'},
++                                 {'coalesce_key': 'mc_game_attention'}, {'delivery_mode': 'passive'}])
++def test_host_extra_budget_requires_execution_route(wrong):
++    from main_logic.core import LLMSessionManager
++
++    body = 'accepted goal and received blocker; ' * 400
++    manager = object.__new__(LLMSessionManager)
++    manager.lanlan_name = 'YUI'
++    manager.pending_agent_callbacks, manager.pending_extra_replies = [], []
++    callback = {'origin': 'event', 'source_kind': 'plugin', 'source_name': 'game_agent_minecraft',
++                'channel': 'plugin:game_agent_minecraft', 'coalesce_key': 'mc_keep_going',
++                'delivery_mode': 'proactive', 'summary': body, 'detail': body, **wrong}
++    manager.enqueue_agent_callback(callback)
++    assert count_tokens(manager.pending_agent_callbacks[0]['summary']) <= 1000
+diff --git a/utils/game_execution_context.py b/utils/game_execution_context.py
+new file mode 100644
+index 0000000..fa49184
+--- /dev/null
++++ b/utils/game_execution_context.py
+@@ -0,0 +1,13 @@
++"""Host-routed execution receipts need room for matched goals and blockers."""
++
++MINECRAFT_EXECUTION_CALLBACK_MAX_TOKENS = 2400
++
++
++def is_minecraft_execution_callback(callback: dict) -> bool:
++    """Use routing fields, never words or instructions in received game data."""
++    return (callback.get('source_kind') == 'plugin'
++            and callback.get('source_name') == 'game_agent_minecraft'
++            and callback.get('channel') == 'plugin:game_agent_minecraft'
++            and callback.get('origin', 'event') == 'event'
++            and callback.get('delivery_mode') == 'proactive'
++            and callback.get('coalesce_key') in ('mc_keep_going', 'mc_completion'))
