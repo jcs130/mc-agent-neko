@@ -1143,10 +1143,14 @@ const modes_list = [
             }
             try { bot.clearControlStates(); } catch (e) {}
         },
-        shouldNightShelter: function (bot) {
+        shouldNightShelter: function (bot, agent = null) {
             // Plugin server hubs may have fixed night and protected terrain.
             // Disable only preventive shelter; drowning/fire/threat reflexes remain.
             if (settings.proactive_night_shelter === false) return false;
+            // Night is planning input, not a body owner. An external planner
+            // retains preventive choices even between task leases. Reactive
+            // damage, creeper and environmental branches remain independent.
+            if (agent?.hasExternalAutonomyOwner?.() === true) return false;
             // ★PROACTIVE NIGHT INSTINCT (用户诊断: bot 没夜晚意识——天黑还慢悠悠挖,直到被怪偷袭
             // 致死;要"入夜主动转生存,而不是等到遇到怪再反应"). The OLD code required a mob to be
             // ALREADY near (`hostiles.length===0 → return false`) = purely REACTIVE → mobs spawn
@@ -1779,6 +1783,8 @@ const modes_list = [
             try { bot.interrupt_code = false; } catch (e) {}
             for (let w = 0; w < 110 && !this.isDay(bot); w++) {
                 if (bot.interrupt_code || bot.health <= 0) break;   // real stop / death — return promptly, never refuse
+                if (yieldBlockedRetreat()) break;
+                if (!this.coveredNightHoldStatus(bot).hold && !this.shouldNightShelter(bot, agent)) break;
                 const food = bot.inventory.items().find(i => /cooked_|_bread|^bread$|^apple$|carrot|potato|^beef$|porkchop|^chicken$|^mutton$|baked_|_stew/.test(i.name));
                 if (food && bot.food < 20) { try { await skills.consume(bot, food.name); } catch (e) {} }
                 if (w % 10 === 0) {
@@ -2477,6 +2483,11 @@ const modes_list = [
                 }
                 return;   // 不 execute hold,把身体让给正在跑的觅食 skill
             }
+            else if (this.yieldProtectedRetreat(agent)) {
+                // A failed protected excavation is a planning problem, not a
+                // reason for the next passive hold to reclaim the body.
+                return;
+            }
             else if (this.coveredNightHoldStatus(bot).hold) {
                 const hold0 = this.coveredNightHoldStatus(bot);
                 if (Date.now() - (this._coveredNightHoldSayAt || 0) > 15000) {
@@ -2803,7 +2814,7 @@ const modes_list = [
                 }
                 execute(this, agent, () => this.sprintFlee(agent));
             }
-            else if (this.shouldNightShelter(bot) && !this.shouldFlee(bot)) {
+            else if (this.shouldNightShelter(bot, agent) && !this.shouldFlee(bot)) {
                 // ★用户令 2026-07-09 "遇怪要 flee 就优先逃跑, 不允许就地 bunkerDown": 预防夜宿 bunkerDown
                 //   现在附加 !shouldFlee 门 —— 只有【没有够得到的、该逃的怪】时才主动蹲坑 (=用户的"周围暂时
                 //   没怪"). 一旦出现够得到又打不赢的怪, shouldFlee=true → 本枝被跳过 → 落到下方 shouldFlee 逃跑枝
@@ -4759,6 +4770,13 @@ const modes_list = [
                     }
                 }
             };
+            // Protected recovery owns the next physical choice. Keep the
+            // topology observations above, but do not turn a safe planning
+            // window into another protected-wall dig. Emergencies revoke it.
+            if (protectedRetreatHandoff(bot, {
+                externalOwner: agent.hasExternalAutonomyOwner?.() === true,
+                emergency: arbiterVitalNow(bot), now: Date.now(),
+            })) return;
             // ── reactions ──
             if (st === 'SWIM_STUCK') {
                 // ★C346 (T-0091): the swim instinct piston-bobs forever in a "head-hole + all-

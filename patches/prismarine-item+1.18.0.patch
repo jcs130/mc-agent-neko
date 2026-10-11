@@ -1,0 +1,20 @@
+diff --git a/node_modules/prismarine-item/index.js b/node_modules/prismarine-item/index.js
+--- a/node_modules/prismarine-item/index.js
++++ b/node_modules/prismarine-item/index.js
+@@ -259,7 +259,15 @@
+       const useStoredEnchantments = registry.supportFeature('booksUseStoredEnchantments') && this.name === 'enchanted_book'
+ 
+       if (this.componentMap?.has('enchantments')) {
+-        return this.componentMap.get('enchantments').data
++        // Components use numeric IDs and { enchantments, showTooltip }, while
++        // Mineflayer and prismarine-block consume the legacy { name, lvl } array.
++        const data = this.componentMap.get('enchantments').data
++        const entries = Array.isArray(data) ? data : data?.enchantments
++        if (!Array.isArray(entries)) return []
++        return entries.map(ench => ({
++          name: ench.name ?? registry.enchantments[ench.id]?.name ?? null,
++          lvl: ench.lvl ?? ench.level
++        }))
+       }
+ 
+       if (typeOfEnchantLevelValue === 'short' && enchantNbtKey === 'ench') {
