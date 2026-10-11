@@ -31,3 +31,10 @@ comparing measured body/inventory/vitals and actual target NPC identity/position
 Keep normal travel, waiting, busy survival, changed evidence and task generation
 boundaries. Reproduce against the real command bridge, run full native checks,
 then load only the owned native child when idle and repeat natural verification.
+
+Loaded at 13:43:37 Beijing after two deferred safe-boundary attempts. Actual
+native tree 706 tests passed; 180 seconds/181 read-only samples showed 11.941 m
+movement and one dirt block consumed during surface/placement actions. This is
+natural execution, not verified quest completion or observed loop-guard firing.
+Keep the original recurrence baseline 420, the deployed receipt pending, and
+the remaining voice/progress acceptance open for hourly evidence-based checks.
