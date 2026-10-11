@@ -1124,8 +1124,12 @@
     "extraModelCalls": 0,
     "firstSoundLatencyTradeoff": "complete sentence synthesis must finish first",
     "backendSpeedAndInterSentenceWaitingResolved": false,
-    "deploymentPhase": "prepared",
-    "naturalPlaybackAcceptance": "pending",
-    "fullReplayMatchesSource": true
+    "deploymentPhase": "deployed",
+    "naturalPlaybackAcceptance": "Fresh audio sent; playback-end watchdog recurred after refresh; audible continuity remains unverified",
+    "fullReplayMatchesSource": true,
+    "deploymentEvidence": "runtime/repetition-20261011-1237/voice-continuity-host-deployment.json",
+    "playbackWatchdogStillObserved": true,
+    "desktopRefreshAt": "2026-10-11T14:26:24+08:00",
+    "repairReceiptWriteback": "pending-baseline-changed"
   }
 }
