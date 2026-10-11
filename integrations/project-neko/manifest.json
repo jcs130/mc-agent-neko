@@ -1,9 +1,9 @@
 {
   "upstreamRepository": "https://github.com/Project-N-E-K-O/N.E.K.O",
   "baseCommit": "fb2a2e731a8c954478d08678b0c8cf40e8145a54",
-  "sourceCommit": "bacca4dd521bd65c3090b2a07acc02ea4f8ee883",
+  "sourceCommit": "0a7b96096db6f7dcbaad67a2a5b50c0635da0fbc",
   "scope": "plugin/plugins/game_agent_minecraft",
-  "resultPluginTree": "8b8935a1168863ee22fb2b8fa52070af08ef0276",
+  "resultPluginTree": "b75fd2bc2a42cf45a2e84eceab484ab8a31178d7",
   "patches": [
     {
       "file": "0001-chore-configure-text-only-local-Qwen-Minecraft-trial.patch",
@@ -300,6 +300,10 @@
     {
       "file": "0074-fix-minecraft-preserve-complete-received-game-contex.patch",
       "sha256": "79c1b6fadc84d184c65b252334aac516cd23dc6f536400e6ec44e26545cb03ee"
+    },
+    {
+      "file": "0075-fix-minecraft-retain-timestamped-events-and-complete.patch",
+      "sha256": "1d6adb883b259e96c260912ebe1b7e6f0885d40637dca9804d12461edbb7b9b2"
     }
   ],
   "verification": {
@@ -616,6 +620,14 @@
         "plugin/server/messaging/proactive_bridge.py",
         "tests/unit/test_minecraft_narration_context.py",
         "tests/unit/test_minecraft_proactive_budget.py"
+      ]
+    },
+    {
+      "file": "host-patches/0027-fix-local-retain-complete-session-narration-for-dupl.patch",
+      "sha256": "50db4cd64ee856db395c0c640838997b35e2a1093bf3593c6c05941f18267c1a",
+      "scopePaths": [
+        "main_logic/omni_offline_client/_minecraft_narration.py",
+        "tests/unit/test_minecraft_narration_context.py"
       ]
     }
   ],
@@ -1513,11 +1525,11 @@
   },
   "completeInformationVerification": {
     "date": "2026-10-12",
-    "sourceCommit": "bacca4dd521bd65c3090b2a07acc02ea4f8ee883",
-    "nativeCommit": "2c7cb2b11c6508a513ab5a1fd5929d5cbb24af04",
-    "runtimeCommit": "b9d5e1f38eb57dc2dcd02fe12f0bce27a4554a04",
-    "nativeRelatedPassed": 242,
-    "pythonRelatedPassed": 346,
+    "sourceCommit": "0a7b96096db6f7dcbaad67a2a5b50c0635da0fbc",
+    "nativeCommit": "7c8c278ea92138d2aa2fca71a70779c294fbb111",
+    "runtimeCommit": "be808d311619b331fcb44e9ab5a771bde3eecde6",
+    "nativeRelatedPassed": 243,
+    "pythonRelatedPassed": 348,
     "pythonSubtestsPassed": 42,
     "lossyGameFactBudgetsRemoved": true,
     "rawHistoryRetainedAfterSummary": true,
@@ -1531,6 +1543,11 @@
     "fullReplayMatchesSource": true,
     "hostFilesMatched": 61,
     "deploymentPhase": "prepared",
-    "naturalGameplayAcceptance": "open"
+    "naturalGameplayAcceptance": "open",
+    "implicitEventAgeEvictionRemoved": true,
+    "dimensionRefreshRetainsPendingEvents": true,
+    "commandShapedLogFilteringRemoved": true,
+    "allLogsTimestamped": true,
+    "completeSessionNarration": true
   }
 }
