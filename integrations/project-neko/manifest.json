@@ -1,7 +1,7 @@
 {
   "upstreamRepository": "https://github.com/Project-N-E-K-O/N.E.K.O",
   "baseCommit": "fb2a2e731a8c954478d08678b0c8cf40e8145a54",
-  "sourceCommit": "3e3b5ac4a969557661908e41c220652611c11b3c",
+  "sourceCommit": "e675de2ee4254ea80b1b9bc1223dda3f667cda3b",
   "scope": "plugin/plugins/game_agent_minecraft",
   "resultPluginTree": "0eb7f71201478f5e469000d2856cf798fb987c92",
   "patches": [
@@ -455,6 +455,15 @@
       "scopePaths": [
         "main_logic/core/callback_render.py",
         "tests/unit/test_minecraft_execution_rendering.py"
+      ]
+    },
+    {
+      "file": "host-patches/0015-fix-minecraft-keep-marked-reasoning-out-of-autonomou.patch",
+      "sha256": "7708f48bce28e94d8d4c18003a394afc69e2dff261c4c6583798fdd345ec1ee2",
+      "sourceCommit": "e675de2ee4254ea80b1b9bc1223dda3f667cda3b",
+      "scopePaths": [
+        "main_logic/omni_offline_client/_tools.py",
+        "tests/unit/test_tool_calling.py"
       ]
     }
   ],
@@ -1060,6 +1069,21 @@
     "stopAndTaskAuthorizationUnchanged": true,
     "playerAndServerMessageTextPreserved": true,
     "taskResultStatusAndForeignCallbacksUnchanged": true,
+    "deploymentPhase": "deployed",
+    "productiveAcceptance": "failed-in-first-180s; later task dispatched but merchant precondition failed",
+    "fullReplayMatchesSource": true,
+    "deploymentEvidence": "runtime/repetition-20261011-1237/execution-host-deployment.json"
+  },
+  "autonomousSpeechReasoningVerification": {
+    "date": "2026-10-11",
+    "sourceCommit": "e675de2ee4254ea80b1b9bc1223dda3f667cda3b",
+    "pythonCasesPassed": 387,
+    "focusedCasesPassed": 9,
+    "beforeFixFailed": 4,
+    "buffersOnlyMinecraftExecutionSpeech": true,
+    "extraModelCalls": 0,
+    "receiptsAndStopGenerationGuardsPreserved": true,
+    "plainChatAndUnmarkedTextUnchanged": true,
     "deploymentPhase": "prepared",
     "productiveAcceptance": "pending",
     "fullReplayMatchesSource": true

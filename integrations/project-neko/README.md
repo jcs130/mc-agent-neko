@@ -422,3 +422,10 @@ added. Apply the complete host series and reload the host at a safe boundary;
 plugin reload alone does not load this change. See [the regression and deployment
 report](../../docs/neko-quest-query-handoff-2026-10-11.md) for the failed initial
 natural acceptance and subsequent verification limits.
+
+Host patch 0015 also removes explicitly tagged reasoning from the already
+buffered Minecraft execution speech, including forced final replies. Ordinary
+chat, unmarked content, tool receipts, completion metadata and cancellation
+guards keep their semantics. No extra inference is added. Natural task dispatch
+was observed after 0014, but the merchant did not buy the offered item; this
+does not establish productive autonomous play or an overall latency improvement.

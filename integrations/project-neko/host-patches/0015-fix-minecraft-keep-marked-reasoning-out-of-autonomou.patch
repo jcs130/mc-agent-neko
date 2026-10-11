@@ -1,0 +1,160 @@
+From e675de2ee4254ea80b1b9bc1223dda3f667cda3b Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Sun, 11 Oct 2026 13:22:15 +0800
+Subject: [PATCH] fix(minecraft): keep marked reasoning out of autonomous
+ speech
+
+---
+ main_logic/omni_offline_client/_tools.py | 34 +++++++++++++---
+ tests/unit/test_tool_calling.py          | 50 ++++++++++++++++++++++++
+ 2 files changed, 79 insertions(+), 5 deletions(-)
+
+diff --git a/main_logic/omni_offline_client/_tools.py b/main_logic/omni_offline_client/_tools.py
+index 282a2ab..c0af3aa 100644
+--- a/main_logic/omni_offline_client/_tools.py
++++ b/main_logic/omni_offline_client/_tools.py
+@@ -13,7 +13,9 @@
+ # See the License for the specific language governing permissions and
+ # limitations under the License.
+ 
++import copy
+ import json
++import re
+ 
+ from utils.screen_comment_guard import project_screen_history, strip_screen_labels
+ from utils.joint_reply_emotion import (
+@@ -46,6 +48,28 @@ from ._genai_support import (
+ )
+ 
+ 
++def _minecraft_speech_chunks(chunks):
++    """Scrub explicitly marked reasoning from an already buffered game round.
++
++    Local compatible providers can leak tags even with reasoning disabled.
++    Keep every metadata/receipt sentinel and leave ordinary chat untouched.
++    Unmarked text is not guessed to be reasoning.
++    """
++    text = ''.join(getattr(chunk, 'content', '') or '' for chunk in chunks)
++    if not re.search(r'</?think(?:ing)?\s*>', text, re.IGNORECASE):
++        yield from chunks
++        return
++    visible = strip_thinking_segments(text)
++    unclosed = re.search(r'<think(?:ing)?\s*>', visible, re.IGNORECASE)
++    if unclosed:
++        visible = visible[:unclosed.start()].rstrip()
++    for chunk in chunks:
++        if getattr(chunk, 'content', None):
++            chunk = copy.copy(chunk)
++            chunk.content, visible = visible, ''
++        yield chunk
++
++
+ from ._lifecycle import _suspend_dialog_slop
+ from main_logic.tool_calling import (
+     _TOOL_IMAGE_TURN_MAX_B64_BYTES,
+@@ -1368,7 +1392,7 @@ class _ToolingMixin:
+                         yield _LLMStreamChunk(content="", tool_round_persisted=True)
+                     return
+                 if buffered_visible is not None and not _minecraft_query_only_round(messages[receipt_start:]):
+-                    for visible_chunk in buffered_visible:
++                    for visible_chunk in _minecraft_speech_chunks(buffered_visible):
+                         if not generation_is_active():
+                             return
+                         yield visible_chunk
+@@ -1403,7 +1427,7 @@ class _ToolingMixin:
+                     break
+                 continue
+             if buffered_visible is not None:
+-                for visible_chunk in buffered_visible:
++                for visible_chunk in _minecraft_speech_chunks(buffered_visible):
+                     if not generation_is_active():
+                         return
+                     yield visible_chunk
+@@ -1469,7 +1493,7 @@ class _ToolingMixin:
+         final_deltas = []
+         final_text = ""
+         final_reasoning = ""
+-        final_visible = [] if minecraft_execution_turn and action_tools else None
++        final_visible = [] if minecraft_execution_turn else None
+         final_finish_reason: Optional[str] = None
+         final_prompt_tokens: Optional[int] = None
+         # 封顶后这一次请求同样带着还没被 release 的工具图（slots 要到外层
+@@ -1558,7 +1582,7 @@ class _ToolingMixin:
+                 tool_rounds=tool_rounds,
+             )
+             if final_visible is not None and generation_is_active() and not _minecraft_query_only_round(messages[final_receipt_start:]):
+-                for visible_chunk in final_visible:
++                for visible_chunk in _minecraft_speech_chunks(final_visible):
+                     if not generation_is_active():
+                         break
+                     yield visible_chunk
+@@ -1567,7 +1591,7 @@ class _ToolingMixin:
+         elif final_visible is not None and generation_is_active():
+             # A real final answer or pause still belongs to the user. Only an
+             # actually executed read-only last round loses its query prelude.
+-            for visible_chunk in final_visible:
++            for visible_chunk in _minecraft_speech_chunks(final_visible):
+                 if not generation_is_active():
+                     break
+                 yield visible_chunk
+diff --git a/tests/unit/test_tool_calling.py b/tests/unit/test_tool_calling.py
+index 6011fe4..22df1a8 100644
+--- a/tests/unit/test_tool_calling.py
++++ b/tests/unit/test_tool_calling.py
+@@ -3214,6 +3214,56 @@ async def test_offline_iteration_cap_breaks_runaway_loop():
+     assert "tool_choice" not in _final_overrides
+ 
+ 
++@pytest.mark.asyncio
++@pytest.mark.parametrize('scope', [False, True])
++@pytest.mark.parametrize('parts,clean', [
++    (['<thi', 'nk>private diagnostic reasoning', '</thi', 'nk>已确认，换个办法。'], '已确认，换个办法。'),
++    (['private diagnostic reasoning', '</think>已确认，换个办法。'], '已确认，换个办法。'),
++    (['<think>unfinished diagnostic reasoning'], ''),
++    (['[neutral]已确认，换个办法。'], '[neutral]已确认，换个办法。'),
++])
++async def test_minecraft_buffer_does_not_send_explicit_thinking_to_speech(scope, parts, clean):
++    from utils.llm_client import LLMStreamChunk
++    from main_logic.tool_calling import ToolDefinition
++
++    llm = _FakeLLM([[*[LLMStreamChunk(content=text) for text in parts],
++                     LLMStreamChunk(content='', finish_reason='stop')]])
++
++    async def handler(_call):
++        pytest.fail('A text-only diagnostic must not execute a tool')
++
++    client = _bare_tool_client(llm, ToolDefinition(name='minecraft_task', description=''), handler, cap=3)
++    chunks = [c async for c in client._astream_with_tools([], _minecraft_execution_turn=scope)]
++    assert ''.join(c.content or '' for c in chunks) == (clean if scope else ''.join(parts))
++    assert len(llm.calls) == 1
++    assert any(c.finish_reason == 'stop' for c in chunks), 'Keep provider completion metadata'
++
++
++@pytest.mark.asyncio
++async def test_minecraft_forced_final_scrubs_thinking_without_losing_tool_receipts():
++    from utils.llm_client import LLMStreamChunk
++    from main_logic.tool_calling import ToolDefinition, ToolResult
++
++    llm = _FakeLLM([[LLMStreamChunk(content='', tool_call_deltas=[{
++        'index': 0, 'id': 'observe', 'type': 'function',
++        'function': {'name': 'minecraft_observe', 'arguments': '{}'},
++    }], finish_reason='tool_calls')], [
++        LLMStreamChunk(content='<think>private diagnostic reasoning'),
++        LLMStreamChunk(content='</think>需要先解决工具缺失。', finish_reason='stop'),
++    ]])
++
++    async def handler(call):
++        return ToolResult(call_id=call.call_id, name=call.name, output={'online': True})
++
++    client = _bare_tool_client(llm, ToolDefinition(name='minecraft_observe', description=''), handler, cap=1)
++    messages = []
++    chunks = [c async for c in client._astream_with_tools(messages, _minecraft_execution_turn=True)]
++    assert ''.join(c.content or '' for c in chunks) == '需要先解决工具缺失。'
++    assert len(llm.calls) == 2
++    assert len([m for m in messages if m.get('role') == 'tool']) == 1
++    assert len([c for c in chunks if getattr(c, 'tool_round_persisted', False)]) == 1
++
++
+ def _bare_tool_client(fake_llm, tool_def, handler, *, cap):
+     """Minimal OpenAI-path client for the tool-loop tests below."""
+     from main_logic.omni_offline_client import OmniOfflineClient
