@@ -193,3 +193,33 @@ test('exact guild exam status preserves the query-only idle action handoff', asy
     assert.equal((await send(blocked, { command: '/mycli guild exam status', readOnly: true })).status, 'failed');
     assert.equal(blocked.sent.length, 0, 'receipt metadata must not widen serverQuery permissions');
 });
+
+for (const command of ['/mycli guild exam list', '/mycli guild exam info inventory_basic']) {
+    test(`observed exam discovery remains a query: ${command}`, async () => {
+        const send = await bridge();
+        const line = 'MC_GUILD_EXAM {"type":"definition","id":"inventory_basic","eligibility":"ready"}';
+        const bot = fakeBot(b => b.emit('messagestr', line, 'system'));
+        const result = await send(bot, { command }, { quietMs: 2, timeoutMs: 20 });
+        assert.equal(result.readOnly, true, 'discovery must retain the host terminal action opportunity');
+        assert.equal(result.confirmed, false, 'discovery is not exam acceptance or completion');
+        assert.deepEqual(result.messages, [line], 'preserve the original server reply');
+        assert.equal(result.records[0].value.id, 'inventory_basic');
+        assert.equal(bot.listenerCount('messagestr'), 0);
+    });
+}
+
+test('exam discovery metadata keeps exact syntax and existing query permissions', async () => {
+    const send = await bridge();
+    const bot = fakeBot(b => b.emit('messagestr', 'usage', 'system'));
+    for (const command of ['/mycli guild exam list extra', '/mycli guild exam info',
+        '/mycli guild exam info inventory_basic extra', '/mycli guild exam explain inventory_basic',
+        '/mycli guild exam submit', '/mycli guild exam retry', '/mycli guild exam cancel',
+        '/mycli guild exam start inventory_basic', '/mycli guild exam start promotion inventory_basic']) {
+        assert.equal((await send(bot, { command }, { quietMs: 2, timeoutMs: 20 })).readOnly, false, command);
+    }
+    const blocked = fakeBot();
+    for (const command of ['/mycli guild exam list', '/mycli guild exam info inventory_basic']) {
+        assert.equal((await send(blocked, { command, readOnly: true })).status, 'failed', command);
+    }
+    assert.deepEqual(blocked.sent, [], 'receipt classification must not grant command permission');
+});
