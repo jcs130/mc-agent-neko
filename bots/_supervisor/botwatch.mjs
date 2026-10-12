@@ -39,6 +39,7 @@ import http from 'http';
 // so field names + staleness semantics can never drift between the two consumers.
 import { DIR, TICKET_PORT, now, rd, rj, latestFrame, eventsTail, readState } from './bb-readers.mjs';
 import { initialEventCursor, consumeEvents } from './event-cursor.mjs';
+import { advanceServerLiveness, frozenAliveConfirmed } from './server-liveness.mjs';
 
 const POLL_MS = 15000;
 const HEARTBEAT_SEC = parseInt(process.argv[2] || '1800', 10);
@@ -82,6 +83,8 @@ function progressStaleMs(s, t) {
 //    (pos+hp unchanged, events.log silent). STALE_SEC (ts age) + watchdog (process alive) both pass.
 //    Track how long pos+hp have been identical, plus events.log silence age. ──
 let _frozenKey = null, _frozenSince = now();
+let serverLiveness = null;
+const gameTelemetryPath = path.resolve(DIR, '../../../runtime/dsh-supervisor/game-state.json');
 function frozenAliveMs(s, t) {
     const key = s.v ? `${s.v.x},${s.v.y},${s.v.z}|${s.hp}` : null;
     if (key !== _frozenKey) { _frozenKey = key; _frozenSince = t; }
@@ -141,12 +144,14 @@ const D = [
         // when vitals IS fresh (the else branch), so it catches exactly the writer-outlived-the-loop case.
         // Legit night-holds keep EMITTING events (table-recovery / Pocketed every 2-15s) → events.log stays
         // fresh → they don't trip this (宁缺毋滥, no T-0027-style false-fire on a healthy sealed hold).
-        active: (s) => !!(s._frozen && s._frozen.frozenMs >= 2 * 60000 && s._frozen.eventsAgeS >= 120),
+        // Server packets continuing to advance are positive evidence against a
+        // frozen loop. Autonomy idle decisions have their own progress watcher.
+        active: frozenAliveConfirmed,
         ticket: (s, dur) => ({
             type: 'stuck', severity: 'critical', dedupKey: 'frozen-alive-hang',
-            title: `冻结假活 ${Math.round(dur / 60000)}min — pos/hp死钉+events静默,vitals ts仍刷新 @${s.v ? s.v.x + ',' + s.v.y + ',' + s.v.z : '?'} hp=${s.hp}`.slice(0, 140),
-            detail: `'冻结数据+活写入器'hang: vitals.ts新鲜(${s.ageS}s)但 pos=${s.v ? s.v.x + ',' + s.v.y + ',' + s.v.z : '?'}+hp=${s.hp} 已 ${Math.round(s._frozen.frozenMs / 60000)}min 完全不变,events.log 静默 ${Math.round(s._frozen.eventsAgeS)}s,deaths=${s.deaths}(未涨=死亡未注册/未重生)。写入器还在stamp新ts但bot loop冻死→STALE_SEC+watchdog进程存活全盲。须 watchdog kick/重连bridge恢复。skill=${s.skill} mob=${s.mob}.`.slice(0, 240),
-            evidence: { pos: s.v ? [s.v.x, s.v.y, s.v.z] : null, vitals: { hp: s.hp, food: s.food, skill: s.skill }, frozenMin: Math.round(s._frozen.frozenMs / 60000), eventsAgeS: Math.round(s._frozen.eventsAgeS), deaths: s.deaths, mobility: s.mob, progressTail: s.progTail },
+            title: `疑似数据冻结 ${Math.round(s._frozen.frozenMs / 60000)}min — pos/hp不变、events静默且无近期服务器时间推进证据 @${s.v ? s.v.x + ',' + s.v.y + ',' + s.v.z : '?'} hp=${s.hp}`.slice(0, 140),
+            detail: `vitals.ts新鲜(${s.ageS}s)，pos/hp ${Math.round(s._frozen.frozenMs / 60000)}min不变，events静默${Math.round(s._frozen.eventsAgeS)}s；缺少匹配的服务器时间推进证据。请核查实际连接和任务回执，区分通信冻结、空闲与正常等待，不能据此直接重启。skill=${s.skill} mob=${s.mob}.`.slice(0, 240),
+            evidence: { pos: s.v ? [s.v.x, s.v.y, s.v.z] : null, vitals: { hp: s.hp, food: s.food, skill: s.skill }, frozenMin: Math.round(s._frozen.frozenMs / 60000), eventsAgeS: Math.round(s._frozen.eventsAgeS), deaths: s.deaths, mobility: s.mob, progressTail: s.progTail, serverLiveness: s._serverLiveness },
         }),
     },
     {
@@ -365,6 +370,7 @@ function writeDigest(s, t) {
         threat: s.threat ? { hostiles: s.threat.hostiles, actionable: s.threat.actionable, nearest: s.threat.closest } : null,
         realProgress: { ach: s.ach, staleMin: Math.round(s._stale.staleMs / 60000), chunks: s._stale.chunks },
         activeDetectors: active, telemetryAgeS: s.ageS,
+        serverLiveness: s._serverLiveness,
         frame: latestFrame(),
         note: 'ACTIVELY VERIFY from world_model.json + vitals.json + this frame; do not trust one log line.',
     };
@@ -379,6 +385,10 @@ async function tickOnce() {
     const s = readState(t);
     s._stale = progressStaleMs(s, t);
     s._frozen = frozenAliveMs(s, t);   // ★T-0058 'frozen data + live writer' hang tracker
+    let telemetry = null;
+    try { telemetry = JSON.parse(fs.readFileSync(gameTelemetryPath, 'utf8')); } catch {}
+    serverLiveness = advanceServerLiveness(serverLiveness, telemetry, s, t);
+    s._serverLiveness = serverLiveness;
     s._wedge = wedgePinnedMs(s, t);    // ★T-0062 false-hold/wedge tracker (pinned + hp-drop = fake shelter)
     s._churn = survivalChurnMs(s, t);  // ★T-0073 healthy+FREE survival-reflex churn (mobile stall, tier-flat)
 
