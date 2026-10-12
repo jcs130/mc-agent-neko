@@ -84,8 +84,31 @@ changes and evictions can still yield zero reuse.
 
 ## Deployment
 
-Prepared. The native change requires an owned native-child reload at a measured
-safe idle boundary. Keep the main brain, plugin host, model and vision, TTS,
-desktop, observer and live services continuous. Record actual process identities,
-reconnection/authentication and subsequent natural requests before claiming
-runtime acceptance. No host-production reload is necessary for the audit test.
+Deployed from fork commit `aab205fd10d25af284b3bb92ced5e410768ed9d7` on
+2026-10-12 at 15:41 Beijing time. Only `src/models/gpt.js` and
+`src/utils/text.js` were copied after checking their exact code preimages and
+recording backup/source/runtime SHA-256 values. The existing MindServer restarted
+only its owned `ag_NEKO` child at a measured idle boundary. The new game session
+reconnected and received server-confirmed automatic authentication within about
+9.5 seconds; this was a reconnect, not preservation of the old game session.
+
+Main brain, plugin host, MindServer, model/vision, VoxCPM2, desktop, observer,
+live and monitoring process identities were preserved. The owned unattended
+guardian was paused only for this bounded operation and resumed with zero
+recovery attempts. No host-production reload was necessary.
+
+The initial natural observation window through 15:45:18 contained six native
+external-task execution requests, all producing validated commands. The first
+was cold; the next five each reported 7,889 reused input tokens. For example,
+one input of 9,781 tokens reused 7,889 and processed 1,892 new tokens. Two native
+summary requests and 20 host requests also completed; no context-capacity error
+was observed in this window. This verifies actual reuse and command production,
+not paired latency improvement or successful completion of a broader commission.
+
+A separate passive 35-second sample received 24 fresh online game frames with
+advancing world age, full health/food, and a naturally initiated backpack action.
+Audio delivery matched the desktop playback-end acknowledgement with an empty
+queue. No test game command, extra inference or audio synthesis was injected.
+Metadata-only deployment and natural-acceptance evidence is in the local artifact
+directory above. The deployment remains `deployed`; productive autonomy and
+overall latency improvement are not claimed as verified.

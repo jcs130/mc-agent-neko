@@ -47,6 +47,6 @@
 
 **Files:** `docs/local-dynamic-request-tail.md`, companion README/manifest, local metadata-only artifacts and inspection log.
 
-- [ ] Record source identities, actual checks, final-wire common-prefix results and limitations; commit and push only task files.
-- [ ] Deploy through the existing owned lifecycle at an observed idle boundary while preserving the model, game session and audio services.
-- [ ] Observe natural requests and fresh state, recording byte/token reuse and errors separately from task recovery and latency claims.
+- [x] Record source identities, actual checks, final-wire common-prefix results and limitations; commit and push only task files (`aab205fd`).
+- [x] Deploy through the existing owned lifecycle at an observed idle boundary. One native child reconnected and automatically authenticated; model, host, plugin, audio, observer and monitor processes remained continuous.
+- [x] Observe natural requests and fresh state: six native execution requests produced validated commands; after the cold first request, five reused 7,889 tokens each. Keep this distinct from unverified broader task recovery and paired latency improvement.
