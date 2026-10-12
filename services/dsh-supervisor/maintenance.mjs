@@ -51,8 +51,10 @@ export function buildMaintenanceQueue({ tickets, ledger, receipts, previous = {}
                 : latest.phase === 'verified' && latest.verification?.passed && latest.verification.at >= (latestObservedAt ?? 0)
                     ? 'verified' : latest.phase === 'verified' ? 'queued' : latest.phase;
         }
+        const contradictedVerification = measured && latest?.phase === 'verified' && latest.verification?.at < latestObservedAt;
+        if (contradictedVerification) status = 'queued';
         if (prior?.lease && liveLease(prior, now) && !done(status)) status = 'claimed';
-        const dueAt = ['prepared', 'deployed', 'pending_api'].includes(status) && latest
+        const dueAt = contradictedVerification ? now : ['prepared', 'deployed', 'pending_api'].includes(status) && latest
             ? Math.max(prior?.dueAt ?? 0, latest.recordedAt + 300000) : prior?.dueAt ?? now;
         const severity = members.reduce((level, t) => Math.max(level, { critical: 40, high: 30, med: 20, low: 10 }[t.severity] ?? 0), 0);
         const recurrent = receipts.some(r => group.ticketIds.includes(r.ticketId) && baselines[r.ticketId] > r.ticketOccurrences);
