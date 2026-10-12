@@ -179,3 +179,21 @@ test('fast gate detects monitor infrastructure loss without probing the game mod
     assert.equal(gate.action, 'inspect_monitor');
     assert.equal(gate.fullInspectionDue, false);
 });
+
+test('a fresh measured idle-loop candidate reaches triage even when the model has not requested code repair', () => {
+    const candidate = { type: 'autonomy-idle-decision-loop', activationId: 'measured-activation', sessionId: 'live',
+        firstAt: NOW - 180000, observedAt: NOW, elapsedMs: 180000, decisionCount: 3, samples: 4,
+        noAcceptedTask: true, inventoryAndQuestUnchanged: true };
+    const measuredTicket = { id: 'T-0035', type: candidate.type, status: 'open', occurrences: 71,
+        severity: 'med', evidence: candidate };
+    const opts = input({ tickets: [measuredTicket], progress: candidate, sessionId: 'live', gameOnline: true });
+    const first = buildMaintenanceQueue(opts);
+    assert.equal(first.requests.length, 1);
+    assert.equal(first.requests[0].approvalKind, 'measured-progress-triage');
+    assert.equal(first.requests[0].requiresRuntimeRecheck, true);
+    const later = buildMaintenanceQueue({ ...opts, previous: first, now: NOW + 60000,
+        progress: { ...candidate, observedAt: NOW + 60000, elapsedMs: 240000, decisionCount: 4 } });
+    assert.equal(later.requests[0].id, first.requests[0].id);
+    assert.equal(buildMaintenanceQueue({ ...opts, sessionId: 'different' }).requests.length, 0);
+    assert.equal(buildMaintenanceQueue({ ...opts, now: NOW + 120000 }).requests.length, 0);
+});

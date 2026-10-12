@@ -22,11 +22,20 @@ export function buildMaintenanceQueue({ tickets, ledger, receipts, previous = {}
             .sort((a, b) => b.recordedAt - a.recordedAt)[0];
         const followup = checkedRepair && (checkedRepair.phase !== 'verified' || checkedRepair.writeback?.state !== 'written'
             || previous.requests?.some(r => r.incidentKey === group.key));
+        const progress = options.progress;
+        const measured = options.gameOnline === true && progress?.type === 'autonomy-idle-decision-loop'
+            && progress.sessionId === options.sessionId && Number.isFinite(progress.observedAt)
+            && progress.observedAt <= now + 5000 && now - progress.observedAt <= 90000
+            && progress.elapsedMs >= 180000 && progress.decisionCount >= 3
+            && progress.noAcceptedTask === true && progress.inventoryAndQuestUnchanged === true
+            && members.some(t => t.type === progress.type && t.evidence?.activationId === progress.activationId);
         const approved = ledger.incidents?.[group.key] ?? members.map(t => t.evidence?.incident).find(i => i?.reviewerApproved)
+            ?? (measured ? { ...group, triageCandidate: true, approvalKind: 'measured-progress-triage',
+                occurrenceIds: ['autonomy:' + progress.activationId], observedAt: progress.observedAt } : null)
             ?? (followup ? { ...group, reviewerApproved: true, ticketId: checkedRepair.ticketId,
                 approvalKind: 'checked-repair-follow-up', occurrenceIds: ['repair:' + checkedRepair.ticketId + ':' + checkedRepair.ticketOccurrences],
                 observedAt: group.observedAt || checkedRepair.deployment?.at || checkedRepair.recordedAt } : null);
-        if (!approved?.reviewerApproved || !members.length) continue;
+        if ((!approved?.reviewerApproved && !approved?.triageCandidate) || !members.length) continue;
         const baselines = Object.fromEntries(members.map(t => [t.id, t.occurrences ?? 1]));
         const occurrenceIds = (approved.stateSignal ? [approved.activationId || group.key]
             : approved.occurrenceIds ?? ticketIdentity(members[0], options).occurrenceIds).slice().sort();
@@ -49,10 +58,13 @@ export function buildMaintenanceQueue({ tickets, ledger, receipts, previous = {}
         const fresh = now - (approved.observedAt ?? 0) <= (group.component === 'execution' ? 1800000 : 90000);
         current.push({ ...prior, id, incidentKey: group.key, component: group.component, ticketId: approved.ticketId ?? group.primaryTicketId,
             approvalKind: approved.approvalKind ?? 'reviewer-approved-finding',
+            requiresRuntimeRecheck: approved.triageCandidate === true,
             ticketIds: group.ticketIds, baselines, occurrenceIds, observedAt: approved.observedAt ?? group.observedAt,
             createdAt: prior?.createdAt ?? now, updatedAt: now, dueAt, status, priority: severity + (fresh ? 1000 : 0) + (recurrent && fresh ? 100 : 0),
             lease: prior?.lease ?? null,
-            source: { reportRoot: 'reports', reportAt: approved.reportAt ?? null, ticketPath: 'repair-queue.json', evidenceIds: occurrenceIds },
+            source: { reportRoot: 'reports', reportAt: approved.reportAt ?? null, ticketPath: 'repair-queue.json', evidenceIds: occurrenceIds,
+                ...(approved.triageCandidate ? { measuredProgress: { firstAt: progress.firstAt, observedAt: progress.observedAt,
+                    elapsedMs: progress.elapsedMs, decisionCount: progress.decisionCount, samples: progress.samples } } : {}) },
             repair: latest ? { id: latest.id, phase: latest.phase, commit: latest.commit,
                 writeback: latest.writeback?.state, verificationAt: latest.verification?.at ?? null } : null });
         keys.add(group.key); old.delete(id);

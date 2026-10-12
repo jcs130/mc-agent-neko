@@ -44,6 +44,12 @@ YSM 证据单独保留玩家标识、可用状态和原因。其他玩家的外�
 已由维护者提交实际提交和检查回执、仍等待部署或运行验收的修复也
 形成后续请求，标为 `checked-repair-follow-up`；它不冒称来自新的模型
 发现。新鲜故障优先于陈旧记录，待验收事项不会只留在评论中。
+同一会话中已经连续测量到至少180秒、至少三次不同空闲决策而没有
+接单或进展的候选，也形成 `measured-progress-triage` 请求，即使模型
+尚未断言需要改代码。它必须与当前会话和新鲜观测匹配，标明
+`requiresRuntimeRecheck`，先让维护器核对实际状态与代码；它不证明
+当前有代码故障，更不直接授权游戏操作或部署。同一次激活的后续
+采样只补充测量，不生成新的请求版本。
 
 ```powershell
 node services/dsh-supervisor/maintenance.mjs gate D:/neko-mc-trial/runtime/dsh-supervisor

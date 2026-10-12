@@ -62,6 +62,8 @@ export function apply(ctx, config) {
     function saveMaintenance(tickets) {
         try {
             syncMaintenanceQueue(runtimeRoot, { tickets, ledger, receipts: loadRepairReceipts(runtimeRoot), nativeRoot,
+                progress: progressWatch?.candidate, sessionId: frame?.sessionId,
+                gameOnline: frame?.online === true && Date.now() - frame.observedAt < 45000,
                 subject: frame?.state?.self?.username ?? 'unknown-subject', nativeEvents: readExecutionHistory(path.join(supervisorDir, 'events.log')),
                 enabled: readJson(path.resolve(nativeRoot, '..', 'unattended-state.json'))?.enabled === true });
             status.maintenance = peekMaintenance(runtimeRoot); delete status.maintenanceError;
@@ -288,7 +290,8 @@ export function apply(ctx, config) {
                     nativeEvents: readExecutionHistory(path.join(supervisorDir, 'events.log')), subject: frame?.state?.self?.username })) {
                     const completed = await audit(tickets, allTickets);
                     if (once && !completed) throw new Error('No fresh game evidence for one-shot audit');
-                }
+                } else if (!status.lastError) status.state = buildEvidence(frame, null, null).fresh
+                    ? 'watching' : 'waiting_for_fresh_game_evidence';
                 save();
             } catch (error) {
                 status.state = 'deferred'; status.lastError = error.message; save();
