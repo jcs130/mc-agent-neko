@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { apply } from '../services/dsh-supervisor/app.mjs';
+import { peekMaintenance, claimMaintenance } from '../services/dsh-supervisor/maintenance.mjs';
 
 test('a cloud audit completes while the local model is unreachable, with no fallback requests', { timeout: 5000 }, async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'neko-dsh-cloud-'));
@@ -33,7 +34,7 @@ test('a cloud audit completes while the local model is unreachable, with no fall
         requests.push(String(url));
         if (String(url).startsWith('http://127.0.0.1:18030')) throw new Error('Local model unreachable');
         if (String(url) === 'http://127.0.0.1:48920/health') return Response.json({ ok: true });
-        if (String(url) === 'http://127.0.0.1:48920/api/tickets?status=open-ish') return Response.json([]);
+        if (String(url) === 'http://127.0.0.1:48920/api/tickets') return Response.json([]);
         throw new Error('Unexpected request');
     };
     process.env.NEKO_DSH_ONCE = '1';
@@ -69,5 +70,74 @@ test('a cloud audit completes while the local model is unreachable, with no fall
         assert.ok(path.isAbsolute(root) && path.dirname(root) === path.resolve(os.tmpdir())
             && path.basename(root).startsWith('neko-dsh-cloud-'), 'recursive cleanup must stay in the exact temporary fixture');
         fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('the production coordinator delivers a reviewed failure to a claimable durable queue', { timeout: 5000 }, async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'neko-dsh-handoff-'));
+    const nativeRoot = path.join(root, 'native'), runtimeRoot = path.join(root, 'runtime');
+    const supervisorDir = path.join(nativeRoot, 'bots/_supervisor'), wsRoot = path.join(nativeRoot, 'node_modules/ws');
+    fs.mkdirSync(supervisorDir, { recursive: true }); fs.mkdirSync(wsRoot, { recursive: true });
+    fs.writeFileSync(path.join(root, 'unattended-state.json'), JSON.stringify({ enabled: true }));
+    fs.writeFileSync(path.join(nativeRoot, 'package.json'), '{}');
+    fs.writeFileSync(path.join(supervisorDir, 'sentinel.json'), JSON.stringify({ ts: Date.now() }));
+    const event = { type: 'task_finished', status: 'failed', task_id: 'actual-task',
+        message: '!moveBackpackItem:\nAction failed: !moveBackpackItem did not complete successfully.\nBackpack changed or unverified.' };
+    fs.writeFileSync(path.join(supervisorDir, 'events.log'), `[${new Date().toISOString()}] ${JSON.stringify(event)}\n`);
+    fs.writeFileSync(path.join(wsRoot, 'package.json'), JSON.stringify({ main: 'index.cjs' }));
+    fs.writeFileSync(path.join(wsRoot, 'index.cjs'), `
+        const { EventEmitter } = require('node:events');
+        module.exports = class WebSocket extends EventEmitter {
+            static OPEN = 1;
+            constructor() { super(); this.readyState = 1; setImmediate(() => this.emit('open')); }
+            send() { this.emit('message', JSON.stringify({ type: 'game_state', sessionId: 'test-game',
+                observedAt: Date.now(), online: true, state: { self: { username: 'ag_NEKO', health: 20 },
+                    activity: { action: '', skill: null }, inventory: { counts: {} } } })); }
+            close() { this.readyState = 3; this.emit('close'); }
+        };
+    `);
+    const originalFetch = globalThis.fetch, originalOnce = process.env.NEKO_DSH_ONCE;
+    const requests = [], tickets = [];
+    let finish, cleanup;
+    const done = new Promise(resolve => { finish = resolve; });
+    globalThis.fetch = async (url, init) => {
+        requests.push(String(url));
+        if (String(url) === 'http://127.0.0.1:48920/health') return Response.json({ ok: true });
+        if (String(url) === 'http://127.0.0.1:48920/api/tickets') {
+            if (!init?.body) return Response.json(tickets);
+            const body = JSON.parse(init.body), ticket = { ...body, id: 'T-0001', status: 'open', occurrences: 1 };
+            tickets.push(ticket); return Response.json({ ticket });
+        }
+        throw Error('No external or game request is allowed in this fixture');
+    };
+    process.env.NEKO_DSH_ONCE = '1';
+    const ctx = {
+        agents: { create: async () => ({ agent: { id: 'parent', whenIdle: async () => {} }, dispose: async () => {} }) },
+        subagents: { start: async (_kind, options) => {
+            const input = JSON.parse(options.prompt[0].text);
+            const fact = input.evidence.facts.find(f => f.kind === 'execution');
+            const structured = options.label === 'observer' ? { summary: 'Actual refusal', issues: [{ key: 'any-model-key',
+                title: 'Backpack refusal', scope: 'execution', severity: 'high', detail: 'Repeated failure needs source review.', evidenceIds: [fact.id] }] }
+                : options.label === 'diagnoser' ? { summary: 'Inspect the actual window identity.', evidenceIds: [fact.id] }
+                    : { decision: 'accept', acceptedKeys: ['any-model-key'], actionableKeys: ['any-model-key'], evidenceIds: [fact.id], summary: 'Reviewed actual failure.' };
+            return { id: options.label, result: Promise.resolve({ stopReason: 'completed', structured }), dispose: async () => {} };
+        } },
+        on: (_event, handler) => { cleanup = handler; }, get: name => name === 'appExit' ? finish : undefined,
+    };
+    try {
+        apply(ctx, { runtimeRoot, nativeRoot });
+        assert.equal(await done, 0);
+        assert.equal(peekMaintenance(runtimeRoot).due, 1);
+        const claimed = claimMaintenance(runtimeRoot, 'maintainer', { enabled: true });
+        assert.equal(claimed.state, 'claimed');
+        assert.equal(claimed.request.baselines['T-0001'], 1);
+        assert.equal(claimed.request.component, 'execution');
+        assert.equal(tickets.length, 1);
+        assert.ok(requests.every(url => url.startsWith('http://127.0.0.1:48920/') || url === 'http://127.0.0.1:48916/security/csrf-token'));
+    } finally {
+        await cleanup?.(); globalThis.fetch = originalFetch;
+        if (originalOnce === undefined) delete process.env.NEKO_DSH_ONCE; else process.env.NEKO_DSH_ONCE = originalOnce;
+        assert.equal(path.dirname(path.resolve(root)), path.resolve(os.tmpdir()));
+        assert.ok(path.basename(root).startsWith('neko-dsh-handoff-')); fs.rmSync(root, { recursive: true, force: true });
     }
 });

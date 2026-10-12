@@ -9,6 +9,7 @@ import { buildRepairQueue, loadRepairReceipts } from './repair.mjs';
 import { advanceProgressWatch, probePluginStatus, publishProgressCandidate } from './progress_watch.mjs';
 import { publishIncident, reconcileStateIncidents } from './incidents.mjs';
 import { recordReviewed } from './scheduling.mjs';
+import { syncMaintenanceQueue, peekMaintenance } from './maintenance.mjs';
 
 export const name = 'neko-ticket-supervisors';
 export const inject = ['agents', 'subagents', 'sessions', 'tools', 'llm'];
@@ -18,7 +19,7 @@ export const TELEMETRY_MAX_PAYLOAD = 0;
 const TICKET_URL = 'http://127.0.0.1:48920';
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const readJson = file => { try { return parseReport(fs.readFileSync(file, 'utf8')); } catch { return null; } };
-const PROTOCOL_RULES = 'guild/market 试炼与 commission 委托是不同命名空间，不能混用任务ID推断服务器冲突。任务未完成、ready=false、没见过尝试、单次权限拒绝/缺材料都不是bug。哨兵告警与工单结论是待验证假设，不能相互引用就当成独立证明。current只认新鲜观测；execution可依据30分钟内原始失败回执确认过去的异常，必须区分实际异常与正常任务失败，不得称现在卡死。缓存消息保留原始时间。最多引用3条关键证据，不要穷举；不能凭一张状态图推断无进展。';
+const PROTOCOL_RULES = 'guild/market 试炼与 commission 委托是不同命名空间，不能混用任务ID推断服务器冲突。任务未完成、ready=false、没见过尝试、单次权限拒绝/缺材料/目标空间不足都不是bug。哨兵告警与工单结论是待验证假设，不能相互引用就当成独立证明。current只认新鲜观测；execution可依据30分钟内原始失败回执确认过去的异常，必须区分实际异常与正常任务失败，不得称现在卡死。executionStopped只说明该任务已停止，不能称它仍在无限重试；精确命令与拒绝原因在failures，完整原文有original引用。其他玩家的外观记录不能证明本角色外观故障。缓存消息保留原始时间。最多引用3条关键证据，不要穷举；不能凭一张状态图推断无进展。';
 
 async function api(url, body) {
     const response = await fetch(url, { redirect: 'error', signal: AbortSignal.timeout(5000),
@@ -58,6 +59,14 @@ export function apply(ctx, config) {
         }
         fs.appendFileSync(log, JSON.stringify({ at: Date.now(), ...value }) + '\n');
     };
+    function saveMaintenance(tickets) {
+        try {
+            syncMaintenanceQueue(runtimeRoot, { tickets, ledger, receipts: loadRepairReceipts(runtimeRoot), nativeRoot,
+                subject: frame?.state?.self?.username ?? 'unknown-subject', nativeEvents: readExecutionHistory(path.join(supervisorDir, 'events.log')),
+                enabled: readJson(path.resolve(nativeRoot, '..', 'unattended-state.json'))?.enabled === true });
+            status.maintenance = peekMaintenance(runtimeRoot); delete status.maintenanceError;
+        } catch (error) { status.maintenanceError = error.message; }
+    }
     function sampleProgress() {
         if (stopped || progressPromise) return progressPromise;
         progressPromise = (async () => {
@@ -222,7 +231,7 @@ export function apply(ctx, config) {
         reconcileStateIncidents(ledger, frame);
         for (const issue of approved) {
             const result = await publishIncident({ issue, evidence, tickets: allTickets, ledger, nativeEvents, subject, repairs: receipts,
-                create: body => api(TICKET_URL + '/api/tickets', body) });
+                reportAt: report.at, create: body => api(TICKET_URL + '/api/tickets', body) });
             report.incidentPublications.push(result);
             if (result.state === 'written') report.published.push(result.ticketId);
         }
@@ -241,6 +250,7 @@ export function apply(ctx, config) {
         ledger.executionRevision = stages.executionRevision;
         ledger.baselineComplete = true;
         fs.writeFileSync(ledgerPath, JSON.stringify(ledger, null, 2));
+        saveMaintenance(allTickets);
         status.lastAudit = { at: report.at, summary: String(reviewer?.report.summary ?? observer.report.summary ?? '').slice(0, 500),
             issues: issues.length, published: report.published, writeback: report.writeback,
             publication: report.publication, stages: stages.stages,
@@ -271,6 +281,8 @@ export function apply(ctx, config) {
                 fs.writeFileSync(path.join(runtimeRoot, 'repair-queue.json'), JSON.stringify(queue, null, 2));
                 status.repairQueue = { pending: queue.items.length,
                     stages: queue.items.reduce((counts, item) => ({ ...counts, [item.stage]: (counts[item.stage] ?? 0) + 1 }), {}) };
+                if (reconcileStateIncidents(ledger, frame)) fs.writeFileSync(ledgerPath, JSON.stringify(ledger, null, 2));
+                saveMaintenance(allTickets);
                 const revision = executionRevision(readExecutionHistory(path.join(supervisorDir, 'events.log')), Date.now(), frame?.sessionId);
                 if (once || auditDue(ledger, tickets, Date.now(), revision, { receipts: loadRepairReceipts(runtimeRoot),
                     nativeEvents: readExecutionHistory(path.join(supervisorDir, 'events.log')), subject: frame?.state?.self?.username })) {

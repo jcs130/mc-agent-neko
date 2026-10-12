@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import * as execution from '../services/dsh-supervisor/execution_evidence.mjs';
 import { buildEvidence, validateIssue } from '../services/dsh-supervisor/core.mjs';
 
 const NOW = 1791763928193;
@@ -106,4 +110,23 @@ test('another player appearance is context and cannot prove NEKO is broken', () 
     assert.equal(other.kind, 'record');
     assert.ok(!evidence.facts.find(x => x.id === 'game.events'));
     assert.equal(validateIssue({ key: 'own-model-down', title: 'own model down', evidenceIds: [other.id] }, evidence), null);
+});
+
+test('immutable receipt query returns exact requested tool results without copying planning prose', t => {
+    assert.equal(typeof execution.readReceiptEvidence, 'function');
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'neko-evidence-'));
+    t.after(() => { assert.equal(path.dirname(path.resolve(root)), path.resolve(os.tmpdir()));
+        assert.ok(path.basename(root).startsWith('neko-evidence-')); fs.rmSync(root, { recursive: true, force: true }); });
+    fs.mkdirSync(path.join(root, 'bots/_supervisor'), { recursive: true });
+    const value = { type: 'task_finished', status: 'failed', task_id: 'a', message: longResult() };
+    const id = `native.execution.${NOW}.${createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0, 12)}`;
+    fs.writeFileSync(path.join(root, 'bots/_supervisor/events.log'), `[${new Date(NOW).toISOString()}] ${JSON.stringify(value)}\n`);
+    const meta = execution.readReceiptEvidence(root, id);
+    assert.equal(meta.available, true);
+    assert.equal(meta.projection.failures[0].occurrences, 5);
+    const window = execution.readReceiptEvidence(root, id, '!window');
+    assert.equal(window.commandResults.length, 1);
+    assert.match(window.commandResults[0].text, /\[slot 89\]/);
+    assert.equal(execution.readReceiptEvidence(root, id.replace(/\.[^.]+$/, '.aaaaaaaaaaaa')).available, false);
+    assert.throws(() => execution.readReceiptEvidence(root, '../../other'), /receipt/i);
 });

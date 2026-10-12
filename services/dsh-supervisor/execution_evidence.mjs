@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 
 const sha = value => createHash('sha256').update(value).digest('hex');
 const textOf = value => [value.message, value.error, value.reason]
@@ -68,4 +70,31 @@ export function appearanceFact(packet) {
     return { subject: value.playerUuid || value.playerName || null, playerName: value.playerName ?? null,
         available: value.available, reason: value.reason ?? null, source: value.source ?? null,
         model: value.model ?? value.modelId ?? null, skin: value.skin ?? null };
+}
+
+export function readReceiptEvidence(nativeRoot, receiptId, command) {
+    if (!/^native\.execution\.\d+\.[a-f0-9]{12}$/.test(receiptId ?? '')) throw Error('Invalid native receipt reference');
+    if (command !== undefined && !/^![A-Za-z][A-Za-z0-9_]*$/.test(command)) throw Error('Invalid command selection');
+    for (const file of ['events.log', 'events.log.1']) {
+        const sourcePath = path.resolve(nativeRoot, 'bots/_supervisor', file);
+        if (!fs.existsSync(sourcePath)) continue;
+        for (const line of fs.readFileSync(sourcePath, 'utf8').split(/\r?\n/)) {
+            const match = /^\[([^\]]+)\]\s+(\{.*\})$/.exec(line);
+            if (!match) continue;
+            let value; try { value = JSON.parse(match[2]); } catch { continue; }
+            const at = Date.parse(match[1]);
+            if (`native.execution.${at}.${sha(JSON.stringify(value)).slice(0, 12)}` !== receiptId) continue;
+            const original = textOf(value), headers = [...original.matchAll(/^(![A-Za-z][A-Za-z0-9_]*):\s*\r?\n/gm)];
+            const footer = original.lastIndexOf('\n\n当前持有道具：');
+            const sections = headers.map((header, index) => {
+                const start = header.index + header[0].length;
+                return { command: header[1], start, end: headers[index + 1]?.index ?? (footer >= start ? footer : original.length) };
+            });
+            return { available: true, receiptId, sourcePath, observedAt: at, projection: projectExecution(value, receiptId),
+                commandSections: sections.map(section => ({ ...section, chars: section.end - section.start })),
+                ...(command ? { commandResults: sections.filter(section => section.command === command)
+                    .map(section => ({ ...section, text: privateOperands(original.slice(section.start, section.end).trim()) })) } : {}) };
+        }
+    }
+    return { available: false, receiptId, reason: 'Original not present in the owned journal or its retained rotation; consult the original task store. Missing detail does not prove success.' };
 }

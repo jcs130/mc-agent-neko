@@ -89,7 +89,8 @@ export function groupIncidents(tickets, options = {}) {
 }
 
 export function reconcileStateIncidents(ledger, frame, now = Date.now()) {
-    if (!frame?.online || !Number.isFinite(frame.observedAt) || now - frame.observedAt > 45000) return;
+    if (!frame?.online || !Number.isFinite(frame.observedAt) || now - frame.observedAt > 45000) return false;
+    let changed = false;
     const packet = frame.state?.server?.channels?.['mcagent:appearance'];
     for (const incident of Object.values(ledger.incidents ?? {})) {
         const healthyAppearance = incident.component === 'appearance' && packet?.value?.available === true
@@ -97,11 +98,12 @@ export function reconcileStateIncidents(ledger, frame, now = Date.now()) {
             && Number.isFinite(packet.observedAt) && now - packet.observedAt < 90000;
         const freeBody = incident.component === 'mobility' && incident.subject === frame.state?.self?.username
             && frame.state?.activity?.mobility?.state === 'FREE';
-        if (healthyAppearance || freeBody) { incident.active = false; incident.clearedObservationAt = now; }
+        if ((healthyAppearance || freeBody) && incident.active !== false) { incident.active = false; incident.clearedObservationAt = now; changed = true; }
     }
+    return changed;
 }
 
-export async function publishIncident({ issue, evidence, tickets, ledger, nativeEvents = [], subject, repairs = [], create, now = Date.now() }) {
+export async function publishIncident({ issue, evidence, tickets, ledger, nativeEvents = [], subject, repairs = [], create, now = Date.now(), reportAt }) {
     const identity = incidentIdentity(issue, evidence, subject, nativeEvents);
     if (!identity.occurrenceIds.length) return { state: 'unsupported', incidentKey: identity.key };
     if (identity.component === 'appearance' && identity.playerName !== subject)
@@ -112,7 +114,8 @@ export async function publishIncident({ issue, evidence, tickets, ledger, native
     const latestRepair = repairs.filter(r => aliases.some(t => t.id === r.ticketId))
         .sort((a, b) => b.recordedAt - a.recordedAt)[0];
     const verified = latestRepair?.phase === 'verified' && latestRepair.verification?.passed
-        && latestRepair.writeback?.state === 'written';
+        && latestRepair.writeback?.state === 'written'
+        && aliases.find(t => t.id === latestRepair.ticketId)?.occurrences === latestRepair.ticketOccurrences;
     ledger.incidents ??= {};
     const previous = ledger.incidents[identity.key];
     const knownIds = [...new Set([...(previous?.occurrenceIds ?? []), ...aliases.flatMap(t =>
@@ -122,12 +125,13 @@ export async function publishIncident({ issue, evidence, tickets, ledger, native
             : previous?.activationId ?? existing?.evidence?.incident?.activationId ?? digest([identity.key, identity.observedAt]) : null;
     const remember = result => {
         ledger.incidents[identity.key] = { ...previous, ...identity, activationId,
-            reviewerApproved: true, approvedAt: now,
+            observedAt: Math.max(previous?.observedAt ?? 0, identity.observedAt),
+            reviewerApproved: true, approvedAt: now, reportAt: reportAt ?? previous?.reportAt ?? null,
             occurrenceIds: result.state === 'pending' ? knownIds : [...new Set([...knownIds, ...identity.occurrenceIds])],
             pendingOccurrenceIds: result.state === 'pending' ? identity.occurrenceIds : null,
             ticketId: result.ticketId ?? previous?.ticketId,
             active: result.state === 'pending' ? previous?.active ?? false : result.state !== 'verified_history',
-            publication: result.state, lastObservedAt: identity.observedAt, lastAttemptAt: now,
+            publication: result.state, lastObservedAt: Math.max(previous?.lastObservedAt ?? 0, identity.observedAt), lastAttemptAt: now,
             retryAt: result.state === 'pending' ? now + 300000 : null };
         return { ...result, incidentKey: identity.key, relatedTicketIds: aliases.map(t => t.id) };
     };
