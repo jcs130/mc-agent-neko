@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
+import { projectExecution, executionCause, appearanceFact } from './execution_evidence.mjs';
 
 export const MODEL = 'deepseek-flash'; // Official API ID for DeepSeek-V4.1-Flash.
 export const MODEL_URL = 'https://api.deepseek.com/v1';
@@ -59,21 +60,14 @@ export function executionRevision(events = [], now = Date.now(), sessionId) {
 }
 
 function failureExcerpt(value, limit = 650) {
-    const text = [value.message, value.error, value.reason]
-        .map(item => String(item ?? '')).find(item => item.trim()) || '';
-    const exception = text.match(/(?:TypeError|ReferenceError|SyntaxError|RangeError|Error):[^\n]+/g);
-    // Model-authored task summaries often bury the real command exception after inventory text.
-    return exception?.length ? `${text.slice(0, 220)}\nObserved exception: ${exception.slice(0, 2).join('\n')}`.slice(0, limit)
-        : text.slice(0, limit);
+    return projectExecution(value).message.slice(0, limit);
 }
 
 function failureGroups(events) {
     const groups = new Map();
     for (const event of events) {
         const excerpt = failureExcerpt(event.value, 450);
-        const exception = excerpt.match(/(?:TypeError|ReferenceError|SyntaxError|RangeError|Error):[^\n]+/)?.[0];
-        const signature = (exception ?? excerpt).replace(/\b[0-9a-f]{16,}\b/gi, '#').replace(/\d+/g, '#').replace(/\s+/g, ' ').slice(0, 200);
-        const key = digest([event.value.type, signature]);
+        const key = digest([event.value.type, executionCause(event.value)]);
         const group = groups.get(key) ?? { key, count: 0, taskIds: new Set(), firstAt: event.at, lastAt: event.at, excerpt };
         group.count++; group.taskIds.add(event.value.task_id ?? receiptId(event));
         group.firstAt = Math.min(group.firstAt, event.at); group.lastAt = Math.max(group.lastAt, event.at);
@@ -103,8 +97,17 @@ export function buildEvidence(frame, worldModel, sentinel, now = Date.now(), ext
     add('game.quest', quest, 1700, quest?.observedAt ?? frame?.observedAt);
     add('game.welcome', state.server?.welcome, 600, state.server?.welcome?.startedAt);
     add('game.server', { channels: Object.keys(state.server?.channels ?? {}), window: bounded(state.window, 500) }, 1000);
+    const appearance = state.server?.channels?.['mcagent:appearance'];
+    const projectedAppearance = appearanceFact(appearance);
+    if (projectedAppearance) {
+        const own = projectedAppearance.playerName === state.self?.username;
+        add(own ? 'game.appearance' : 'game.other_appearance', projectedAppearance, 900,
+            appearance.observedAt, own ? 'observation' : 'record');
+    }
     const recent = (frame?.recentEvents ?? []).filter(event => Number.isFinite(event.observedAt)
-        && now - event.observedAt <= 90000).slice(-5);
+        && now - event.observedAt <= 90000
+        && !(event.data?.channel === 'mcagent:appearance'
+            && event.data.value?.playerName !== state.self?.username)).slice(-5);
     if (recent.length) add('game.events', recent, 1100, Math.max(...recent.map(event => event.observedAt)));
     if (worldModel) add('native.world', { pos: worldModel.pos, mobility: worldModel.mobility,
         threat: worldModel.threat, tier: worldModel.tier, commitment: worldModel.commitment }, 1000, worldModel.ts);
@@ -121,8 +124,8 @@ export function buildEvidence(frame, worldModel, sentinel, now = Date.now(), ext
     const selected = [...new Set([...failures, ...history.slice(-4)])];
     for (const event of selected) {
         const value = event.value;
-        add(receiptId(event), { at: event.at, type: value.type, status: value.status,
-            ok: value.ok, taskId: value.task_id, message: failureExcerpt(value) }, 1000, event.at,
+        const projection = projectExecution({ ...value, at: event.at }, receiptId(event));
+        add(receiptId(event), projection, Infinity, event.at,
         failed(event) ? 'execution' : 'observation');
     }
     const groups = failureGroups(recentFailures(history, now));
