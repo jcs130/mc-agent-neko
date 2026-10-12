@@ -21,7 +21,7 @@ preventing the game agent from initializing.
 The frontend is [jcs130/mc-visual-console](https://github.com/jcs130/mc-visual-console),
 an MIT-licensed project with portable browser source and offline resource tools.
 The host adapter is included in this repository; generate browser code and
-Minecraft resources from the [pinned renderer source](https://github.com/jcs130/mc-visual-console/tree/4d9caf3d27590b57110ef96f5629dd8608baf2b2/packages/modern-viewer/renderer-src).
+Minecraft resources from the [pinned renderer source](https://github.com/jcs130/mc-visual-console/tree/f579863e64428d270dec0d3ddf89dbeab5d93481/packages/modern-viewer/renderer-src).
 Its revision, source tree and license are recorded in
 [`renderer-source.json`](../src/agent/vision/modern/renderer-source.json) and
 [`RENDERER_LICENSE`](../src/agent/vision/modern/RENDERER_LICENSE).
@@ -34,7 +34,7 @@ including particle/map resources and the original Chinese font ZIP.
 
 ```sh
 git clone https://github.com/jcs130/mc-visual-console.git mc-visual-console
-git -C mc-visual-console checkout 4d9caf3d27590b57110ef96f5629dd8608baf2b2
+git -C mc-visual-console checkout f579863e64428d270dec0d3ddf89dbeab5d93481
 cd mc-visual-console
 npm ci --prefix packages/modern-viewer/renderer-src
 node tools/prepare-viewer-assets.mjs java-1.20.6 "/path/to/viewer-assets-new"
@@ -51,12 +51,12 @@ existing deployment. Building the source does not update a previously copied
 runtime directory: switch the configured directory, reload the viewer and
 browser, and compare the served `/index.js` bytes with the recorded bundle hash.
 Keep the previous directory for rollback. The frontend's
-[Socket.IO contract](https://github.com/jcs130/mc-visual-console/blob/4d9caf3d27590b57110ef96f5629dd8608baf2b2/packages/modern-viewer/renderer-src/SOCKET_PROTOCOL.md)
+[Socket.IO contract](https://github.com/jcs130/mc-visual-console/blob/f579863e64428d270dec0d3ddf89dbeab5d93481/packages/modern-viewer/renderer-src/SOCKET_PROTOCOL.md)
 documents the game state consumed by the browser; the bundled adapter supplies
 that stream from the existing bot.
 
 For a resource export from your own installed client, follow the upstream
-[resource and TextDisplay guide](https://github.com/jcs130/mc-visual-console/blob/4d9caf3d27590b57110ef96f5629dd8608baf2b2/packages/modern-viewer/renderer-src/docs/text-display-bubbles.md).
+[resource and TextDisplay guide](https://github.com/jcs130/mc-visual-console/blob/f579863e64428d270dec0d3ddf89dbeab5d93481/packages/modern-viewer/renderer-src/docs/text-display-bubbles.md).
 A JAR-only block export does not provide the complete launcher font resources.
 
 ## Enable local viewing
@@ -151,7 +151,7 @@ bot.emit('viewer:agent', {
 No model reasoning or conversation history is collected automatically. Viewer
 Socket.IO publishing is denied by default; no HTTP upload route or game-control
 endpoint is added. See the pinned shared
-[Agent visualization contract](https://github.com/jcs130/mc-visual-console/blob/4d9caf3d27590b57110ef96f5629dd8608baf2b2/packages/modern-viewer/renderer-src/docs/agent-visualization.md)
+[Agent visualization contract](https://github.com/jcs130/mc-visual-console/blob/f579863e64428d270dec0d3ddf89dbeab5d93481/packages/modern-viewer/renderer-src/docs/agent-visualization.md)
 for limits, expiry, marker shapes and optional image/animation presentations.
 
 ## Login state and optional own skin
@@ -234,7 +234,7 @@ one packet twice.
 When updating either source, check the frontend's Socket.IO contract against the
 host, regenerate the host, and rebuild and verify browser assets. Keep source
 updates separate from unrelated Cortico gameplay changes. See the
-[shared renderer maintenance guide](https://github.com/jcs130/mc-visual-console/blob/4d9caf3d27590b57110ef96f5629dd8608baf2b2/docs/VIEWER_UPDATES.md).
+[shared renderer maintenance guide](https://github.com/jcs130/mc-visual-console/blob/f579863e64428d270dec0d3ddf89dbeab5d93481/docs/VIEWER_UPDATES.md).
 
 Map decorations, native particle physics parity, Java pixel parity and arbitrary
 modded entity rendering are not claimed. The integration tests use synthetic
