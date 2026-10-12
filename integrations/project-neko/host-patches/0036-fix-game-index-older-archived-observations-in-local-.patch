@@ -1,0 +1,229 @@
+From bbfc07dcbb397953e697d52efbf480dcaab89bbb Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Mon, 12 Oct 2026 16:35:10 +0800
+Subject: [PATCH] fix(game): index older archived observations in local
+ requests
+
+---
+ .../2026-10-12-observation-replay.md          | 54 ++++++++++++
+ tests/unit/test_local_observation_replay.py   | 83 +++++++++++++++++++
+ utils/llm_client/prefill.py                   | 47 ++++++++++-
+ 3 files changed, 182 insertions(+), 2 deletions(-)
+ create mode 100644 docs/regression-reports/2026-10-12-observation-replay.md
+ create mode 100644 tests/unit/test_local_observation_replay.py
+
+diff --git a/docs/regression-reports/2026-10-12-observation-replay.md b/docs/regression-reports/2026-10-12-observation-replay.md
+new file mode 100644
+index 0000000..a402e62
+--- /dev/null
++++ b/docs/regression-reports/2026-10-12-observation-replay.md
+@@ -0,0 +1,54 @@
++# Regression Report: earlier game observations repeated in local requests
++
++## Evidence and cause
++
++At 15:57:02 Beijing on 2026-10-12, the opted-in local game request failed:
++34,277 input tokens plus 320 output tokens exceeded the configured 32,768
++capacity. Later requests completed; neither low GPU utilization nor this
++single failure establishes a model process fault. No model restart is needed.
++
++Request metadata recorded two earlier observation tool bodies of 9,216 and
++8,923 characters, followed by a 52,742-character detail result. Reconstructing
++the two views from their retained immutable snapshots reproduces both earlier
++lengths. The host previously replayed every current-fact view in full, even
++though complete originals already had exact query IDs.
++
++## Change and compatibility
++
++Only the opted-in local game provider's request projection indexes earlier
++successful archived current-fact observations. The most recent current-fact
++view stays complete, even when a later tool call reads a book or other detail.
++Exact requested detail results, errors, stale/unarchived observations, human
++instructions and foreign tools stay unchanged. Request projection never
++modifies saved history. Each index retains the original immutable evidence ID,
++authorization/resource/protection facts, time and an exact query entry.
++
++There is no generic string truncation, additional inference, parameter change,
++history deletion or expanded execution authority. Arbitrarily large explicit
++detail reads can still exceed capacity. This change does not claim to solve
++all context limits, semantic repetition or autonomous task progress.
++
++## Verification and limits
++
++The new regression first failed on the original no-op projection. Five focused
++cases now cover original history identity, full latest facts after a detail
++lookup, exact results, human stop messages and malformed/unarchived data.
++Related prefill, dynamic-tail, tool calling, cancellation and signature tests
++passed 245 checks; four serialization cases were excluded after reproducing
++the same four failures with the baseline prefill implementation. Their existing
++test fixture lacks the tool's name; no failure stack enters the changed code.
++Two existing dependency deprecation warnings remain. Ruff and whitespace
++checks pass.
++
++Offline use of the configured Q2_0 GGUF tokenizer reduces the oldest retained
++tool view by 2,238 tokens, while keeping the newer view and exact detail whole.
++Subtracting that paired saving from the observed input gives an estimate of
++32,039 input tokens plus 320 output tokens. This is not a complete historical
++HTTP request replay or a runtime success claim. Both original snapshots were
++read back exactly from their original evidence IDs. The measurement adds no
++game action, model inference or audio synthesis and stores metadata only.
++
++The companion patch and runtime receipts record commit, safe reload boundaries
++and actual post-deployment observations separately. Natural capacity acceptance
++remains necessary; a passing test or absence of a new error alone does not
++establish recovery of the original long-request scenario.
+diff --git a/tests/unit/test_local_observation_replay.py b/tests/unit/test_local_observation_replay.py
+new file mode 100644
+index 0000000..c3173c1
+--- /dev/null
++++ b/tests/unit/test_local_observation_replay.py
+@@ -0,0 +1,83 @@
++import copy
++import json
++
++from utils.llm_client import prefill
++
++
++def observation(ident='a', *, fresh=True):
++    return {'inputPolicy': 'current_facts_with_full_evidence', 'rawEvidence': {
++        'id': ident * 64, 'bytes': 120000, 'retained': 'complete immutable received facts; no automatic expiry'},
++        'fresh': fresh, 'online': True, 'status': 'ok', 'observedAt': 123, 'sessionId': 'same-game',
++        'decision': {'status': 'ready_if_authorized'}, 'authentication': {'status': 'authenticated'},
++        'resources': {'foodCount': 8}, 'protection': {'denied': []},
++        'state': {'self': {'health': 20}, 'inventory': {'slots': ['complete current slot'] * 300}},
++        'sectionIndex': {'inventory': {'path': '/state/inventory', 'evidence': 'rawEvidence.id'}}}
++
++
++def tool(value, ident='first', name='minecraft_observe'):
++    return {'role': 'tool', 'name': name, 'tool_call_id': ident,
++            'content': json.dumps(value, ensure_ascii=False)}
++
++
++def test_previous_archived_observation_becomes_an_explicit_index_only_in_request_view():
++    first = observation()
++    original = [tool(first), tool(observation('b'), 'latest')]
++    before = copy.deepcopy(original)
++    projected = prefill.project_game_history(original)
++    index = json.loads(projected[0]['content'])
++    assert index['inputPolicy'] == 'historical_observation_query_index'
++    assert index['rawEvidence'] == first['rawEvidence']
++    assert index['read'] == {'tool': 'minecraft_observe', 'evidence_id': 'a' * 64,
++                             'reference_path': '/'}
++    assert index['decision'] == first['decision']
++    assert index['authentication'] == first['authentication']
++    assert index['resources'] == first['resources']
++    assert 'state' not in index
++    assert projected[0]['tool_call_id'] == 'first' and projected[0]['name'] == 'minecraft_observe'
++    assert projected[1] is original[1]
++    assert original == before
++    assert prefill.project_game_history(original) == projected
++
++
++def test_exact_requested_details_errors_unarchived_data_and_human_messages_stay_whole():
++    whole = observation()
++    rows = [
++        {'role': 'user', 'content': '暂停。' + json.dumps(whole)},
++        {'role': 'assistant', 'tool_calls': [{'id': 'exact', 'function': {'name': 'minecraft_observe'}}]},
++        tool({'evidenceId': 'a' * 64, 'path': '/state/inventory', 'historical': True,
++              'responseTruncated': False, 'value': 'requested exact original' * 2000}, 'exact'),
++        tool({**whole, 'status': 'unavailable'}, 'unavailable'),
++        tool(observation(fresh=False), 'stale'),
++        tool({k: v for k, v in whole.items() if k != 'rawEvidence'}, 'unarchived'),
++        tool(whole, 'foreign', 'different_plugin'),
++        tool(whole, 'latest'),
++    ]
++    assert prefill.project_game_history(rows) is rows
++
++
++def test_last_observation_and_surrounding_protocol_are_preserved_byte_for_byte():
++    old = tool(observation(), 'first')
++    assistant = {'role': 'assistant', 'tool_calls': [{'id': 'first', 'function': {'name': 'minecraft_observe'}}]}
++    latest = tool({'status': 'ok', 'historical': True, 'value': 'exact full state' * 5000}, 'latest')
++    final = {'role': 'user', 'content': 'Current stop instruction and current task facts.'}
++    rows = [assistant, old, latest, final]
++    actual = prefill.project_game_history(rows)
++    assert actual[0] is assistant
++    assert actual[1] is old
++    assert actual[2] is latest and actual[3] is final
++    assert actual[2]['content'] == latest['content']
++
++
++def test_detail_lookup_does_not_replace_the_newest_current_fact_view():
++    old = tool(observation(), 'old')
++    current = tool(observation('b'), 'current')
++    page = tool({'status': 'ok', 'historical': True, 'value': 'book page'}, 'page')
++    actual = prefill.project_game_history([old, current, page])
++    assert json.loads(actual[0]['content'])['inputPolicy'] == 'historical_observation_query_index'
++    assert actual[1] is current and actual[2] is page
++
++
++def test_single_observation_and_malformed_content_keep_original_identity():
++    for rows in ([tool(observation())], [tool('not an observation'), tool(observation(), 'last')],
++                 [dict(role='tool', name='minecraft_observe', content='{bad json'), tool(observation(), 'last')]):
++        assert prefill.project_game_history(rows) is rows
+diff --git a/utils/llm_client/prefill.py b/utils/llm_client/prefill.py
+index a8788f6..bcacee7 100644
+--- a/utils/llm_client/prefill.py
++++ b/utils/llm_client/prefill.py
+@@ -1,7 +1,9 @@
+ """Opt-in policy for the local Strata engine. Only Minecraft owns its pin."""
+ from contextvars import ContextVar
+ import asyncio
++import json
+ import os
++import re
+ from urllib.parse import urlsplit
+ import weakref
+ 
+@@ -46,8 +48,49 @@ def request_policy(body: dict, base_url, call_type: str) -> dict:
+ 
+ 
+ def project_game_history(messages):
+-    """Keep complete game history; caching must not discard evidence."""
+-    return messages
++    """Index earlier archived observations in this request, never saved history.
++
++    Exact detail reads stay whole. A later observation does not need another
++    copy of each earlier current-fact view: its complete immutable snapshot is
++    already available through the same observe tool. Keep the last observation
++    and all authorization/error/human messages; this is not a text budget.
++    """
++    observations = []
++    for index, message in enumerate(messages):
++        if (not isinstance(message, dict) or message.get('role') != 'tool'
++                or message.get('name') != 'minecraft_observe'):
++            continue
++        if not isinstance(message.get('content'), str):
++            continue
++        try:
++            value = json.loads(message['content'])
++        except (ValueError, TypeError):
++            continue
++        if not isinstance(value, dict):
++            continue
++        evidence = value.get('rawEvidence')
++        if (value.get('inputPolicy') != 'current_facts_with_full_evidence'
++                or value.get('fresh') is not True or value.get('status') not in (None, 'ok')
++                or not isinstance(evidence, dict)
++                or not isinstance(evidence.get('id'), str)
++                or not re.fullmatch(r'[0-9a-f]{64}', evidence['id'])):
++            continue
++        observations.append((index, value, evidence))
++    projected = None
++    # A detail read (for example a book page) does not replace current facts.
++    # Keep the newest complete current-fact view even after further lookups.
++    for index, value, evidence in observations[:-1]:
++        message = messages[index]
++        view = {key: value[key] for key in ('rawEvidence', 'available', 'fresh', 'online',
++                'status', 'observedAt', 'sessionId', 'sequence', 'source', 'decision',
++                'authentication', 'resources', 'protection', 'collision') if key in value}
++        view.update(inputPolicy='historical_observation_query_index', historical=True,
++            read={'tool': 'minecraft_observe', 'evidence_id': evidence['id'], 'reference_path': '/'},
++            note='Earlier observation, not current authority. Its complete original snapshot remains available at the exact evidence ID and JSON paths. Latest observations and human stop/pause take precedence; unknown detail is not empty or successful.')
++        if projected is None:
++            projected = list(messages)
++        projected[index] = {**message, 'content': json.dumps(view, ensure_ascii=False, separators=(',', ':'))}
++    return messages if projected is None else projected
+ 
+ 
+ async def background_admission(base_url, call_type, *, probe=None, max_wait=10.0, interval=0.25):

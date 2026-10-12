@@ -135,7 +135,10 @@ export async function moveBackpackItem(bot, windowId, slot, count, { timeoutMs =
     if (window.selectedItem || bot.inventory?.selectedItem) return fail('Cursor holds an item; transfer refused.');
     if (bot.interrupt_code) return fail('Interrupted before transfer.');
     const item = Number.isInteger(slot) && slot >= 0 && slot < window.inventoryEnd ? window.slots[slot] : null;
-    if (!item || !Number.isInteger(count) || count <= 0 || count > item.count) return fail('Invalid observed source slot or count.');
+    if (!item || !Number.isInteger(count) || count <= 0 || count > item.count) {
+        const source = item ? `${item.name} x${item.count}` : 'empty';
+        return fail(`Invalid observed source slot or count.\nObserved window=${window.id}, slot=${slot}, source=${source}, requested=${count}. No items moved. Read !window for current nonempty source slots and counts before another transfer.`);
+    }
     const identity = readItemIdentity(item);
     if (backpackText(identity.customName + ' ' + identity.lore.join(' '))) return fail('Nested backpack transfer refused.');
     const depositing = slot >= window.inventoryStart;
@@ -178,7 +181,8 @@ export async function moveBackpackItem(bot, windowId, slot, count, { timeoutMs =
                 && sourceBefore - sum(slots, slot, slot + 1, item) === count
                 && sum(slots, destStart, destEnd, item) - destBefore === count) {
                 if (cursorReceived) window.selectedItem = cursor;
-                return { success: true, message: `Confirmed server inventory: ${depositing ? 'deposited' : 'withdrew'} ${item.name} x${count} in backpack window ${window.id}.` };
+                const source = slots[slot] ? `${slots[slot].name} x${slots[slot].count}` : 'empty';
+                return { success: true, message: `Confirmed server inventory: ${depositing ? 'deposited' : 'withdrew'} ${item.name} x${count} in backpack window ${window.id}. Source slot ${slot} now ${source}; earlier slot counts are historical.` };
             }
             await new Promise(resolve => setTimeout(resolve, 30));
         } while (Date.now() < deadline && !bot.interrupt_code);

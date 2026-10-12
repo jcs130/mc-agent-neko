@@ -587,3 +587,11 @@ their semantics. Small replies stay whole when references would be larger.
 Apply the complete plugin series at an observed idle boundary; the host series
 is unchanged. See [the offline comparison and deployment limits](../../docs/local-current-decision-essentials.md)
 and [the optional server-side improvement request](../../docs/local-server-guidance-request-2026-10-12.txt).
+
+Host patch 0036 indexes earlier archived observations only in the opted-in local
+game request view. The newest current-fact view stays complete even after a
+detail lookup; exact reads and saved originals stay unchanged. Apply the full
+host series and reload the owned host at an observed idle/playback boundary.
+This reduces repeated input without promising that arbitrary exact detail
+reads fit 32K. See [the transfer and observation feedback report](../../docs/local-transfer-source-feedback.md)
+and the bundled host regression report for measured scope and acceptance limits.

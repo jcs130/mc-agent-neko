@@ -1,7 +1,7 @@
 {
   "upstreamRepository": "https://github.com/Project-N-E-K-O/N.E.K.O",
   "baseCommit": "fb2a2e731a8c954478d08678b0c8cf40e8145a54",
-  "sourceCommit": "51587cc7cbd012e70d99217cf939337c112ed150",
+  "sourceCommit": "bbfc07dcbb397953e697d52efbf480dcaab89bbb",
   "scope": "plugin/plugins/game_agent_minecraft",
   "resultPluginTree": "a16264db4bb08965e2bc12d42a46463e3f54b992",
   "patches": [
@@ -769,6 +769,15 @@
       "sha256": "0bf2705ff41be3fac7f6f54c9fb17da56571f16c7b9145f9c6bb0ad703d7bb3a",
       "scopePaths": [
         "tests/unit/test_local_dynamic_request_tail.py"
+      ]
+    },
+    {
+      "file": "host-patches/0036-fix-game-index-older-archived-observations-in-local-.patch",
+      "sha256": "d158f43b04d671902bf4bd7f3f0336813caae3bfd1c8b44b3945ef29cfa3f258",
+      "scopePaths": [
+        "docs/regression-reports/2026-10-12-observation-replay.md",
+        "tests/unit/test_local_observation_replay.py",
+        "utils/llm_client/prefill.py"
       ]
     }
   ],
@@ -2045,5 +2054,25 @@
     "rawDiagnosticContentSaved": false,
     "offlineRetainedTaskGroups": 3,
     "onlineLatencyImprovementVerified": false
+  },
+  "observationReplayVerification": {
+    "sourceCommit": "bbfc07dcbb397953e697d52efbf480dcaab89bbb",
+    "pluginPatches": 93,
+    "hostPatches": 36,
+    "pluginTree": "a16264db4bb08965e2bc12d42a46463e3f54b992",
+    "replayMatchesSource": true,
+    "hostScopeFilesVerified": 64,
+    "phase": "prepared",
+    "hostRelatedPassed": 245,
+    "hostBaselineSerializationFailures": 4,
+    "newHostFailures": 0,
+    "nativeRelatedPassed": 55,
+    "originalHistoryPreserved": true,
+    "latestCurrentFactsAndExplicitDetailsPreserved": true,
+    "offlinePairedTokensSaved": 2238,
+    "completeHttpReplay": false,
+    "genericCapacityGuarantee": false,
+    "modelCalls": 0,
+    "rawDiagnosticContentSaved": false
   }
 }
