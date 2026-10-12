@@ -45,6 +45,17 @@ test('different refusals remain distinct and successful output is not an error',
     assert.notEqual(fact.value.failures[0].causeId, fact.value.failures[1].causeId);
 });
 
+test('real action-output wrappers and websocket inventory footer do not change failure identity', () => {
+    const result = '!moveBackpackItem:\nAction failed: !moveBackpackItem did not complete successfully.\n\nAction output:\n' + refusal;
+    const message = '!window:\n' + '[slot 0] stone x64\n'.repeat(120)
+        + Array(5).fill(result).join('\n\n')
+        + '\n\n当前持有道具：oak_sapling x1、compass x1\n当前位置：1,64,2';
+    const fact = receipt(failed(message));
+    assert.equal(fact.value.failures.length, 1);
+    assert.equal(fact.value.failures[0].reason, refusal);
+    assert.equal(fact.value.failures[0].occurrences, 5);
+});
+
 test('long errors retain original references and explicit incomplete detail markers', () => {
     const message = '!newAction:\nAction failed: !newAction did not complete successfully.\n' + 'an actual long error '.repeat(400);
     const fact = receipt(failed(message));

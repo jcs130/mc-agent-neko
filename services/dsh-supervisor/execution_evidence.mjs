@@ -12,6 +12,9 @@ export function projectExecution(value, receiptId) {
     const originalText = textOf(value), body = privateOperands(originalText);
     const original = { receiptId, chars: originalText.length, sha256: sha(originalText) };
     const headers = [...originalText.matchAll(/^(![A-Za-z][A-Za-z0-9_]*):\s*\r?\n/gm)];
+    // ws_server.finishMission appends this inventory footer after all command
+    // observations. Its changing contents are not part of the final refusal.
+    const footer = originalText.lastIndexOf('\n\n当前持有道具：');
     const failures = new Map();
     const add = (command, reason, start, end) => {
         const causeId = sha(JSON.stringify([command, reason])).slice(0, 24);
@@ -24,11 +27,13 @@ export function projectExecution(value, receiptId) {
     };
     for (let i = 0; i < headers.length; i++) {
         const header = headers[i], command = header[1];
-        const start = header.index + header[0].length, end = headers[i + 1]?.index ?? originalText.length;
+        const start = header.index + header[0].length;
+        const end = headers[i + 1]?.index ?? (footer >= start ? footer : originalText.length);
         const result = originalText.slice(start, end).trim();
         const marker = /^Action failed: (![A-Za-z][A-Za-z0-9_]*)[^\r\n]*(?:\r?\n|$)/m.exec(result);
         if (!marker || marker[1] !== command) continue;
-        const reason = result.slice(marker.index + marker[0].length).trim() || marker[0].trim();
+        const reason = result.slice(marker.index + marker[0].length).trim()
+            .replace(/^Action output:\s*\r?\n/, '').trim() || marker[0].trim();
         add(command, privateOperands(reason), start, end);
     }
     if (!failures.size && value.ok === false) {
