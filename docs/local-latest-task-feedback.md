@@ -53,3 +53,28 @@ own received evidence. Prepared, deployed and verified receipts remain separate.
 Diagnostic evidence retains IDs, timestamps, lengths, hashes and received game
 facts. Raw prompts, generated replies, thought, credentials and private voice
 references are not included in this contribution.
+
+## Actual local deployment, 2026-10-12
+
+At 13:25 Beijing time, the official lifecycle reloaded only the Minecraft plugin,
+using Neko source `227b858ad347` from fork commit `c1286be9a4c8`. The native game
+session at that boundary, main service, model/vision, voice, desktop and spectator
+were preserved. An earlier boundary check found an unfinished task and active
+reply work; it made no service change. The later idle check passed before reload.
+
+Two subsequent matched idle inputs, referring to **one** completed backpack task,
+contained the exact native conclusion. The earlier ten sampled matched inputs
+contained none. This verifies the observed delivery path, not two productive
+tasks, the completion of the inventory exam, or a causal latency improvement.
+
+A separate three-minute observation received 121 online frames with health and
+hunger at 20. Maximum displacement was 84.7 blocks and the observed action was
+self-preservation; movement alone is not quest progress. Both LAN viewer sockets
+continued receiving frames, chunks, minimaps, appearance and skill data. Their
+skill snapshot still did not meet the independent 60-second freshness check.
+
+Through the subsequent request-metadata check, all 62 natural requests completed,
+maximum recorded input was 29,713 tokens, and no new context-capacity error was
+observed. Model settings and weights were unchanged. No diagnostic game action,
+chat, model request or speech synthesis was injected. The broad progress ticket
+remains **deployed**, with productive autonomy and exam completion still open.

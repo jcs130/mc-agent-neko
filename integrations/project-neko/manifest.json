@@ -1916,7 +1916,7 @@
     "pluginTree": "d574a2d255e76cc3748f745b0462f03d08691744",
     "replayMatchesSource": true,
     "hostScopeFilesVerified": 61,
-    "phase": "prepared",
+    "phase": "deployed",
     "focusedTestsPassed": 27,
     "pluginTestsPassed": 288,
     "ruffPassed": true,
@@ -1924,6 +1924,12 @@
     "completeGoalAndAppendixQueriesPreserved": true,
     "noModelParameterChange": true,
     "noWakeFrequencyChange": true,
-    "acceptance": "Prepared only. Natural conclusion delivery and subsequent productive game steps need independent runtime observations; no old ticket is closed."
+    "acceptance": "Exact latest conclusion observed in 2 matched idle inputs for one task. Native session and protected services preserved at deployment. Productive task progress and exam completion remain unverified; broad repair stays deployed.",
+    "naturalMatchedIdleInputs": 2,
+    "naturalVisibleNativeConclusions": 2,
+    "naturalUniqueMatchedTasks": 1,
+    "sameGameSessionAtDeployment": true,
+    "protectedServicesPreserved": true,
+    "productiveAutonomyVerified": false
   }
 }
