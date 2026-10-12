@@ -7,6 +7,12 @@ configuration, one-RTX-3090 measurements, caller/thinking boundaries and feature
 that remain experimental. Private provider configuration and model weights are
 not included.
 
+The [native local vector-memory deployment](../../docs/local-vector-memory.md)
+restores the existing CPU ONNX hybrid recall path when a trial launcher disabled
+it or omitted its assets. The pinned preparation helper does not change memory
+text, restart services, or reserve a GPU. This configuration-only restoration
+does not add another host patch or per-game-turn model request.
+
 The [player conversation/action companion](../../docs/player-action-coupling.md)
 lets an idle player interaction dispatch its chosen physical goal and reply in
 one decision. Plugin patch 0087 and host patch 0034 wait for the matching native
