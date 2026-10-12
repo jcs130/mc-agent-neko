@@ -7,6 +7,11 @@ configuration, one-RTX-3090 measurements, caller/thinking boundaries and feature
 that remain experimental. Private provider configuration and model weights are
 not included.
 
+The [slot protocol index companion](../../docs/local-slot-protocol-index.md)
+shares original opaque slot columns through existing table paths. Plugin patch
+0092 reduces repeated protocol wrappers while preserving complete exact reads;
+the local tokenizer comparison is separate from runtime progress acceptance.
+
 The [latest task feedback companion](../../docs/local-latest-task-feedback.md)
 keeps the latest native protocol conclusion visible in the local main brain's
 completion, observation and idle decision paths. Plugin patch 0091 preserves

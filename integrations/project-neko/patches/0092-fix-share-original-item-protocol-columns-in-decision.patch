@@ -1,0 +1,157 @@
+From 04ebb81d568306ee28bb75fd3403125a189b6ae3 Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Mon, 12 Oct 2026 14:09:03 +0800
+Subject: [PATCH] fix: share original item protocol columns in decision slot
+ tables
+
+---
+ .../plugins/game_agent_minecraft/evidence.py  | 30 +++++++----
+ .../test_game_evidence.py                     | 53 ++++++++++++++++++-
+ 2 files changed, 70 insertions(+), 13 deletions(-)
+
+diff --git a/plugin/plugins/game_agent_minecraft/evidence.py b/plugin/plugins/game_agent_minecraft/evidence.py
+index 031f84e..925a1ea 100644
+--- a/plugin/plugins/game_agent_minecraft/evidence.py
++++ b/plugin/plugins/game_agent_minecraft/evidence.py
+@@ -9,6 +9,8 @@ import json
+ from pathlib import Path
+ import re
+ 
++_ITEM_PROTOCOL_FIELDS = ('components', 'nbt', 'metadata', 'raw', 'rawNbt')
++
+ 
+ class GameEvidence:
+     def __init__(self, directory=None):
+@@ -180,15 +182,20 @@ def decision_input(info, *, mode='decision', sections=None, extra=None):
+         if conclusion is not None:
+             result['nativeConclusion'] = conclusion
+         return result
+-    def item(value, path):
++    def item(value, path, *, index_protocol_columns=False):
+         if not isinstance(value, dict):
+             return deepcopy(value)
+         result = {}
+         protocol = []
+         for key, child in value.items():
+             here = pointer(path, key)
+-            if key in ('components', 'nbt', 'metadata', 'raw', 'rawNbt'):
+-                protocol.append(key)
++            if key in _ITEM_PROTOCOL_FIELDS:
++                if index_protocol_columns:
++                    # The table shares the original field name and root path;
++                    # do not repeat a synthetic path wrapper in every slot.
++                    result[key] = deepcopy(child)
++                else:
++                    protocol.append(key)
+             elif key == 'book' and isinstance(child, dict):
+                 result[key] = {k: ref(v, pointer(here, k)) if k == 'pages' else deepcopy(v)
+                                for k, v in child.items()}
+@@ -197,6 +204,13 @@ def decision_input(info, *, mode='decision', sections=None, extra=None):
+         if protocol:
+             result['protocol'] = {'path': path, 'evidence': 'rawEvidence.id', 'fields': protocol}
+         return result
++    def slots(values, path):
++        values = values or []
++        indexed = all(isinstance(child, dict) for child in values)
++        return entity_table(
++            [item(child, f'{path}/{index}', index_protocol_columns=indexed)
++             for index, child in enumerate(values)],
++            indexed_fields=_ITEM_PROTOCOL_FIELDS if indexed else (), details_path=path)
+     value = {key: deepcopy(child) for key, child in full.items()
+              if key not in ('state', 'recentEvents', 'agentLog', 'serverWelcome', 'serverGuide')}
+     if 'serverWelcome' in full:
+@@ -211,10 +225,7 @@ def decision_input(info, *, mode='decision', sections=None, extra=None):
+     state = deepcopy(full.get('state'))
+     if state:
+         inv = state.get('inventory') or {}
+-        inv['slots'] = entity_table(
+-            [item(child, f'/state/inventory/slots/{index}')
+-             for index, child in enumerate(inv.get('slots') or [])],
+-            details_path='/state/inventory/slots')
++        inv['slots'] = slots(inv.get('slots'), '/state/inventory/slots')
+         for key in ('held',):
+             if key in inv:
+                 inv[key] = item(inv[key], pointer('/state/inventory', key))
+@@ -256,10 +267,7 @@ def decision_input(info, *, mode='decision', sections=None, extra=None):
+                 server['channels'][key]['currentFacts'] = 'serverSkills'
+         window = state.get('window')
+         if isinstance(window, dict):
+-            window['slots'] = entity_table(
+-                [item(child, f'/state/window/slots/{index}')
+-                 for index, child in enumerate(window.get('slots') or [])],
+-                details_path='/state/window/slots')
++            window['slots'] = slots(window.get('slots'), '/state/window/slots')
+         if sections is not None:
+             state = {key: child for key, child in state.items() if key in sections}
+     value['state'] = state
+diff --git a/plugin/plugins/game_agent_minecraft/test_game_evidence.py b/plugin/plugins/game_agent_minecraft/test_game_evidence.py
+index 72849af..c0ffddf 100644
+--- a/plugin/plugins/game_agent_minecraft/test_game_evidence.py
++++ b/plugin/plugins/game_agent_minecraft/test_game_evidence.py
+@@ -10,6 +10,53 @@ from .observations import GameObservations
+ 
+ 
+ class GameEvidenceTest(unittest.TestCase):
++    def test_slot_protocol_uses_shared_original_columns_without_repeated_wrappers(self):
++        info = self.observations()
++        slots = [
++            {'slot': 45, 'name': 'iron_pickaxe', 'count': 1,
++             'customName': '完整名称' * 100, 'lore': ['完整说明' * 300],
++             'metadata': {'text': '完整协议' * 2000}, 'components': None,
++             'raw': '完整原文' * 1000, 'rawNbt': {'nested': [None, 1, '文字']}},
++            {'slot': 9, 'name': 'paper', 'count': 2, 'nbt': {'key': '原文' * 2000}},
++            {'slot': 10, 'count': None}, {'slot': 11},
++        ]
++        info.state['inventory']['slots'] = slots
++        info.state['window'] = {'id': 5, 'type': 'generic_9x6', 'slots': slots}
++        original = json.dumps(info.view(), ensure_ascii=False, sort_keys=True)
++        view = decision_input(info)
++        for section in ('inventory', 'window'):
++            with self.subTest(section=section):
++                table = view['state'][section]['slots']
++                self.assertEqual(table['encoding'], 'columns_with_snapshot_index')
++                restored = [None] * table['entries']
++                for group in table['groups']:
++                    self.assertNotIn('protocol', group['columns'])
++                    for row in group['rows']:
++                        item = dict(zip(group['columns'], row[1:]))
++                        for field in group.get('indexedColumns', []):
++                            raw = info.evidence.read(view['rawEvidence']['id'],
++                                f"{table['detailsPath']}/{row[0]}/{field}")
++                            self.assertEqual(raw['status'], 'ok')
++                            item[field] = raw['value']
++                        restored[row[0]] = item
++                self.assertEqual(restored, slots)
++                first = table['groups'][0]
++                self.assertEqual(first['indexedColumns'], ['components', 'metadata', 'raw', 'rawNbt'])
++                self.assertEqual(dict(zip(first['columns'], first['rows'][0][1:]))['slot'], 45)
++        self.assertEqual(json.dumps(info.view(), ensure_ascii=False, sort_keys=True), original)
++
++    def test_mixed_slot_collection_keeps_explicit_original_protocol_paths(self):
++        info = self.observations()
++        original = [None, {'slot': 10, 'name': 'paper', 'metadata': '原文' * 2000}]
++        info.state['inventory']['slots'] = original
++        view = decision_input(info)
++        slots = view['state']['inventory']['slots']
++        self.assertIsNone(slots[0])
++        self.assertEqual(slots[1]['protocol']['path'], '/state/inventory/slots/1')
++        self.assertEqual(slots[1]['protocol']['fields'], ['metadata'])
++        self.assertEqual(info.evidence.read(view['rawEvidence']['id'],
++            '/state/inventory/slots/1/metadata')['value'], original[1]['metadata'])
++
+     def test_current_slot_tables_keep_all_values_positions_and_exact_original_paths(self):
+         info = self.observations()
+         inventory = [{'slot': n + 9, 'name': 'cobblestone', 'count': n + 1,
+@@ -80,8 +127,10 @@ class GameEvidenceTest(unittest.TestCase):
+         slot = dict(zip(group['columns'], group['rows'][0][1:]))
+         self.assertEqual(slot['lore'], ['全文' * 1000])
+         self.assertEqual(slot['book']['pages']['path'], '/state/inventory/slots/0/book/pages')
+-        self.assertEqual(slot['protocol']['path'], '/state/inventory/slots/0')
+-        self.assertEqual(slot['protocol']['fields'], ['components'])
++        self.assertEqual(group['indexedColumns'], ['components'])
++        self.assertEqual(slots['detailsPath'], '/state/inventory/slots')
++        self.assertEqual(info.evidence.read(ident, '/state/inventory/slots/0/components')['value'],
++                         info.state['inventory']['slots'][0]['components'])
+         self.assertEqual(value['serverSkills']['abilities'][0]['name'], '闪现')
+         result = info.evidence.read(ident, '/state/inventory/slots/0/book/pages/0/text')
+         self.assertEqual(result['value'], '中间条件' * 2000)

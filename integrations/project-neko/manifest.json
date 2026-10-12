@@ -1,9 +1,9 @@
 {
   "upstreamRepository": "https://github.com/Project-N-E-K-O/N.E.K.O",
   "baseCommit": "fb2a2e731a8c954478d08678b0c8cf40e8145a54",
-  "sourceCommit": "227b858ad34786d20d89bb662b105c27a444728a",
+  "sourceCommit": "04ebb81d568306ee28bb75fd3403125a189b6ae3",
   "scope": "plugin/plugins/game_agent_minecraft",
-  "resultPluginTree": "d574a2d255e76cc3748f745b0462f03d08691744",
+  "resultPluginTree": "b5e62acff88906ccc1fa1148c1dc47b630652fea",
   "patches": [
     {
       "file": "0001-chore-configure-text-only-local-Qwen-Minecraft-trial.patch",
@@ -368,6 +368,10 @@
     {
       "file": "0091-fix-carry-latest-native-task-conclusion-into-decisio.patch",
       "sha256": "33526dc34ae68d1220025ccc6012b279eb4fa01fb06ffa8987e0073a5cf8699e"
+    },
+    {
+      "file": "0092-fix-share-original-item-protocol-columns-in-decision.patch",
+      "sha256": "60423005308beeb6a2cb3f148cfecbfd2e7ab645e1dac84a3c739683e8e58924"
     }
   ],
   "verification": {
@@ -1931,5 +1935,27 @@
     "sameGameSessionAtDeployment": true,
     "protectedServicesPreserved": true,
     "productiveAutonomyVerified": false
+  },
+  "slotProtocolIndexVerification": {
+    "sourceCommit": "04ebb81d568306ee28bb75fd3403125a189b6ae3",
+    "pluginPatches": 92,
+    "hostPatches": 34,
+    "pluginTree": "b5e62acff88906ccc1fa1148c1dc47b630652fea",
+    "replayMatchesSource": true,
+    "hostScopeFilesVerified": 61,
+    "phase": "prepared",
+    "focusedTestsPassed": 19,
+    "pluginTestsPassed": 290,
+    "ruffPassed": true,
+    "pairedOfflineProjectionSamples": 3,
+    "savedTokensPerSample": [
+      3423,
+      3423,
+      3423
+    ],
+    "completeOriginalSlotQueriesPreserved": true,
+    "noModelParameterChange": true,
+    "noWakeFrequencyChange": true,
+    "acceptance": "Prepared only. Smaller offline projections do not establish natural capacity recovery, latency improvement or productive autonomy."
   }
 }
