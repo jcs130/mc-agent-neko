@@ -41,6 +41,9 @@ YSM 证据单独保留玩家标识、可用状态和原因。其他玩家的外�
 协调器将复核认可的故障持久写入 `maintenance-queue.json`。原来的
 `repair-queue.json` 仍保留完整工单视图；快速维护无需每次重读所有
 旧工单。队列事务有独占文件锁，重启不会丢失领取状态。
+已由维护者提交实际提交和检查回执、仍等待部署或运行验收的修复也
+形成后续请求，标为 `checked-repair-follow-up`；它不冒称来自新的模型
+发现。新鲜故障优先于陈旧记录，待验收事项不会只留在评论中。
 
 ```powershell
 node services/dsh-supervisor/maintenance.mjs gate D:/neko-mc-trial/runtime/dsh-supervisor

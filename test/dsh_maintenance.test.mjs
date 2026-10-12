@@ -29,6 +29,20 @@ test('only reviewer-approved findings become durable maintenance requests', () =
     assert.equal(buildMaintenanceQueue(input({ tickets: [unknown] })).requests.length, 0);
 });
 
+test('an already checked maintainer repair is dispatched for deployment and verification without a new model finding', () => {
+    const manual = { id: 'T-0085', status: 'open', occurrences: 1, severity: 'high', type: 'supervisor-code', evidence: {} };
+    const receipt = { id: 'checked-monitor-repair', ticketId: manual.id, ticketOccurrences: 1, recordedAt: NOW,
+        phase: 'prepared', commit: 'a'.repeat(40), checks: [{ name: 'regression', exitCode: 0, sha256: 'b'.repeat(64) }], writeback: { state: 'written' } };
+    const prepared = buildMaintenanceQueue(input({ tickets: [manual], receipts: [receipt] }));
+    assert.equal(prepared.requests[0].status, 'prepared');
+    assert.equal(prepared.requests[0].approvalKind, 'checked-repair-follow-up');
+    const verified = { ...receipt, phase: 'verified', recordedAt: NOW + 2000,
+        deployment: { at: NOW + 1000 }, verification: { passed: true, at: NOW + 1500 } };
+    const next = buildMaintenanceQueue(input({ previous: prepared, tickets: [manual], receipts: [verified], now: NOW + 3000 }));
+    assert.equal(next.requests[0].id, prepared.requests[0].id);
+    assert.equal(next.requests[0].status, 'verified');
+});
+
 test('claim persists across monitor synchronization and prevents duplicate workers', t => {
     const dir = root(t);
     syncMaintenanceQueue(dir, input());
