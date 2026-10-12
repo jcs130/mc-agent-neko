@@ -48,7 +48,7 @@ export function buildMaintenanceQueue({ tickets, ledger, receipts, previous = {}
         const repairFactAt = latest?.verification?.at ?? latest?.deployment?.at ?? latest?.recordedAt;
         if (latest && !(prior?.result && done(prior.status) && prior.result.at >= repairFactAt)) {
             status = latest.writeback?.state !== 'written' ? 'pending_api'
-                : latest.phase === 'verified' && latest.verification?.passed && latest.verification.at >= (approved.observedAt ?? 0)
+                : latest.phase === 'verified' && latest.verification?.passed && latest.verification.at >= (latestObservedAt ?? 0)
                     ? 'verified' : latest.phase === 'verified' ? 'queued' : latest.phase;
         }
         if (prior?.lease && liveLease(prior, now) && !done(status)) status = 'claimed';

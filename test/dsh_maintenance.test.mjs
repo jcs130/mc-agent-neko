@@ -199,4 +199,7 @@ test('a fresh measured idle-loop candidate reaches triage even when the model ha
     const oldApproval = { incidents: { [first.requests[0].incidentKey]: { key: first.requests[0].incidentKey,
         reviewerApproved: true, occurrenceIds: ['autonomy:' + candidate.activationId], observedAt: NOW - 600000 } } };
     assert.equal(buildMaintenanceQueue({ ...opts, ledger: oldApproval }).requests[0].observedAt, NOW);
+    const oldVerification = { ticketId: measuredTicket.id, ticketOccurrences: 71, recordedAt: NOW - 1000,
+        phase: 'verified', verification: { passed: true, at: NOW - 1000 }, writeback: { state: 'written' } };
+    assert.equal(buildMaintenanceQueue({ ...opts, ledger: oldApproval, receipts: [oldVerification] }).requests[0].status, 'queued');
 });
