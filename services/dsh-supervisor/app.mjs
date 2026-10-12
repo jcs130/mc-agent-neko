@@ -7,6 +7,8 @@ import { MODEL, MODEL_URL, buildEvidence, parseReport, auditDue, approvedIssues,
 import { runAuditStages } from './audit.mjs';
 import { buildRepairQueue, loadRepairReceipts } from './repair.mjs';
 import { advanceProgressWatch, probePluginStatus, publishProgressCandidate } from './progress_watch.mjs';
+import { publishIncident, reconcileStateIncidents } from './incidents.mjs';
+import { recordReviewed } from './scheduling.mjs';
 
 export const name = 'neko-ticket-supervisors';
 export const inject = ['agents', 'subagents', 'sessions', 'tools', 'llm'];
@@ -37,6 +39,8 @@ export function apply(ctx, config) {
     const ledger = migrateLedger(readJson(ledgerPath) ?? { lastAuditAt: 0, reviewed: {} });
     ledger.reviewed ??= {};
     ledger.attemptedAt ??= {};
+    ledger.reviewedEvidence ??= {};
+    ledger.reviewedGroups ??= {};
     const children = new Map();
     let frame = null, socket = null, stopped = false, parentHandle = null, queryTimer = null, cleanupPromise = null;
     const status = { pid: process.pid, startedAt: Date.now(), state: 'starting', model: MODEL, modelUrl: MODEL_URL,
@@ -188,7 +192,7 @@ export function apply(ctx, config) {
         }
     }
 
-    async function audit(tickets) {
+    async function audit(tickets, allTickets = tickets) {
         const receipts = loadRepairReceipts(runtimeRoot);
         const capture = selected => buildEvidence(frame, readJson(path.join(supervisorDir, 'world_model.json')),
             readJson(path.join(supervisorDir, 'sentinel.json')), Date.now(), {
@@ -200,23 +204,27 @@ export function apply(ctx, config) {
         if (!capture(null).fresh) { status.state = 'waiting_for_fresh_game_evidence'; save(); return false; }
         ledger.lastAttemptAt = Date.now();
         fs.writeFileSync(ledgerPath, JSON.stringify(ledger, null, 2));
-        const stages = await runAuditStages({ capture, runRole, tickets, ledger });
+        const nativeEvents = readExecutionHistory(path.join(supervisorDir, 'events.log'));
+        const subject = frame?.state?.self?.username ?? 'unknown-subject';
+        const stages = await runAuditStages({ capture, runRole, tickets, ledger,
+            scheduling: { receipts, nativeEvents, subject } });
         const { selected, evidence, observer, diagnoser, reviewer, issues } = stages;
         const report = { at: Date.now(), ...stages, selected: selected ? { id: selected.id,
             updatedAt: selected.updatedAt, status: selected.status, occurrences: selected.occurrences } : null, published: [] };
         // Model output is data. The coordinator owns this narrow ticket API boundary.
-        const approved = approvedIssues(issues, reviewer.report, evidence, buildEvidence(frame, null, null));
-        report.publication = { decision: reviewer.report.decision, approvedKeys: approved.map(issue => issue.key),
-            actionableKeys: reviewer.report.actionableKeys,
+        const review = reviewer?.report ?? { decision: 'reject', acceptedKeys: [], actionableKeys: [], evidenceIds: [] };
+        const approved = approvedIssues(issues, review, evidence, buildEvidence(frame, null, null));
+        report.publication = { decision: review.decision, approvedKeys: approved.map(issue => issue.key),
+            actionableKeys: review.actionableKeys,
             withheldKeys: issues.filter(issue => !approved.includes(issue)).map(issue => issue.key),
             reason: issues.length && !approved.length ? 'review rejected, expired/missing citations, or session changed' : null };
+        report.incidentPublications = [];
+        reconcileStateIncidents(ledger, frame);
         for (const issue of approved) {
-            const result = await api(TICKET_URL + '/api/tickets', { source: 'auto', actor: 'dsh-observer',
-                type: 'dsh-observation', title: issue.title, severity: issue.severity, detail: issue.detail,
-                dedupKey: 'dsh:' + issue.key, evidence: { ids: issue.evidenceIds, snapshotAt: evidence.observedAt,
-                    scope: issue.scope, sessionId: evidence.sessionId, reviewer: reviewer.sessionId,
-                    facts: evidence.facts.filter(fact => issue.evidenceIds.includes(fact.id)) } });
-            report.published.push(result.ticket.id);
+            const result = await publishIncident({ issue, evidence, tickets: allTickets, ledger, nativeEvents, subject, repairs: receipts,
+                create: body => api(TICKET_URL + '/api/tickets', body) });
+            report.incidentPublications.push(result);
+            if (result.state === 'written') report.published.push(result.ticketId);
         }
         report.writeback = await writeDiagnosis({ ticket: selected, evidence: diagnoser?.evidence ?? evidence, diagnosis: diagnoser?.report,
             read: id => api(`${TICKET_URL}/api/tickets/${id}`),
@@ -225,9 +233,7 @@ export function apply(ctx, config) {
             ledger.attemptedAt[selected.id] = Date.now();
             event({ type: 'diagnosis_writeback', ...report.writeback });
             if (report.writeback.state === 'written') {
-                ledger.reviewed[selected.id] = report.writeback.updatedAt;
-                ledger.reviewedAt ??= {};
-                ledger.reviewedAt[selected.id] = Date.now();
+                recordReviewed(ledger, selected, report.writeback.updatedAt);
             }
         }
         fs.writeFileSync(path.join(runtimeRoot, 'reports', `${report.at}.json`), JSON.stringify(report, null, 2));
@@ -235,11 +241,12 @@ export function apply(ctx, config) {
         ledger.executionRevision = stages.executionRevision;
         ledger.baselineComplete = true;
         fs.writeFileSync(ledgerPath, JSON.stringify(ledger, null, 2));
-        status.lastAudit = { at: report.at, summary: String(reviewer.report.summary ?? '').slice(0, 500),
+        status.lastAudit = { at: report.at, summary: String(reviewer?.report.summary ?? observer.report.summary ?? '').slice(0, 500),
             issues: issues.length, published: report.published, writeback: report.writeback,
             publication: report.publication, stages: stages.stages,
             timings: [observer, diagnoser, reviewer].filter(Boolean).map(role => role.timing),
-            sessions: [observer.sessionId, diagnoser?.sessionId, reviewer.sessionId].filter(Boolean) };
+            sessions: [observer.sessionId, diagnoser?.sessionId, reviewer?.sessionId].filter(Boolean),
+            incidentPublications: report.incidentPublications };
         status.state = 'watching'; delete status.lastError; save();
         return true;
     }
@@ -258,14 +265,16 @@ export function apply(ctx, config) {
             if (fs.existsSync(path.join(runtimeRoot, 'stop'))) break;
             try {
                 await ensureServices();
-                const tickets = await api(TICKET_URL + '/api/tickets?status=open-ish');
+                const allTickets = await api(TICKET_URL + '/api/tickets');
+                const tickets = allTickets.filter(ticket => !['closed', 'wontfix'].includes(ticket.status));
                 const queue = buildRepairQueue(tickets, loadRepairReceipts(runtimeRoot));
                 fs.writeFileSync(path.join(runtimeRoot, 'repair-queue.json'), JSON.stringify(queue, null, 2));
                 status.repairQueue = { pending: queue.items.length,
                     stages: queue.items.reduce((counts, item) => ({ ...counts, [item.stage]: (counts[item.stage] ?? 0) + 1 }), {}) };
                 const revision = executionRevision(readExecutionHistory(path.join(supervisorDir, 'events.log')), Date.now(), frame?.sessionId);
-                if (once || auditDue(ledger, tickets, Date.now(), revision)) {
-                    const completed = await audit(tickets);
+                if (once || auditDue(ledger, tickets, Date.now(), revision, { receipts: loadRepairReceipts(runtimeRoot),
+                    nativeEvents: readExecutionHistory(path.join(supervisorDir, 'events.log')), subject: frame?.state?.self?.username })) {
+                    const completed = await audit(tickets, allTickets);
                     if (once && !completed) throw new Error('No fresh game evidence for one-shot audit');
                 }
                 save();

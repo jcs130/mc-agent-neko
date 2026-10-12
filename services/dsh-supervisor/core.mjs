@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { projectExecution, executionCause, appearanceFact } from './execution_evidence.mjs';
+import { chooseTicket } from './scheduling.mjs';
 
 export const MODEL = 'deepseek-flash'; // Official API ID for DeepSeek-V4.1-Flash.
 export const MODEL_URL = 'https://api.deepseek.com/v1';
@@ -185,22 +186,17 @@ export function validateIssue(issue, evidence) {
         scope, detail: String(issue.detail ?? '').slice(0, 900), evidenceIds: ids };
 }
 
-export function auditDue(state, tickets, now = Date.now(), executionRevision = null) {
+export function auditDue(state, tickets, now = Date.now(), executionRevision = null, options = {}) {
     if (state.lastAttemptAt && now - state.lastAttemptAt < 300000) return false;
     if (!state.lastAuditAt || !state.baselineComplete) return true;
     if (now - state.lastAuditAt < 300000) return false;
     if (now - state.lastAuditAt >= 900000) return true;
     if (executionRevision && executionRevision !== state.executionRevision) return true;
-    return tickets.some(t => !['closed', 'wontfix'].includes(t.status) && state.reviewed?.[t.id] !== t.updatedAt);
+    return chooseTicket(tickets, state, now, { ...options, legacyRotation: false }) !== null;
 }
 
-export function selectTicket(tickets, ledger) {
-    const unreviewed = tickets.filter(ticket => ledger.reviewed?.[ticket.id] !== ticket.updatedAt);
-    const pending = unreviewed.length ? unreviewed : [...tickets];
-    // Old recurring tickets must not starve tickets that have never been inspected.
-    pending.sort((a, b) => (ledger.attemptedAt?.[a.id] ?? ledger.reviewedAt?.[a.id] ?? 0)
-        - (ledger.attemptedAt?.[b.id] ?? ledger.reviewedAt?.[b.id] ?? 0));
-    return pending[0] ?? tickets[0] ?? null;
+export function selectTicket(tickets, ledger, now = Date.now(), options = {}) {
+    return chooseTicket(tickets, ledger, now, { legacyRotation: !Object.hasOwn(ledger, 'reviewedEvidence'), ...options });
 }
 
 export function migrateLedger(previous = {}) {

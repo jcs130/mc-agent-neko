@@ -8,8 +8,8 @@ const TASKS = {
 
 // runRole invokes prepare immediately before each independent role. Keeping this
 // orchestration independent of DSH permits deterministic slow-model/session tests.
-export async function runAuditStages({ capture, runRole, tickets, ledger, now = Date.now }) {
-    const selected = selectTicket(tickets, ledger);
+export async function runAuditStages({ capture, runRole, tickets, ledger, now = Date.now, scheduling = {} }) {
+    const selected = selectTicket(tickets, ledger, now(), scheduling);
     let sessionId, retained = [];
     const stages = [];
     const prepare = (role, extra = {}) => () => {
@@ -21,13 +21,16 @@ export async function runAuditStages({ capture, runRole, tickets, ledger, now = 
         const active = selected ? [{ id: selected.id, title: selected.title, status: selected.status,
             createdAt: selected.createdAt, updatedAt: selected.updatedAt, claimedBy: selected.claimedBy,
             evidenceId: evidence.facts.find(f => f.kind === 'record' && f.value?.id === selected.id)?.id,
-            detail: String(selected.detail ?? '').slice(0, 500) }] : [];
+            detail: String(selected.detail ?? '').slice(0, 500), relatedTicketIds: selected._incidentGroup?.ticketIds ?? [selected.id] }] : [];
         stages.push({ role, capturedAt: evidence.capturedAt, observedAt: evidence.observedAt, sessionId });
         return { task: TASKS[role], evidence, tickets: active, ...extra };
     };
     const observer = await runRole('observer', prepare('observer'));
     const issues = (Array.isArray(observer.report.issues) ? observer.report.issues : [])
         .map(issue => validateIssue(issue, observer.evidence)).filter(Boolean).slice(0, 2);
+    if (!issues.length && !selected && ledger.baselineComplete) return { selected: null,
+        evidence: observer.evidence, observer, diagnoser: null, reviewer: null, issues, stages,
+        executionRevision: observer.evidence.executionRevision };
     const retain = (evidence, ids) => {
         const wanted = new Set(ids);
         retained = [...new Map([...retained, ...evidence.facts.filter(f => wanted.has(f.id))].map(f => [f.id, f])).values()];
