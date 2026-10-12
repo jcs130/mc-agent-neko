@@ -554,3 +554,9 @@ Use it with the matching native wall-refusal recovery code in this fork. Actual
 idle telemetry remains mandatory; this does not override active work or authorize
 breaking protected blocks. See [the confinement report](../../docs/protected-confinement-handoff.md)
 for regression coverage and the separate runtime acceptance.
+
+Plugin patch 0090 shares repeated inventory/window slot field names in the
+model-facing projection. Every current value, original array index and exact
+evidence path survives; full observations remain arrays. This targets local
+32K capacity without changing model parameters, tool rounds or game authority.
+See [the measured input comparison and compatibility limits](../../docs/local-current-slot-input.md).

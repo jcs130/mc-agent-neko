@@ -1,0 +1,162 @@
+From 346f9d4b11b55189ee8f25f0c1faa8230f4eba8a Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Mon, 12 Oct 2026 12:00:57 +0800
+Subject: [PATCH] fix: share current slot keys without dropping game facts
+
+---
+ .../docs/current-slot-input.md                | 39 +++++++++++++++++++
+ .../plugins/game_agent_minecraft/evidence.py  | 16 +++++---
+ .../test_game_evidence.py                     | 39 ++++++++++++++++++-
+ 3 files changed, 87 insertions(+), 7 deletions(-)
+ create mode 100644 plugin/plugins/game_agent_minecraft/docs/current-slot-input.md
+
+diff --git a/plugin/plugins/game_agent_minecraft/docs/current-slot-input.md b/plugin/plugins/game_agent_minecraft/docs/current-slot-input.md
+new file mode 100644
+index 0000000..1aa4400
+--- /dev/null
++++ b/plugin/plugins/game_agent_minecraft/docs/current-slot-input.md
+@@ -0,0 +1,39 @@
++# Current slot tables for local model capacity
++
++The local Minecraft decision service has a real 32768-token capacity. On
++2026-10-12, natural multi-query turns failed with 33592, 33385, 32464 and
++32642 input tokens plus a 320-token output allowance. An open backpack had
++87 current slot records, alongside 37 inventory records. Their repeated JSON
++field names consumed capacity; the observed state was not disposable history.
++
++`decision_input()` now shares field names in inventory and window slots with
++the existing `columns_with_snapshot_index` encoding. Each group has a distinct
++key set. A row's first cell is its original **array index**, followed by values
++in the declared column order. The actual `slot` number remains a separate value.
++Missing keys and explicit nulls remain distinct. Every received item name,
++count, custom name and lore value stays in the current projection. Empty lists
++and malformed rows retain the existing list representation.
++
++`detailsPath` points to the original inventory or window slot array inside
++`rawEvidence.id`. Full observation reads and immutable evidence remain ordinary
++JSON arrays with their exact original values. Existing book-page and opaque
++protocol pointers still target the original array indexes. No new truncation,
++expiry, summarization, model request, game action, tool round, inference slot,
++authority, or deployment parameter is introduced.
++
++Offline comparison using the actual implementation and the deployed Q2_0 GGUF
++tokenizer, on one delivered instruction: 23082 -> 20360 tokens (2722 saved).
++All 37 inventory and 87 window records reconstructed exactly. This is a
++same-instruction representation comparison, not full HTTP latency or quest
++acceptance; downstream query accumulation can still exceed model capacity.
++
++Regression coverage checks every row/value, missing versus null, source
++indexes versus slot numbers, intact names/lore/book/protocol pointers, and
++unchanged full observations/evidence. The plugin suite passed 285 tests and
++49 subtests. This changes only the model-facing projection: a custom consumer
++that previously assumed this projection's `slots` was always a list must
++recognize the declared table encoding or explicitly read the original array.
++
++Deployment and natural-request acceptance are recorded by the companion
++maintenance receipt. A shorter input or an accepted request does not prove
++exam completion, autonomous life, or resolved repetitive speech.
+diff --git a/plugin/plugins/game_agent_minecraft/evidence.py b/plugin/plugins/game_agent_minecraft/evidence.py
+index 9ca1f8d..f91df61 100644
+--- a/plugin/plugins/game_agent_minecraft/evidence.py
++++ b/plugin/plugins/game_agent_minecraft/evidence.py
+@@ -123,7 +123,7 @@ def receipt_index(archive, receipt):
+     return value
+ 
+ 
+-def entity_table(entities, *, indexed_fields=()):
++def entity_table(entities, *, indexed_fields=(), details_path='/state/nearby/entities'):
+     """Share repeated column names without losing rows, values or key absence."""
+     if not isinstance(entities, list) or not entities or not all(isinstance(row, dict) for row in entities):
+         return entities
+@@ -138,7 +138,7 @@ def entity_table(entities, *, indexed_fields=()):
+     return {'encoding': 'columns_with_snapshot_index', 'entries': len(entities),
+             'rowFormat': 'First cell is the original snapshot array index; remaining cells match columns exactly. Read indexedColumns at detailsPath/<snapshotIndex>/<column> using rawEvidence.id. Groups preserve distinct key sets: missing keys are not null.',
+             'groups': list(groups.values()),
+-            'detailsPath': '/state/nearby/entities'}
++            'detailsPath': details_path}
+ 
+ 
+ def decision_input(info, *, mode='decision', sections=None, extra=None):
+@@ -192,8 +192,10 @@ def decision_input(info, *, mode='decision', sections=None, extra=None):
+     state = deepcopy(full.get('state'))
+     if state:
+         inv = state.get('inventory') or {}
+-        inv['slots'] = [item(child, f'/state/inventory/slots/{index}')
+-                        for index, child in enumerate(inv.get('slots') or [])]
++        inv['slots'] = entity_table(
++            [item(child, f'/state/inventory/slots/{index}')
++             for index, child in enumerate(inv.get('slots') or [])],
++            details_path='/state/inventory/slots')
+         for key in ('held',):
+             if key in inv:
+                 inv[key] = item(inv[key], pointer('/state/inventory', key))
+@@ -235,8 +237,10 @@ def decision_input(info, *, mode='decision', sections=None, extra=None):
+                 server['channels'][key]['currentFacts'] = 'serverSkills'
+         window = state.get('window')
+         if isinstance(window, dict):
+-            window['slots'] = [item(child, f'/state/window/slots/{index}')
+-                               for index, child in enumerate(window.get('slots') or [])]
++            window['slots'] = entity_table(
++                [item(child, f'/state/window/slots/{index}')
++                 for index, child in enumerate(window.get('slots') or [])],
++                details_path='/state/window/slots')
+         if sections is not None:
+             state = {key: child for key, child in state.items() if key in sections}
+     value['state'] = state
+diff --git a/plugin/plugins/game_agent_minecraft/test_game_evidence.py b/plugin/plugins/game_agent_minecraft/test_game_evidence.py
+index 2e09484..49ecead 100644
+--- a/plugin/plugins/game_agent_minecraft/test_game_evidence.py
++++ b/plugin/plugins/game_agent_minecraft/test_game_evidence.py
+@@ -10,6 +10,37 @@ from .observations import GameObservations
+ 
+ 
+ class GameEvidenceTest(unittest.TestCase):
++    def test_current_slot_tables_keep_all_values_positions_and_exact_original_paths(self):
++        info = self.observations()
++        inventory = [{'slot': n + 9, 'name': 'cobblestone', 'count': n + 1,
++                      'customName': f'完整物品{n}', 'lore': ['完整说明' * 200]} for n in range(37)]
++        inventory += [{'slot': 46, 'count': None}, {'slot': 47}]
++        window = [{'slot': n, 'name': 'iron_pickaxe', 'count': 1,
++                   'displayName': '铁镐', 'lore': ['完整耐久说明' * 100]} for n in range(87)]
++        info.state['inventory']['slots'] = inventory
++        info.state['window'] = {'id': 5, 'type': 'generic_9x6', 'title': '大背包',
++                                'cursor': None, 'slots': window}
++        before = json.dumps(info.view(), ensure_ascii=False, sort_keys=True)
++        view = decision_input(info)
++        for name, original in (('inventory', inventory), ('window', window)):
++            with self.subTest(section=name):
++                encoded = view['state'][name]['slots']
++                self.assertTrue(isinstance(encoded, dict), 'repeated slot field names should be shared')
++                self.assertEqual(encoded['encoding'], 'columns_with_snapshot_index')
++                self.assertEqual(encoded['detailsPath'], f'/state/{name}/slots')
++                restored = [None] * encoded['entries']
++                for group in encoded['groups']:
++                    for row in group['rows']:
++                        restored[row[0]] = dict(zip(group['columns'], row[1:]))
++                self.assertEqual(restored, original, 'all slots, original order and missing/null keys survive')
++                for index, row in enumerate(original):
++                    raw = info.evidence.read(view['rawEvidence']['id'], f'{encoded["detailsPath"]}/{index}')
++                    self.assertEqual(raw['value'], row)
++                self.assertLess(len(json.dumps(encoded, ensure_ascii=False)), len(json.dumps(original, ensure_ascii=False)))
++        self.assertEqual(view['state']['window']['id'], 5)
++        self.assertEqual(view['state']['window']['title'], '大背包')
++        self.assertEqual(json.dumps(info.view(), ensure_ascii=False, sort_keys=True), before)
++
+     def test_private_evidence_uses_runtime_data_root_not_source_manifest(self):
+         with tempfile.TemporaryDirectory() as root, patch.dict('os.environ', {'NEKO_STORAGE_SELECTED_ROOT': root}):
+             archive = GameEvidence.for_plugin(SimpleNamespace(plugin_id='game_agent_minecraft',
+@@ -44,7 +75,13 @@ class GameEvidenceTest(unittest.TestCase):
+         self.assertEqual(info.evidence.read(ident, '/recentEvents/0/text')['value'], '来拿装备' * 1000)
+         self.assertEqual(value['eventIndex']['path'], '/recentEvents')
+         self.assertEqual(info.evidence.read(ident, '/recentEvents/0')['value']['player'], 'RealPlayer')
+-        self.assertEqual(value['state']['inventory']['slots'][0]['lore'], ['全文' * 1000])
++        slots = value['state']['inventory']['slots']
++        group = slots['groups'][0]
++        slot = dict(zip(group['columns'], group['rows'][0][1:]))
++        self.assertEqual(slot['lore'], ['全文' * 1000])
++        self.assertEqual(slot['book']['pages']['path'], '/state/inventory/slots/0/book/pages')
++        self.assertEqual(slot['protocol']['path'], '/state/inventory/slots/0')
++        self.assertEqual(slot['protocol']['fields'], ['components'])
+         self.assertEqual(value['serverSkills']['abilities'][0]['name'], '闪现')
+         result = info.evidence.read(ident, '/state/inventory/slots/0/book/pages/0/text')
+         self.assertEqual(result['value'], '中间条件' * 2000)
