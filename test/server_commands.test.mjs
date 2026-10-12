@@ -172,3 +172,24 @@ test('catalogue-like mutation and unknown arguments cannot gain query metadata',
         assert.equal((await send(bot, { command }, { quietMs: 2, timeoutMs: 20 })).readOnly, false, command);
     }
 });
+
+test('exact guild exam status preserves the query-only idle action handoff', async () => {
+    const send = await bridge();
+    for (const command of ['/mycli guild exam status', '/agentfriend:mycli  guild exam status']) {
+        const bot = fakeBot(b => b.emit('messagestr', 'MC_GUILD_EXAM_STATUS {"active":true}', 'system'));
+        const result = await send(bot, { command }, { quietMs: 2, timeoutMs: 20 });
+        assert.equal(result.readOnly, true, command);
+        assert.equal(result.confirmed, false, 'exam inspection is not acceptance or completion');
+        assert.equal(result.records[0].kind, 'MC_GUILD_EXAM_STATUS');
+        assert.equal(bot.listenerCount('messagestr'), 0);
+    }
+    const bot = fakeBot(b => b.emit('messagestr', 'reply', 'system'));
+    for (const command of ['/mycli guild exam start promotion inventory_basic',
+        '/mycli guild exam claim', '/mycli guild exam cancel', '/mycli guild exam status extra',
+        '/mycli guild exam status reset', '/mycli guild exam', '/mycli arena exam status']) {
+        assert.equal((await send(bot, { command }, { quietMs: 2, timeoutMs: 20 })).readOnly, false, command);
+    }
+    const blocked = fakeBot();
+    assert.equal((await send(blocked, { command: '/mycli guild exam status', readOnly: true })).status, 'failed');
+    assert.equal(blocked.sent.length, 0, 'receipt metadata must not widen serverQuery permissions');
+});
