@@ -1947,7 +1947,7 @@
     "pluginTree": "b5e62acff88906ccc1fa1148c1dc47b630652fea",
     "replayMatchesSource": true,
     "hostScopeFilesVerified": 61,
-    "phase": "prepared",
+    "phase": "deployed",
     "focusedTestsPassed": 19,
     "pluginTestsPassed": 290,
     "ruffPassed": true,
@@ -1960,7 +1960,13 @@
     "completeOriginalSlotQueriesPreserved": true,
     "noModelParameterChange": true,
     "noWakeFrequencyChange": true,
-    "acceptance": "Prepared only. Smaller offline projections do not establish natural capacity recovery, latency improvement or productive autonomy."
+    "acceptance": "Prepared only. Smaller offline projections do not establish natural capacity recovery, latency improvement or productive autonomy.",
+    "deploymentSourceCommit": "50514e2572da85da5ff3c0944368332b3f816b8e",
+    "deployedAt": 1791788197870,
+    "sameGameSession": true,
+    "protectedServicesPreserved": true,
+    "naturalCurrentInputSamples": 2,
+    "broadAutonomyRecoveryVerified": false
   },
   "currentDecisionEssentialsVerification": {
     "sourceCommit": "50514e2572da85da5ff3c0944368332b3f816b8e",
@@ -1969,7 +1975,7 @@
     "pluginTree": "a16264db4bb08965e2bc12d42a46463e3f54b992",
     "replayMatchesSource": true,
     "hostScopeFilesVerified": 61,
-    "phase": "prepared",
+    "phase": "deployed",
     "focusedTestsPassed": 26,
     "pluginTestsPassed": 297,
     "ruffPassed": true,
@@ -1990,6 +1996,12 @@
     "smallReplyFallback": true,
     "noModelParameterChange": true,
     "noWakeFrequencyChange": true,
-    "acceptance": "Prepared only. Offline reconstruction is not an original HTTP request, runtime latency result or autonomous task recovery."
+    "acceptance": "Single-plugin deployment and two natural input projections confirmed; bounded requests completed without capacity errors. Productive autonomy and paired latency improvement remain unverified.",
+    "deploymentSourceCommit": "50514e2572da85da5ff3c0944368332b3f816b8e",
+    "deployedAt": 1791788197870,
+    "sameGameSession": true,
+    "protectedServicesPreserved": true,
+    "naturalCurrentInputSamples": 2,
+    "broadAutonomyRecoveryVerified": false
   }
 }

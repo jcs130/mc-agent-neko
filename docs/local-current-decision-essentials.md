@@ -76,6 +76,17 @@ Model parameters, GPU routing, inference concurrency, tool rounds and wake
 frequency are unchanged. No game commands, public messages or extra model
 calls were introduced for measurement.
 
+On 2026-10-12 at 14:56 Beijing time, source `50514e2572da` was loaded by an
+official single-plugin reload, with fork code commit `3faa94a32b70`. The game
+session and protected main/model/vision/voice/desktop/spectator processes were
+preserved. Two subsequent natural decision callbacks used the historical
+welcome index and shared slot protocol columns; their exact original welcome
+reads passed. In the initial bounded window through 14:58:42, 14 natural model
+requests completed and no context-capacity errors were observed. The 12
+proactive requests used 10,231–21,990 input tokens. These observations are not a
+paired latency test or proof of productive task recovery. The maintenance
+receipt remains **deployed**, with broad autonomy acceptance still pending.
+
 The received server guides already distinguish queries from acceptance and
 skill catalogues from learned skills. The current evidence does not establish
 a server fault. A concrete optional server-side improvement request, for the
