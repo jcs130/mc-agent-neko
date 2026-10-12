@@ -1869,12 +1869,15 @@
     "pluginTree": "6a92f04583189233c4e0be98f62be18b2a7f819f",
     "replayMatchesSource": true,
     "hostScopeFilesVerified": 61,
-    "phase": "prepared",
+    "phase": "verified",
     "pluginTestsPassed": 284,
     "nativeRelatedTestsPassed": 107,
     "ruffPassed": true,
-    "runtimeRecovery": "prepared; actual recovery and physical work remain open",
+    "runtimeRecovery": "Actual protected-confinement handoff followed by >10-block physical progress and FREE mobility; task ended at its deadline, backpack and quest completion not verified.",
     "noModelParameterChange": true,
-    "noRawInformationClipping": true
+    "noRawInformationClipping": true,
+    "deployedAt": 1791763821902,
+    "runtimeVerifiedAt": 1791764248134,
+    "noQuestCompletionClaim": true
   }
 }
