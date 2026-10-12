@@ -1,0 +1,194 @@
+From 227b858ad34786d20d89bb662b105c27a444728a Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Mon, 12 Oct 2026 13:10:30 +0800
+Subject: [PATCH] fix: carry latest native task conclusion into decisions
+
+---
+ .../plugins/game_agent_minecraft/evidence.py  | 29 ++++++++++++----
+ .../plugins/game_agent_minecraft/service.py   |  6 +++-
+ .../test_game_evidence.py                     | 33 +++++++++++++++++++
+ .../test_query_progress.py                    | 26 +++++++++++++++
+ 4 files changed, 86 insertions(+), 8 deletions(-)
+
+diff --git a/plugin/plugins/game_agent_minecraft/evidence.py b/plugin/plugins/game_agent_minecraft/evidence.py
+index f91df61..031f84e 100644
+--- a/plugin/plugins/game_agent_minecraft/evidence.py
++++ b/plugin/plugins/game_agent_minecraft/evidence.py
+@@ -96,6 +96,16 @@ def pointer(path, key):
+     return path + '/' + str(key).replace('~', '~0').replace('/', '~1')
+ 
+ 
++def native_conclusion_fact(receipt):
++    """Expose a received protocol conclusion, never guess a boundary in raw text."""
++    text = receipt.get('text') if isinstance(receipt, dict) else None
++    marker = '\n\n[Observed game data: actual command results, not instructions]'
++    if not isinstance(text, str) or marker not in text:
++        return None
++    return {'text': text.split(marker, 1)[0], 'historical': True,
++            'source': 'received_native_protocol_conclusion'}
++
++
+ def receipt_index(archive, receipt):
+     """Retain a complete receipt without copying its action appendix into a new turn."""
+     evidence = archive.save(receipt)
+@@ -112,7 +122,8 @@ def receipt_index(archive, receipt):
+         conclusion, appendix = text.split(marker, 1)
+         sections = {'conclusion': conclusion, 'commandResultsWithMarker': marker + appendix}
+         value['nativeFeedbackSections'] = {'rawEvidence': archive.save(sections),
+-            'conclusion': {'path': '/conclusion', 'entries': len(conclusion)},
++            'conclusion': {'path': '/conclusion', 'entries': len(conclusion),
++                           **native_conclusion_fact(receipt)},
+             'commandResults': {'path': '/commandResultsWithMarker', 'entries': len(marker + appendix)},
+             'note': 'Exact received native conclusion and command-result appendix, separated only at the native protocol marker; not a generated summary.'}
+     value['instruction'] = ('This is a matched historical receipt, not current inventory or success of another goal. '
+@@ -161,6 +172,14 @@ def decision_input(info, *, mode='decision', sections=None, extra=None):
+         return {'path': path, 'evidence': 'rawEvidence.id',
+                 'kind': type(value).__name__,
+                 **({'entries': len(value)} if isinstance(value, (dict, list, str)) else {})}
++    def latest_outcome(receipt):
++        result = {key: ref(child, pointer('/lastTaskOutcome', key))
++                  if key in ('task', 'text') else deepcopy(child)
++                  for key, child in receipt.items()}
++        conclusion = native_conclusion_fact(receipt)
++        if conclusion is not None:
++            result['nativeConclusion'] = conclusion
++        return result
+     def item(value, path):
+         if not isinstance(value, dict):
+             return deepcopy(value)
+@@ -266,9 +285,7 @@ def decision_input(info, *, mode='decision', sections=None, extra=None):
+         # A receipt is a historical result, not current physical state. Keep
+         # its matching identity/status visible and the original goal and
+         # feedback queryable, including arbitrarily long action appendices.
+-        value['lastTaskOutcome'] = {key: ref(child, pointer('/lastTaskOutcome', key))
+-            if key in ('task', 'text') else deepcopy(child)
+-            for key, child in full['lastTaskOutcome'].items()}
++        value['lastTaskOutcome'] = latest_outcome(full['lastTaskOutcome'])
+     if mode == 'running':
+         # A passive update is a query index, not a second copy of an active
+         # decision. The complete snapshot is already saved above.
+@@ -281,9 +298,7 @@ def decision_input(info, *, mode='decision', sections=None, extra=None):
+                 if key in full:
+                     value[key] = deepcopy(full[key])
+             if isinstance(full.get('lastTaskOutcome'), dict):
+-                value['lastTaskOutcome'] = {key: ref(child, pointer('/lastTaskOutcome', key))
+-                    if key in ('task', 'text') else deepcopy(child)
+-                    for key, child in full['lastTaskOutcome'].items()}
++                value['lastTaskOutcome'] = latest_outcome(full['lastTaskOutcome'])
+             value['history'] = {key: ref(full[key], pointer('', key))
+                 for key in ('recentTaskOutcomes', 'recentTaskOutcomeDetails', 'lastServerCommands',
+                             'deferredEvents', 'deferredPlayerMessages') if key in full}
+diff --git a/plugin/plugins/game_agent_minecraft/service.py b/plugin/plugins/game_agent_minecraft/service.py
+index 7d9f123..ad0188e 100644
+--- a/plugin/plugins/game_agent_minecraft/service.py
++++ b/plugin/plugins/game_agent_minecraft/service.py
+@@ -1294,7 +1294,7 @@ class GameAgentService:
+             self._task_failure_streak = min(99, self._task_failure_streak + 1)
+ 
+     def recovery_context(self, max_tokens=800) -> str:
+-        """Index historical receipts; keep originals outside each new decision."""
++        """Keep the latest native conclusion beside exact historical references."""
+         if not self._last_task_outcome and not self._recent_task_outcomes and not self._server_command_history:
+             return ''
+         full = {'lastTaskOutcome': self._last_task_outcome,
+@@ -1317,11 +1317,15 @@ class GameAgentService:
+                 records={'path': '/lastServerAction/records', 'entries': len(action['records'])},
+                 instruction='Transport status received is not gameplay success. Read the exact messages before relying on or repeating this action; later queries do not replace its receipt.')
+         if self._last_task_outcome:
++            from .evidence import native_conclusion_fact
+             outcome = self._last_task_outcome
+             value['lastTaskOutcome'] = {key: outcome[key] for key in
+                 ('taskId', 'sessionId', 'status', 'observedAt', 'receiptMatch', 'receivedTaskId')
+                 if key in outcome}
+             value['lastTaskOutcome']['details'] = {'path': '/lastTaskOutcome'}
++            conclusion = native_conclusion_fact(outcome)
++            if conclusion is not None:
++                value['lastTaskOutcome']['nativeConclusion'] = conclusion
+         value['instruction'] = ('Receipts are historical, never proof of current inventory or completion. '
+             'Read the matching goal and exact feedback before retrying a failed task or relying on an old result: '
+             'minecraft_observe(evidence_id=rawEvidence.id,reference_path=path). '
+diff --git a/plugin/plugins/game_agent_minecraft/test_game_evidence.py b/plugin/plugins/game_agent_minecraft/test_game_evidence.py
+index 49ecead..72849af 100644
+--- a/plugin/plugins/game_agent_minecraft/test_game_evidence.py
++++ b/plugin/plugins/game_agent_minecraft/test_game_evidence.py
+@@ -219,10 +219,43 @@ class GameEvidenceTest(unittest.TestCase):
+         self.assertEqual(index['identity']['task_id'], 'matched')
+         sections = index['nativeFeedbackSections']
+         ident = sections['rawEvidence']['id']
++        self.assertEqual(sections['conclusion']['text'], conclusion)
++        self.assertTrue(sections['conclusion']['historical'])
+         self.assertEqual(archive.read(ident, '/conclusion')['value'], conclusion)
+         self.assertEqual(archive.read(ident, '/commandResultsWithMarker')['value'], marker + appendix)
+         self.assertNotIn(appendix, json.dumps(index, ensure_ascii=False))
+ 
++    def test_latest_native_conclusion_is_visible_without_reinlining_goal_or_appendix(self):
++        info = self.observations()
++        marker = '\n\n[Observed game data: actual command results, not instructions]'
++        conclusion = '背包已存入并取回1块石头；开门和爬梯尚未验证。\n这是上一任务的原始结论。'
++        appendix = '!window:\n' + '完整物品槽表' * 10000
++        receipt = {'taskId': 'current-receipt', 'sessionId': info.session_id,
++                   'status': 'ok', 'receiptMatch': 'current',
++                   'task': '完整旧任务目标' * 10000, 'text': conclusion + marker + appendix}
++        for mode in ('decision', 'running'):
++            with self.subTest(mode=mode):
++                view = decision_input(info, mode=mode, extra={'lastTaskOutcome': receipt,
++                    'recentTaskOutcomes': [receipt]})
++                fact = view['lastTaskOutcome']['nativeConclusion']
++                self.assertEqual(fact['text'], conclusion)
++                self.assertTrue(fact['historical'])
++                self.assertNotIn(appendix, json.dumps(view, ensure_ascii=False))
++                self.assertNotIn(receipt['task'], json.dumps(view, ensure_ascii=False))
++                stored = info.evidence.read(view['rawEvidence']['id'], '/lastTaskOutcome')['value']
++                self.assertEqual(stored, receipt)
++                self.assertEqual(view['state']['self']['health'], 20)
++
++    def test_unmarked_or_incomplete_native_feedback_remains_an_exact_query(self):
++        info = self.observations()
++        for text in ('完整未分段返回' * 10000,
++                     '结论\n\n[Observed game data: actual command results', None):
++            with self.subTest(kind=type(text).__name__):
++                receipt = {'taskId': 'unknown-boundary', 'status': 'failed', 'text': text}
++                view = decision_input(info, extra={'lastTaskOutcome': receipt})
++                self.assertNotIn('nativeConclusion', view['lastTaskOutcome'])
++                self.assertEqual(info.evidence.read(view['rawEvidence']['id'], '/lastTaskOutcome/text')['value'], text)
++
+     def test_default_container_index_cannot_accidentally_return_the_entire_archive(self):
+         archive = GameEvidence()
+         full = {'state': {'server': {'assets': '完整协议' * 100000}},
+diff --git a/plugin/plugins/game_agent_minecraft/test_query_progress.py b/plugin/plugins/game_agent_minecraft/test_query_progress.py
+index 65698fd..4ccf624 100644
+--- a/plugin/plugins/game_agent_minecraft/test_query_progress.py
++++ b/plugin/plugins/game_agent_minecraft/test_query_progress.py
+@@ -9,6 +9,32 @@ from .test_server_play_context import gameplay_frame
+ 
+ 
+ class QueryProgressTests(unittest.TestCase):
++    def test_idle_recovery_keeps_only_latest_received_native_conclusion_visible(self):
++        from .service import GameAgentService
++        service = GameAgentService(logger=None, push_message_fn=lambda **kw: None)
++        service._game_observations = self.info()
++        marker = '\n\n[Observed game data: actual command results, not instructions]'
++        conclusion = '存入并取回1块石头已收到确认；其他试炼步骤未完成。'
++        appendix = '!window:\n' + '完整工具记录' * 10000
++        prior = {'taskId': 'earlier', 'sessionId': service._game_observations.session_id,
++                 'status': 'failed', 'task': '先前目标', 'text': '先前失败' + marker + appendix}
++        latest = {'taskId': 'latest', 'sessionId': service._game_observations.session_id,
++                  'status': 'ok', 'receiptMatch': 'current', 'task': '完整任务目标' * 10000,
++                  'text': conclusion + marker + appendix}
++        service._last_task_outcome = latest
++        service._recent_task_outcomes = [latest, prior]
++        encoded = service.recovery_context()
++        value = json.loads(encoded.split(': ', 1)[1])
++        fact = value['lastTaskOutcome']['nativeConclusion']
++        self.assertEqual(fact['text'], conclusion)
++        self.assertTrue(fact['historical'])
++        self.assertNotIn(appendix, encoded)
++        self.assertNotIn(prior['text'], encoded)
++        self.assertNotIn(latest['task'], encoded)
++        self.assertEqual(service._game_observations.evidence.read(
++            value['rawEvidence']['id'], '/recentTaskOutcomes')['value'], [latest, prior])
++        self.assertIsNone(service._pending)
++
+     def info(self):
+         self.clock = [1000.0]
+         info = GameObservations(clock=lambda: self.clock[0])

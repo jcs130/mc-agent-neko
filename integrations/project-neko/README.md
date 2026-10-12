@@ -7,6 +7,12 @@ configuration, one-RTX-3090 measurements, caller/thinking boundaries and feature
 that remain experimental. Private provider configuration and model weights are
 not included.
 
+The [latest task feedback companion](../../docs/local-latest-task-feedback.md)
+keeps the latest native protocol conclusion visible in the local main brain's
+completion, observation and idle decision paths. Plugin patch 0091 preserves
+exact historical query access without copying full old command appendices into
+each request. Native claims remain historical data, not fresh world proof.
+
 The [native local vector-memory deployment](../../docs/local-vector-memory.md)
 restores the existing CPU ONNX hybrid recall path when a trial launcher disabled
 it or omitted its assets. The pinned preparation helper does not change memory

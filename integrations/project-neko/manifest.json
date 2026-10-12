@@ -1,9 +1,9 @@
 {
   "upstreamRepository": "https://github.com/Project-N-E-K-O/N.E.K.O",
   "baseCommit": "fb2a2e731a8c954478d08678b0c8cf40e8145a54",
-  "sourceCommit": "346f9d4b11b55189ee8f25f0c1faa8230f4eba8a",
+  "sourceCommit": "227b858ad34786d20d89bb662b105c27a444728a",
   "scope": "plugin/plugins/game_agent_minecraft",
-  "resultPluginTree": "422d5559c47eeb26c77ebc2c2e51405e3c3b1c90",
+  "resultPluginTree": "d574a2d255e76cc3748f745b0462f03d08691744",
   "patches": [
     {
       "file": "0001-chore-configure-text-only-local-Qwen-Minecraft-trial.patch",
@@ -364,6 +364,10 @@
     {
       "file": "0090-fix-share-current-slot-keys-without-dropping-game-fa.patch",
       "sha256": "4b6fcae3232b49c116ae4168af06c1bec70a7f6a0efcd79694f934f1eb844659"
+    },
+    {
+      "file": "0091-fix-carry-latest-native-task-conclusion-into-decisio.patch",
+      "sha256": "33526dc34ae68d1220025ccc6012b279eb4fa01fb06ffa8987e0073a5cf8699e"
     }
   ],
   "verification": {
@@ -1904,5 +1908,22 @@
     "noModelParameterChange": true,
     "noRawInformationClipping": true,
     "acceptance": "Prepared only; natural request capacity, exam completion and speech repetition remain runtime acceptance items."
+  },
+  "latestNativeConclusionVerification": {
+    "sourceCommit": "227b858ad34786d20d89bb662b105c27a444728a",
+    "pluginPatches": 91,
+    "hostPatches": 34,
+    "pluginTree": "d574a2d255e76cc3748f745b0462f03d08691744",
+    "replayMatchesSource": true,
+    "hostScopeFilesVerified": 61,
+    "phase": "prepared",
+    "focusedTestsPassed": 27,
+    "pluginTestsPassed": 288,
+    "ruffPassed": true,
+    "verbatimLatestNativeConclusion": true,
+    "completeGoalAndAppendixQueriesPreserved": true,
+    "noModelParameterChange": true,
+    "noWakeFrequencyChange": true,
+    "acceptance": "Prepared only. Natural conclusion delivery and subsequent productive game steps need independent runtime observations; no old ticket is closed."
   }
 }
