@@ -53,3 +53,40 @@ test('one partial file read retains recent matched packet proof but cannot renew
     assert.equal(advanceServerLiveness(live, null, state, NOW + 75000).confirmedLive, false);
     assert.equal(advanceServerLiveness(live, null, { ...state, v: { ...state.v, x: 0 } }, NOW + 31000).confirmedLive, false);
 });
+
+test('an explicit disconnection is not a frozen online loop even while old vitals are still fresh', () => {
+    let live = advanceServerLiveness(null, frame(NOW), state, NOW);
+    live = advanceServerLiveness(live, frame(NOW + 15000, 23436300), state, NOW + 15000);
+    const offline = { online: false, sessionId: 'own-session', observedAt: NOW + 16000, state: {} };
+    live = advanceServerLiveness(live, offline, state, NOW + 16000);
+    assert.equal(live.confirmedLive, false);
+    assert.equal(frozenAliveConfirmed({ ...state, _serverLiveness: live }), false);
+});
+
+test('a partial read retains recent offline evidence without reviving old live proof or extending its expiry', () => {
+    let live = advanceServerLiveness(null, frame(NOW), state, NOW);
+    live = advanceServerLiveness(live, frame(NOW + 15000, 23436300), state, NOW + 15000);
+    live = advanceServerLiveness(live, { online: false, observedAt: NOW + 16000, state: {} }, state, NOW + 16000);
+    live = advanceServerLiveness(live, null, state, NOW + 17000);
+    assert.equal(live.confirmedLive, false);
+    assert.equal(frozenAliveConfirmed({ ...state, _serverLiveness: live }), false);
+    live = advanceServerLiveness(live, null, state, NOW + 62000);
+    assert.equal(frozenAliveConfirmed({ ...state, _serverLiveness: live }), true);
+});
+
+test('stale and future offline frames cannot indefinitely suppress missing packet evidence', () => {
+    for (const at of [NOW - 45001, NOW + 5001, undefined]) {
+        const live = advanceServerLiveness(null, { online: false, observedAt: at, state: {} }, state, NOW);
+        assert.equal(frozenAliveConfirmed({ ...state, _serverLiveness: live }), true);
+    }
+});
+
+test('reconnection clears the offline exemption and still detects a live writer with frozen server age', () => {
+    let live = advanceServerLiveness(null, { online: false, observedAt: NOW, state: {} }, state, NOW);
+    live = advanceServerLiveness(live, frame(NOW + 15000, 23436300, 'reconnected'), state, NOW + 15000);
+    assert.equal(frozenAliveConfirmed({ ...state, _serverLiveness: live }), true);
+    live = advanceServerLiveness(live, frame(NOW + 30000, 23436600, 'reconnected'), state, NOW + 30000);
+    assert.equal(frozenAliveConfirmed({ ...state, _serverLiveness: live }), false);
+    live = advanceServerLiveness(live, frame(NOW + 90000, 23436600, 'reconnected'), state, NOW + 90000);
+    assert.equal(frozenAliveConfirmed({ ...state, _serverLiveness: live }), true);
+});
