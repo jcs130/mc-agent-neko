@@ -146,7 +146,11 @@ export async function moveBackpackItem(bot, windowId, slot, count, { timeoutMs =
     const destEnd = depositing ? window.inventoryStart : window.inventoryEnd;
     const capacity = window.slots.slice(destStart, destEnd).reduce((n, value) => n + (!value ? item.stackSize
         : sameItem(value, item) ? Math.max(0, item.stackSize - value.count) : 0), 0);
-    if (!Number.isFinite(capacity) || capacity < count) return fail('Destination has insufficient space; no items moved.');
+    if (!Number.isFinite(capacity) || capacity < count) return fail('Destination has insufficient space; no items moved.\n'
+        + `Observed window=${window.id}, slot=${slot}, source=${item.name} x${item.count}, requested=${count}, `
+        + `direction=${depositing ? 'deposit' : 'withdraw'}, destination=${depositing ? 'backpack storage' : 'player inventory'}, `
+        + `available=${Number.isFinite(capacity) ? capacity : 'unknown'}. `
+        + 'Read !window for the current source and destination; reopening an unchanged backpack does not free space.');
     if (!bot._client?.on || !bot._client?.off || !bot.registry) return fail('Server confirmation is unavailable; no transfer submitted.');
     const Item = ItemFactory(bot.registry);
     const slots = window.slots.map(value => value && { ...value });

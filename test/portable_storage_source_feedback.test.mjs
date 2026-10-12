@@ -61,3 +61,41 @@ test('excess count reports the current stack without silently reducing the reque
     assert.match(result.message, /source=cobblestone x2, requested=64/);
     assert.equal(submitted(), 0);
 });
+
+test('full player inventory refusal exposes the received item and withdrawal direction', async () => {
+    const { bot, window, submitted } = await fixture();
+    window.slots[37] = item('experience_bottle', 64);
+    for (let slot = 54; slot < 90; slot++) window.slots[slot] = item('cobblestone', 64);
+    const result = await moveBackpackItem(bot, 15, 37, 1);
+    assert.equal(result.success, false);
+    assert.match(result.message, /^Destination has insufficient space; no items moved\./);
+    assert.match(result.message, /window=15, slot=37, source=experience_bottle x64, requested=1/);
+    assert.match(result.message, /direction=withdraw, destination=player inventory, available=0/);
+    assert.match(result.message, /reopening.*does not free space/i);
+    assert.ok(result.message.length < 500, 'current-operation facts must fit the action output budget');
+    assert.equal(submitted(), 0);
+});
+
+test('full storage refusal identifies a deposit instead of suggesting player inventory is full', async () => {
+    const { bot, window, submitted } = await fixture();
+    for (let slot = 0; slot < 54; slot++) window.slots[slot] = item('dirt', 64);
+    window.slots[82] = item('cobblestone', 53);
+    const result = await moveBackpackItem(bot, 15, 82, 1);
+    assert.equal(result.success, false);
+    assert.match(result.message, /slot=82, source=cobblestone x53, requested=1/);
+    assert.match(result.message, /direction=deposit, destination=backpack storage, available=0/);
+    assert.equal(submitted(), 0);
+});
+
+test('partial destination capacity is reported without changing the requested count', async () => {
+    const { bot, window, submitted } = await fixture();
+    for (let slot = 54; slot < 90; slot++) window.slots[slot] = item('dirt', 64);
+    window.slots[54] = item('cobblestone', 63);
+    const result = await moveBackpackItem(bot, 15, 21, 2);
+    assert.equal(result.success, false);
+    assert.match(result.message, /source=cobblestone x2, requested=2/);
+    assert.match(result.message, /direction=withdraw, destination=player inventory, available=1/);
+    assert.equal(submitted(), 0);
+    assert.equal(window.slots[21].count, 2);
+    assert.equal(window.slots[54].count, 63);
+});
