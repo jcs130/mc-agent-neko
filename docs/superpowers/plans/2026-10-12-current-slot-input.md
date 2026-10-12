@@ -9,7 +9,14 @@
 - [x] Measure the actual input representation offline before edits; verify exact round-trip equality and local token counts.
 - [x] Add a regression for complete inventory/window rows, missing-versus-null keys, custom names/lore and unchanged full/evidence reads.
 - [x] Implement only the proven representation change, run relevant plugin and host handoff checks.
-- [ ] Save Neko changes as the existing companion patch bundle, document regression/risk and push related changes to the user's fork.
-- [ ] Deploy the single plugin at an observed safe boundary, preserving game session, main/model/voice/desktop/eye; observe accepted real requests and task receipts before choosing the repair phase.
+- [x] Save Neko changes as the existing companion patch bundle, document regression/risk and push related changes to the user's fork.
+- [x] Deploy the single plugin at an observed safe boundary, preserving game session, main/model/voice/desktop/eye; observe accepted real requests and actual server-operation receipts before choosing the repair phase.
+
+Deployed at 12:04:06 Beijing, source 346f9d4 / fork 18fd360. By 12:10:20,
+44 natural requests completed without a new capacity error (maximum input
+31867). The separate 150-second/101-frame sample stayed healthy but had no
+body movement. Natural exam starts are not completed proofs; T-0035 recurred
+to occurrence 87. Use deployed, retain follow-up, and leave sustained
+physical progress, cache zero-reuse and repetitive speech acceptance open.
 
 If this lossless representation does not materially reduce the measured input, revise the hypothesis before deploying. Current facts must never become silently absent. Quest completion and speech repetition remain separate acceptance items; neither a short prompt nor an accepted request proves gameplay success.
