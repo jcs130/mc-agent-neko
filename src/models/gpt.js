@@ -36,11 +36,6 @@ export class GPT {
     async sendRequest(turns, systemMessage, stop_seq='***', options = {}) {
         const { strataCheckpoint, requestTrace, traceType, traceAgent, ...sdkOptions } = options;
         const trace = requestTrace || this.createTrace(traceAgent, traceType);
-        let messages = strictFormat(turns);
-        messages = messages.map(message => {
-            message.content += stop_seq;
-            return message;
-        });
         let model = this.model_name || "gpt-5.4-mini";
 
         let res = null;
@@ -55,11 +50,12 @@ export class GPT {
                 // The legacy cross-provider formatter demotes and merges system
                 // text into the first user turn. A changing snapshot then has no
                 // stable system-root checkpoint, even with fixed rules first.
-                // Keep the controller-created boundary independent on this local
-                // endpoint; only the game brain owns the engine's explicit pin.
+                // Keep history before the changing controller-created suffix,
+                // without rebuilding or mutating those historical turns. Only
+                // the game brain owns the engine's explicit pin.
                 let messages = boundary >= 0
                     ? [{role: 'system', content: systemMessage.slice(0, boundary)},
-                       ...strictFormat([{role: 'user', content: systemMessage.slice(boundary)}, ...turns])]
+                       ...strictFormat([...turns, {role: 'user', content: systemMessage.slice(boundary)}])]
                     : strictFormat([{role: 'system', content: systemMessage}, ...turns]);
                 const pack = {
                     model: model,

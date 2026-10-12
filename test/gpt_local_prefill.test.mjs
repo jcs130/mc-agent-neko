@@ -11,8 +11,8 @@ function model(url, enabled = true) {
     const context = vm.createContext({ URL, process: { env: { NEKO_LOCAL_STRATA_PREFILL: enabled ? '1' : '0' } },
         console: { log() {} }, hasKey: () => false, getKey: () => 'unused',
         strictFormat, createRequestTrace,
-        OpenAIApi: class { constructor() { this.chat = { completions: { create: async (body, options) => {
-            requests.push({ body, options }); return { choices: [{ finish_reason: 'stop', message: { content: 'ok' } }] };
+        OpenAIApi: class { constructor() { this.chat = { completions: { create: (body, options) => {
+            requests.push({ body, options }); return Promise.resolve({ choices: [{ finish_reason: 'stop', message: { content: 'ok' } }] });
         } } }; } } });
     const source = readFileSync(new URL('../src/models/gpt.js', import.meta.url), 'utf8')
         .replace(/^import .*;\r?\n/gm, '').replace(/^export /gm, '');
@@ -70,6 +70,58 @@ test('timing metadata never leaks into SDK options or the inference body', async
     assert.equal(requests[0].options.timeout, 5000);
     assert.deepEqual(records.map(r => r.event), ['dispatch', 'returned']);
     assert(!JSON.stringify(records).includes('PRIVATE_PROMPT'));
+});
+
+test('local dynamic state follows retained history exactly once on every request', async () => {
+    const { client, requests } = model('http://127.0.0.1:18030/v1');
+    const fixed = 'Identity, stop rules and documented capabilities';
+    const marker = '\n\nDYNAMIC EXECUTION CONTEXT — historical evidence is not current authority:\n';
+    const turns = [
+        { role: 'user', content: 'original player request' },
+        { role: 'assistant', content: 'previous executed command' },
+        { role: 'system', content: 'actual protection denied A' },
+        { role: 'system', content: 'actual item received B' },
+    ];
+    const original = structuredClone(turns);
+    for (const state of ['fresh health=20 x=12', 'fresh health=8 x=15']) {
+        await client.sendRequest(turns, fixed + marker + state);
+    }
+    assert.deepEqual(turns, original);
+    for (const { body } of requests) {
+        const text = body.messages.map(m => m.content).join('\n');
+        assert(text.indexOf('actual item received B') < text.indexOf('fresh health='));
+        assert.equal(text.split('actual item received B').length - 1, 1);
+        assert.equal(text.split('actual protection denied A').length - 1, 1);
+        assert.equal(text.split(marker.trim()).length - 1, 1);
+        assert.equal(body.messages[0].content, fixed);
+        assert.equal(body.messages.at(-1).role, 'user');
+    }
+    assert.deepEqual(requests[0].body.messages.slice(0, -1), requests[1].body.messages.slice(0, -1));
+});
+
+test('a native capacity retry keeps remaining receipts once without mutating history', async () => {
+    const { client, requests } = model('http://127.0.0.1:18030/v1');
+    const send = client.openai.chat.completions.create;
+    let attempt = 0;
+    client.openai.chat.completions.create = async (...args) => {
+        const result = await send(...args);
+        if (!attempt++) throw Object.assign(new Error('context_length_exceeded'), { code: 'context_length_exceeded' });
+        return result;
+    };
+    const turns = [
+        { role: 'user', content: 'earlier retained evidence' },
+        { role: 'system', content: 'receipt A' },
+        { role: 'system', content: 'receipt B' },
+    ];
+    const original = structuredClone(turns);
+    await client.sendRequest(turns, 'fixed rules');
+    assert.deepEqual(turns, original);
+    assert.equal(requests.length, 2);
+    for (const { body } of requests) {
+        const text = body.messages.map(m => m.content).join('\n');
+        assert.equal(text.split('receipt A').length - 1, 1);
+        assert.equal(text.split('receipt B').length - 1, 1);
+    }
 });
 
 test('the native next-step instruction reaches the final HTTP user turn after a prose response', async () => {

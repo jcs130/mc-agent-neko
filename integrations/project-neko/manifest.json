@@ -1,7 +1,7 @@
 {
   "upstreamRepository": "https://github.com/Project-N-E-K-O/N.E.K.O",
   "baseCommit": "fb2a2e731a8c954478d08678b0c8cf40e8145a54",
-  "sourceCommit": "50514e2572da85da5ff3c0944368332b3f816b8e",
+  "sourceCommit": "51587cc7cbd012e70d99217cf939337c112ed150",
   "scope": "plugin/plugins/game_agent_minecraft",
   "resultPluginTree": "a16264db4bb08965e2bc12d42a46463e3f54b992",
   "patches": [
@@ -762,6 +762,13 @@
         "tests/unit/test_proactive_sm_integration.py",
         "tests/unit/test_tool_calling.py",
         "utils/game_execution_context.py"
+      ]
+    },
+    {
+      "file": "host-patches/0035-test-local-verify-current-game-facts-reach-the-reque.patch",
+      "sha256": "0bf2705ff41be3fac7f6f54c9fb17da56571f16c7b9145f9c6bb0ad703d7bb3a",
+      "scopePaths": [
+        "tests/unit/test_local_dynamic_request_tail.py"
       ]
     }
   ],
@@ -2003,5 +2010,28 @@
     "protectedServicesPreserved": true,
     "naturalCurrentInputSamples": 2,
     "broadAutonomyRecoveryVerified": false
+  },
+  "dynamicRequestTailVerification": {
+    "sourceCommit": "51587cc7cbd012e70d99217cf939337c112ed150",
+    "pluginPatches": 93,
+    "hostPatches": 35,
+    "pluginTree": "a16264db4bb08965e2bc12d42a46463e3f54b992",
+    "replayMatchesSource": true,
+    "hostScopeFilesVerified": 62,
+    "hostProductionCodeChanged": false,
+    "phase": "prepared",
+    "hostRegressionTestsPassed": 196,
+    "nativeFocusedTestsPassed": 25,
+    "nativeFullTests": 879,
+    "nativeFullPassed": 876,
+    "nativePreExistingFailuresReproducedOnBaseline": 3,
+    "newNativeLintFindings": 0,
+    "completeOriginalHistoryPreserved": true,
+    "dynamicLayoutRestrictedToOptedLocalEndpoint": true,
+    "modelParameterChanges": false,
+    "newModelCalls": 0,
+    "rawDiagnosticContentSaved": false,
+    "offlineRetainedTaskGroups": 3,
+    "onlineLatencyImprovementVerified": false
   }
 }

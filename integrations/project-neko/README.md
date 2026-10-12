@@ -7,6 +7,13 @@ configuration, one-RTX-3090 measurements, caller/thinking boundaries and feature
 that remain experimental. Private provider configuration and model weights are
 not included.
 
+The [dynamic request tail audit](../../docs/local-dynamic-request-tail.md)
+keeps the local native controller's changing state after retained history and
+fixes formatter mutations that duplicated results across assembly/retries.
+Host patch 0035 verifies that the main brain already supplies one temporary
+current-fact cue at the tail without accumulating it in saved history; it changes
+no host production code or model settings.
+
 The [slot protocol index companion](../../docs/local-slot-protocol-index.md)
 shares original opaque slot columns through existing table paths. Plugin patch
 0092 reduces repeated protocol wrappers while preserving complete exact reads;

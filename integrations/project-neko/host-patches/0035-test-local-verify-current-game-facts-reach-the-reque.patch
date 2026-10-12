@@ -1,0 +1,93 @@
+From 51587cc7cbd012e70d99217cf939337c112ed150 Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Mon, 12 Oct 2026 15:30:48 +0800
+Subject: [PATCH] test(local): verify current game facts reach the request tail
+ once
+
+---
+ tests/unit/test_local_dynamic_request_tail.py | 76 +++++++++++++++++++
+ 1 file changed, 76 insertions(+)
+ create mode 100644 tests/unit/test_local_dynamic_request_tail.py
+
+diff --git a/tests/unit/test_local_dynamic_request_tail.py b/tests/unit/test_local_dynamic_request_tail.py
+new file mode 100644
+index 0000000..4b2f618
+--- /dev/null
++++ b/tests/unit/test_local_dynamic_request_tail.py
+@@ -0,0 +1,76 @@
++"""Check the real host constructor and final SDK parameter projection offline."""
++import copy
++
++import pytest
++
++from main_logic.omni_offline_client import OmniOfflineClient
++from tests.unit.test_tool_calling import _minimal_offline_client_for_leak_tests
++from utils.llm_client import AIMessage, HumanMessage, LLMStreamChunk, SystemMessage
++from utils.llm_client.openai_client import ChatOpenAI
++
++
++@pytest.mark.asyncio
++async def test_execution_facts_reach_wire_tail_once_without_accumulating_in_history(monkeypatch):
++    monkeypatch.setenv('NEKO_LOCAL_STRATA_PREFILL', '1')
++    monkeypatch.setenv('NEKO_LLM_PROMPT_AUDIT', '0')
++    wire = ChatOpenAI(model='local', base_url='http://127.0.0.1:18030/v1', api_key='unused')
++    calls = []
++    tools = [{'type': 'function', 'function': {'name': 'minecraft_observe',
++              'description': 'Read current facts', 'parameters': {'type': 'object', 'properties': {}}}}]
++
++    async def capture(self, messages, **_overrides):
++        view = self._dialog_messages_for_provider(messages)
++        calls.append(copy.deepcopy(wire._params(view, stream=True, tools=tools)))
++        yield LLMStreamChunk(content='', tool_round_persisted=True)
++
++    monkeypatch.setattr(OmniOfflineClient, '_astream_with_tools', capture)
++    client = _minimal_offline_client_for_leak_tests()
++    client.base_url = wire.base_url
++    client._stable_instruction_prefix = 'identity; permissions; respect human stop requests\n'
++    fixed = client._stable_instruction_prefix + 'session directives remain system instructions'
++    historical = [SystemMessage(content=fixed), HumanMessage(content='original player greeting'),
++                  AIMessage(content='earlier actual response'),
++                  HumanMessage(content='stop digging; retain this human instruction')]
++    client._conversation_history = list(historical)
++    client.on_response_done = None
++    client.on_text_delta = None
++    cues = ['current fact version=1 position=12 inventory=stone authorized=false',
++            'current fact version=2 position=15 inventory=iron authorized=false']
++    try:
++        for cue in cues:
++            assert await client.prompt_ephemeral(cue, request_scope='minecraft_execution')
++        assert client._conversation_history == historical
++        for index, body in enumerate(calls):
++            assert body['messages'][0] == {'role': 'system', 'content': fixed}
++            assert body['messages'][-1] == {'role': 'user', 'content': cues[index]}
++            assert body['messages'][-2]['content'] == historical[-1].content
++            assert sum(cues[index] in str(m['content']) for m in body['messages']) == 1
++            assert body['tools'] == tools
++            assert body['extra_body']['strata_prefix'] == {'message': 0, 'chars': len(client._stable_instruction_prefix)}
++        assert calls[0]['messages'][:-1] == calls[1]['messages'][:-1]
++        assert cues[0] not in str(calls[1]['messages'])
++    finally:
++        await wire.aclose()
++
++
++def test_current_tool_receipts_follow_the_cue_with_pairing_and_order_unchanged(monkeypatch):
++    monkeypatch.setenv('NEKO_LOCAL_STRATA_PREFILL', '1')
++    from utils.llm_client import prefill
++
++    body = {'messages': [
++        {'role': 'system', 'content': 'identity, safety and stop authority'},
++        {'role': 'user', 'content': 'current coordinate and task cue'},
++        {'role': 'assistant', 'content': 'inspect', 'tool_calls': [{'id': 'read1',
++            'type': 'function', 'function': {'name': 'minecraft_observe', 'arguments': '{}'}}]},
++        {'role': 'tool', 'tool_call_id': 'read1', 'content': 'actual result: protection denied; mana=28'},
++    ], 'tools': [{'type': 'function', 'function': {'name': 'minecraft_observe'}}]}
++    original = copy.deepcopy(body)
++    token = prefill.game_scope.set('identity, safety and stop authority')
++    try:
++        for _ in range(3):
++            actual = prefill.request_policy(body, 'http://127.0.0.1:18030/v1', 'proactive')
++            assert actual['messages'] == original['messages']
++            assert actual['tools'] == original['tools']
++            assert body == original
++    finally:
++        prefill.game_scope.reset(token)

@@ -45,7 +45,10 @@ export function strictFormat(turns) {
     let prev_role = null;
     let messages = [];
     let filler = {role: 'user', content: '_'};
-    for (let msg of turns) {
+    for (const turn of turns) {
+        // Formatting owns its messages: merging adjacent turns must never
+        // append to caller history or accumulate receipts on a retry.
+        const msg = { ...turn };
         if (typeof msg.content === 'string')  {
             msg.content = msg.content.trim();
         }
@@ -55,7 +58,7 @@ export function strictFormat(turns) {
         }
         if (msg.role === prev_role && msg.role === 'assistant') {
             // insert empty user message to separate assistant messages
-            messages.push(filler);
+            messages.push({ ...filler });
             messages.push(msg);
         }
         else if (msg.role === prev_role) {
@@ -69,10 +72,10 @@ export function strictFormat(turns) {
         
     }
     if (messages.length > 0 && messages[0].role !== 'user') {
-        messages.unshift(filler); // anthropic requires user message to start
+        messages.unshift({ ...filler }); // anthropic requires user message to start
     }
     if (messages.length === 0) {
-        messages.push(filler);
+        messages.push({ ...filler });
     }
     return messages;
 }
