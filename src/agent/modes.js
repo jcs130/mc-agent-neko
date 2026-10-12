@@ -24,6 +24,7 @@ import { observeStallContext, recoveryMovedEnough } from './stall_recovery.js';
 import { protectedSurfaceSwimHandoff, protectedWaterExitRoute } from './surface_swim_recovery.js';
 import { hasMeleeWeapon, threatCanReachBot } from './combat_policy.js';
 import { protectedRetreatHandoff, rememberRetreatDigRefusal } from './protected_retreat_recovery.js';
+import { protectedConfinementHandoff, rememberConfinementDigRefusal } from './protected_confinement_recovery.js';
 
 const FAMINE_FOOD_RE = /cooked_|_bread|^bread$|apple|golden_apple|carrot|potato|beef|porkchop|chicken|mutton|cod|salmon|melon_slice|sweet_berries|_stew|rabbit|baked_|rotten_flesh|spider_eye/;
 const NORMAL_FOOD_RE = /cooked_|_bread|^bread$|apple|golden_apple|carrot|potato|beef|porkchop|chicken|mutton|cod|salmon|melon_slice|sweet_berries|_stew|rabbit|baked_/;
@@ -4754,6 +4755,7 @@ const modes_list = [
                             ]);
                             return true;
                         } catch (e) {
+                            rememberConfinementDigRefusal(bot, fresh);
                             try { bot.stopDigging(); } catch (_) {}
                             try {
                                 fs.appendFileSync('bots/_supervisor/progress.txt',
@@ -4775,6 +4777,11 @@ const modes_list = [
             // window into another protected-wall dig. Emergencies revoke it.
             if (protectedRetreatHandoff(bot, {
                 externalOwner: agent.hasExternalAutonomyOwner?.() === true,
+                emergency: arbiterVitalNow(bot), now: Date.now(),
+            })) return;
+            if (protectedConfinementHandoff(bot, {
+                externalOwner: agent.hasExternalAutonomyOwner?.() === true,
+                executingOther: !!agent.actions?.executing && agent.actions.currentActionLabel !== 'mode:mobility',
                 emergency: arbiterVitalNow(bot), now: Date.now(),
             })) return;
             // ── reactions ──

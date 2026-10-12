@@ -542,3 +542,9 @@ report and indexes the latest server action receipt across later queries. It fol
 the complete-retention/current-facts/query policy for local inference. Apply the full
 series, then reload only the Minecraft plugin at an idle boundary. See the
 [regression report and acceptance limits](../../docs/local-exam-progress.md).
+
+Plugin patch 0089 recognizes the native measured protected confinement handoff.
+Use it with the matching native wall-refusal recovery code in this fork. Actual
+idle telemetry remains mandatory; this does not override active work or authorize
+breaking protected blocks. See [the confinement report](../../docs/protected-confinement-handoff.md)
+for regression coverage and the separate runtime acceptance.

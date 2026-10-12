@@ -224,6 +224,7 @@ export function collectGameState(agent, presentation = {}) {
         activity: { action: agent.actions?.currentActionLabel ?? null, skill: bot._currentSkill ?? null,
             mobility: bot._mobility ?? null, digging: blockState(bot.targetDigBlock),
             recovery: bot._protectedRetreatRecovery?.expiresAt > Date.now() ? bot._protectedRetreatRecovery
+                : bot._confinementRecovery?.expiresAt > Date.now() ? bot._confinementRecovery
                 : bot._surfaceSwimRecovery?.expiresAt > Date.now() ? bot._surfaceSwimRecovery : null,
             usingHeldItem: bot.usingHeldItem ?? null },
         server: { authentication: serverAuthentication(bot), welcome: presentation.welcome, scoreboards,

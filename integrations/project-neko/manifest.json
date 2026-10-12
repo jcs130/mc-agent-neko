@@ -1,9 +1,9 @@
 {
   "upstreamRepository": "https://github.com/Project-N-E-K-O/N.E.K.O",
   "baseCommit": "fb2a2e731a8c954478d08678b0c8cf40e8145a54",
-  "sourceCommit": "8571e718570b10b5a74523c9d36e48699849389c",
+  "sourceCommit": "745939418a6727d5a06e021d6a540be80125d08b",
   "scope": "plugin/plugins/game_agent_minecraft",
-  "resultPluginTree": "73472f5fd8da924a0d1496b564c6fb3a8f3f9fa9",
+  "resultPluginTree": "6a92f04583189233c4e0be98f62be18b2a7f819f",
   "patches": [
     {
       "file": "0001-chore-configure-text-only-local-Qwen-Minecraft-trial.patch",
@@ -356,6 +356,10 @@
     {
       "file": "0088-fix-minecraft-retain-exam-status-and-latest-server-a.patch",
       "sha256": "434832bc42e78055d3548842a7a384e1c9f873d9cbb260142b66132de5b96675"
+    },
+    {
+      "file": "0089-fix-minecraft-accept-measured-protected-confinement-.patch",
+      "sha256": "d8e935ca45db9cb3c8376051aa56b13d0cc664e37891c0d1050c495457b9abac"
     }
   ],
   "verification": {
@@ -1857,5 +1861,20 @@
     "duplicatePlaybackCycles": 0,
     "exactRepeatedReplyGroups": 1,
     "semanticGenerationRecurrenceAcceptance": "open"
+  },
+  "protectedConfinementHandoffVerification": {
+    "sourceCommit": "745939418a6727d5a06e021d6a540be80125d08b",
+    "pluginPatches": 89,
+    "hostPatches": 34,
+    "pluginTree": "6a92f04583189233c4e0be98f62be18b2a7f819f",
+    "replayMatchesSource": true,
+    "hostScopeFilesVerified": 61,
+    "phase": "prepared",
+    "pluginTestsPassed": 284,
+    "nativeRelatedTestsPassed": 107,
+    "ruffPassed": true,
+    "runtimeRecovery": "prepared; actual recovery and physical work remain open",
+    "noModelParameterChange": true,
+    "noRawInformationClipping": true
   }
 }

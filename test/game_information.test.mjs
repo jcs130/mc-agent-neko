@@ -45,6 +45,15 @@ function fixture(t, options = {}) {
     return { agent, bot, frames, information };
 }
 
+test('an actual bounded confinement handoff reaches the game protocol and expires', t => {
+    const { bot, information } = fixture(t);
+    bot._confinementRecovery = { type: 'protected-confinement-stall', observedAt: Date.now(),
+        expiresAt: Date.now() + 60000, blockedTarget: { x: 102, y: 18, z: 203 } };
+    assert.deepEqual(information.snapshot().state.activity.recovery, bot._confinementRecovery);
+    bot._confinementRecovery.expiresAt = Date.now() - 1;
+    assert.equal(information.snapshot().state.activity.recovery, null);
+});
+
 test('default observation path keeps long guide text and every received merchant quote', async t => {
     const { bot, information } = fixture(t);
     const guide = '欢迎与玩法说明。'.repeat(1800) + '末尾关键条件：持有试炼券才可以进入。';
