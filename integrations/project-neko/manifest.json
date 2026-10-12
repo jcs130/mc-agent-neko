@@ -1,9 +1,9 @@
 {
   "upstreamRepository": "https://github.com/Project-N-E-K-O/N.E.K.O",
   "baseCommit": "fb2a2e731a8c954478d08678b0c8cf40e8145a54",
-  "sourceCommit": "04ebb81d568306ee28bb75fd3403125a189b6ae3",
+  "sourceCommit": "50514e2572da85da5ff3c0944368332b3f816b8e",
   "scope": "plugin/plugins/game_agent_minecraft",
-  "resultPluginTree": "b5e62acff88906ccc1fa1148c1dc47b630652fea",
+  "resultPluginTree": "a16264db4bb08965e2bc12d42a46463e3f54b992",
   "patches": [
     {
       "file": "0001-chore-configure-text-only-local-Qwen-Minecraft-trial.patch",
@@ -372,6 +372,10 @@
     {
       "file": "0092-fix-share-original-item-protocol-columns-in-decision.patch",
       "sha256": "60423005308beeb6a2cb3f148cfecbfd2e7ab645e1dac84a3c739683e8e58924"
+    },
+    {
+      "file": "0093-fix-keep-current-decision-facts-with-exact-server-ev.patch",
+      "sha256": "bd19787e72e69a7df9900d54b1411d9d30b2c8f2bdcc472f6e764894f8ee495d"
     }
   ],
   "verification": {
@@ -1957,5 +1961,35 @@
     "noModelParameterChange": true,
     "noWakeFrequencyChange": true,
     "acceptance": "Prepared only. Smaller offline projections do not establish natural capacity recovery, latency improvement or productive autonomy."
+  },
+  "currentDecisionEssentialsVerification": {
+    "sourceCommit": "50514e2572da85da5ff3c0944368332b3f816b8e",
+    "pluginPatches": 93,
+    "hostPatches": 34,
+    "pluginTree": "a16264db4bb08965e2bc12d42a46463e3f54b992",
+    "replayMatchesSource": true,
+    "hostScopeFilesVerified": 61,
+    "phase": "prepared",
+    "focusedTestsPassed": 26,
+    "pluginTestsPassed": 297,
+    "ruffPassed": true,
+    "pairedOfflineProjectionSamples": 3,
+    "welcomeSavedTokensPerReconstructedSample": [
+      1926,
+      1926,
+      1926
+    ],
+    "combinedSavedTokensPerReconstructedSample": [
+      5352,
+      5352,
+      5352
+    ],
+    "distinctServerReplySamples": 8,
+    "completeOriginalQueriesPreserved": true,
+    "emergencyGuidanceDirectlyVisible": true,
+    "smallReplyFallback": true,
+    "noModelParameterChange": true,
+    "noWakeFrequencyChange": true,
+    "acceptance": "Prepared only. Offline reconstruction is not an original HTTP request, runtime latency result or autonomous task recovery."
   }
 }

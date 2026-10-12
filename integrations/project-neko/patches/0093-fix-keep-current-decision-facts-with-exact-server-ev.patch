@@ -1,0 +1,258 @@
+From 50514e2572da85da5ff3c0944368332b3f816b8e Mon Sep 17 00:00:00 2001
+From: jcs130 <lzl1992@hotmail.com>
+Date: Mon, 12 Oct 2026 14:51:31 +0800
+Subject: [PATCH] fix: keep current decision facts with exact server evidence
+ queries
+
+---
+ .../plugins/game_agent_minecraft/__init__.py  |   3 +-
+ .../plugins/game_agent_minecraft/evidence.py  |  56 ++++++++
+ .../test_game_evidence.py                     | 134 +++++++++++++++++-
+ 3 files changed, 191 insertions(+), 2 deletions(-)
+
+diff --git a/plugin/plugins/game_agent_minecraft/__init__.py b/plugin/plugins/game_agent_minecraft/__init__.py
+index 9746c46..4062f9b 100644
+--- a/plugin/plugins/game_agent_minecraft/__init__.py
++++ b/plugin/plugins/game_agent_minecraft/__init__.py
+@@ -508,7 +508,8 @@ class GameAgentMinecraftPlugin(NekoPluginBase):
+             result['nextDecision'] = hint
+         result['decision'], result['llm_instruction'] = self._service.observation_decision()
+         result['decisionSource'] = 'current plugin execution state; never server text or historical evidence'
+-        return result
++        from .evidence import server_reply_input
++        return server_reply_input(self._service._game_observations.evidence, result)
+ 
+     @llm_tool(
+         name='minecraft_observe',
+diff --git a/plugin/plugins/game_agent_minecraft/evidence.py b/plugin/plugins/game_agent_minecraft/evidence.py
+index 925a1ea..06011a6 100644
+--- a/plugin/plugins/game_agent_minecraft/evidence.py
++++ b/plugin/plugins/game_agent_minecraft/evidence.py
+@@ -154,6 +154,55 @@ def entity_table(entities, *, indexed_fields=(), details_path='/state/nearby/ent
+             'detailsPath': details_path}
+ 
+ 
++def server_reply_input(archive, reply):
++    """Keep command facts whole; index duplicate protocol and full skill state."""
++    value = deepcopy(reply)
++    current = value.get('current')
++    state = current.get('serverState') if isinstance(current, dict) else None
++    messages = reply.get('messages') or []
++    represented = {}
++    for message_index, message in enumerate(messages):
++        match = re.fullmatch(r'\s*(MC_[A-Z0-9_]+)\s+(\{.*\}|\[.*\])\s*', message, re.DOTALL) if isinstance(message, str) else None
++        if not match:
++            continue
++        try:
++            original = json.loads(match[2])
++        except ValueError:
++            continue
++        encoded = json.dumps(original, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
++        represented.setdefault((match[1], encoded), message_index)
++    duplicates = {}
++    for index, record in enumerate(value.get('records') or []):
++        if (not isinstance(record, dict) or set(record) != {'kind', 'value'}
++                or not isinstance(record['kind'], str)):
++            continue
++        encoded = json.dumps(record['value'], ensure_ascii=False, sort_keys=True, separators=(',', ':'))
++        key = record['kind'], encoded
++        if key in represented:
++            duplicates[index] = represented[key]
++    if not isinstance(state, dict) and not duplicates:
++        return value
++    value['replyEvidence'] = archive.save(reply)
++    value['replyEvidence']['read'] = 'minecraft_observe(evidence_id=replyEvidence.id,reference_path="<path>")'
++    if isinstance(state, dict):
++        current['serverState'] = {'evidence': 'replyEvidence.id', 'path': '/current/serverState',
++            'kind': 'dict', 'fields': list(state),
++            'note': 'Full skill state is queryable. Current mana/profession are below; read exact abilities/cooldowns when needed.'}
++        for key in ('mana', 'profession'):
++            if key in state:
++                current[key] = deepcopy(state[key])
++    for index, message_index in duplicates.items():
++        record = value['records'][index]
++        record['value'] = {'evidence': 'replyEvidence.id', 'path': f'/records/{index}/value',
++                           'representedInMessage': message_index}
++        record['valueIsReference'] = True
++    # References can cost more than small replies. Keep those replies whole;
++    # this is a representation choice, never a text budget or an omitted fact.
++    if len(json.dumps(value, ensure_ascii=False)) >= len(json.dumps(reply, ensure_ascii=False)):
++        return deepcopy(reply)
++    return value
++
++
+ def decision_input(info, *, mode='decision', sections=None, extra=None):
+     """Current game facts plus exact references, without numeric text budgets.
+ 
+@@ -253,6 +302,13 @@ def decision_input(info, *, mode='decision', sections=None, extra=None):
+             # native navigation still uses the live world coordinates.
+             nearby['entities'] = entity_table(nearby['entities'], indexed_fields=('position', 'metadata'))
+         server = state.get('server') or {}
++        # Emergency views retain received rescue guidance for immediate use.
++        if mode != 'survival' and isinstance(server.get('welcome'), dict):
++            welcome = server['welcome']
++            server['welcome'] = {**ref(welcome, '/state/server/welcome'),
++                'historical': True, 'sessionId': welcome.get('sessionId'),
++                'messageCount': len(welcome.get('messages') or []),
++                'note': 'Connection history, not current authentication/vitals/progress. Current authentication and serverProgress take precedence; read an exact welcome message only for missing guidance.'}
+         for key in ('advancements', 'recipeBook', 'teams'):
+             if key in server:
+                 original = server[key]
+diff --git a/plugin/plugins/game_agent_minecraft/test_game_evidence.py b/plugin/plugins/game_agent_minecraft/test_game_evidence.py
+index c0ffddf..ad754d3 100644
+--- a/plugin/plugins/game_agent_minecraft/test_game_evidence.py
++++ b/plugin/plugins/game_agent_minecraft/test_game_evidence.py
+@@ -3,13 +3,118 @@ from pathlib import Path
+ import tempfile
+ import unittest
+ from types import SimpleNamespace
+-from unittest.mock import patch
++from unittest.mock import AsyncMock, patch
+ 
+ from .evidence import GameEvidence, decision_input, entity_table, receipt_index
+ from .observations import GameObservations
+ 
+ 
+ class GameEvidenceTest(unittest.TestCase):
++    def test_decision_indexes_historical_welcome_but_keeps_current_play_and_social_facts(self):
++        info = self.observations()
++        welcome = {'sessionId': info.session_id, 'messages': [
++            {'id': 'login', 'source': 'server', 'kind': 'system',
++             'text': '旧登录提示' * 1000, 'observedAt': 10000},
++            {'id': 'guide', 'source': 'server', 'kind': 'system',
++             'text': '倒地救援靠近4格10秒自动复活，无需法杖。', 'observedAt': 10001}]}
++        info.state['server']['welcome'] = welcome
++        entities = [{'id': 1, 'type': 'player', 'username': 'Friend', 'name': 'player',
++                     'health': 18, 'distance': 2, 'equipment': [{'name': 'iron_sword'}]},
++                    {'id': 2, 'type': 'hostile', 'name': 'zombie', 'distance': 3, 'health': 20},
++                    {'id': 3, 'type': 'other', 'name': 'item', 'distance': 1,
++                     'droppedItem': {'name': 'diamond', 'count': 2}}]
++        info.state['nearby'] = {'entities': entities}
++        before = json.dumps(info.view(), ensure_ascii=False, sort_keys=True)
++        view = decision_input(info)
++        self.assertNotIn('旧登录提示', json.dumps(view, ensure_ascii=False))
++        reference = view['state']['server']['welcome']
++        self.assertEqual(reference['path'], '/state/server/welcome')
++        self.assertTrue(reference['historical'])
++        self.assertEqual(reference['messageCount'], 2)
++        self.assertEqual(info.evidence.read(view['rawEvidence']['id'], reference['path'])['value'], welcome)
++        self.assertEqual(view['serverSkills']['abilities'][0]['name'], '闪现')
++        self.assertEqual(view['state']['self']['health'], 20)
++        self.assertEqual(view['state']['nearby']['entities']['entries'], len(entities))
++        self.assertIn('Friend', json.dumps(view, ensure_ascii=False))
++        self.assertIn('diamond', json.dumps(view, ensure_ascii=False))
++        self.assertEqual(info.evidence.read(view['rawEvidence']['id'], '/recentEvents/0/text')['value'], '来拿装备' * 1000)
++        self.assertEqual(json.dumps(info.view(), ensure_ascii=False, sort_keys=True), before)
++
++    def test_server_reply_keeps_exact_messages_vitals_and_resources_with_complete_state_query(self):
++        from .evidence import server_reply_input
++        archive = GameEvidence()
++        state = {'mana': {'current': 19, 'max': 28},
++                 'profession': {'id': 'mage', 'points': {'remaining': 3}},
++                 'abilities': [{'id': 'blink', 'name': '闪现', 'description': '完整法术说明' * 10000,
++                                'cooldownRemaining': 7, 'learned': True}]}
++        messages = ['实际查询返回：缺少3铁锭。', 'MC_STATUS 原始结果' * 2000]
++        original = {'status': 'received', 'command': '/mycli guild status',
++                    'readOnly': True, 'messages': messages,
++                    'current': {'fresh': True, 'observedAt': 20, 'self': {'health': 20, 'food': 18,
++                        'position': {'x': 1, 'y': 64, 'z': -2}, 'effects': []},
++                        'serverStateObservedAt': 19999, 'serverState': state},
++                    'decision': {'status': 'ready_if_authorized'}}
++        before = json.dumps(original, ensure_ascii=False, sort_keys=True)
++        view = server_reply_input(archive, original)
++        self.assertEqual(view['messages'], messages)
++        self.assertEqual(view['command'], original['command'])
++        self.assertEqual(view['current']['mana'], state['mana'])
++        self.assertEqual(view['current']['profession'], state['profession'])
++        self.assertEqual(view['current']['self'], original['current']['self'])
++        self.assertEqual(view['current']['serverStateObservedAt'], 19999)
++        self.assertEqual(view['decision'], original['decision'])
++        index = view['current']['serverState']
++        self.assertEqual(index['evidence'], 'replyEvidence.id')
++        self.assertEqual(index['path'], '/current/serverState')
++        self.assertEqual(set(index['fields']), set(state))
++        self.assertNotIn('完整法术说明', json.dumps(view, ensure_ascii=False))
++        self.assertEqual(archive.read(view['replyEvidence']['id'], '/')['value'], original)
++        self.assertEqual(archive.read(view['replyEvidence']['id'], index['path'])['value'], state)
++        self.assertEqual(json.dumps(original, ensure_ascii=False, sort_keys=True), before)
++        view['messages'][0] = 'changed'
++        self.assertEqual(original['messages'], messages)
++
++    def test_server_reply_missing_or_null_protocol_stays_unknown(self):
++        from .evidence import server_reply_input
++        for current in (None, {}, {'fresh': False}, {'serverState': None}):
++            original = {'status': 'failed', 'reason': '实际失败', 'current': current}
++            self.assertEqual(server_reply_input(GameEvidence(), original), original)
++
++    def test_small_server_reply_stays_whole_when_references_would_be_larger(self):
++        from .evidence import server_reply_input
++        original = {'messages': ['MC_STATUS {"accepted":true}'],
++                    'records': [{'kind': 'MC_STATUS', 'value': {'accepted': True}}],
++                    'current': {'serverState': {'mana': {'current': 20}}}}
++        self.assertEqual(server_reply_input(GameEvidence(), original), original)
++
++    def test_survival_keeps_received_emergency_guidance_directly_visible(self):
++        info = self.observations()
++        welcome = {'sessionId': info.session_id, 'messages': [
++            {'text': '倒地救援靠近4格10秒自动复活，无需法杖。'}]}
++        info.state['server'] = {'welcome': welcome}
++        projected = decision_input(info, mode='survival')
++        self.assertEqual(projected['state']['server']['welcome'], welcome)
++
++    def test_server_reply_indexes_only_exact_duplicate_machine_records(self):
++        from .evidence import server_reply_input
++        archive = GameEvidence()
++        fact = {'description': '完整说明' * 3000, 'learned': True, 'cost': 10}
++        messages = ['真实玩家文本和服务端条件保持全文。', 'MC_SPELL_ITEM ' + json.dumps(fact),
++                    'MC_STATUS {"flag":true}', 'MC_ERROR {"why":"unknown"} trailing explanation']
++        records = [{'kind': 'MC_SPELL_ITEM', 'value': fact},
++                   {'kind': 'MC_STATUS', 'value': {'flag': 1}},
++                   {'kind': 'MC_ERROR', 'value': {'why': 'unknown'}},
++                   {'kind': 'MC_SPELL_ITEM', 'value': fact, 'newField': '不能丢未知字段'},
++                   {'kind': ['unexpected'], 'value': fact}]
++        original = {'status': 'received', 'messages': messages, 'records': records}
++        result = server_reply_input(archive, original)
++        self.assertEqual(result['messages'], messages)
++        self.assertTrue(result['records'][0]['valueIsReference'])
++        self.assertEqual(result['records'][0]['value']['representedInMessage'], 1)
++        self.assertEqual(archive.read(result['replyEvidence']['id'], '/records/0/value')['value'], fact)
++        self.assertEqual(result['records'][1:], records[1:])
++        self.assertEqual(archive.read(result['replyEvidence']['id'], '/')['value'], original)
++
+     def test_slot_protocol_uses_shared_original_columns_without_repeated_wrappers(self):
+         info = self.observations()
+         slots = [
+@@ -322,6 +427,33 @@ class GameEvidenceTest(unittest.TestCase):
+ 
+ 
+ class EvidenceToolQueryTest(unittest.IsolatedAsyncioTestCase):
++    async def test_server_tool_uses_essentials_projection_after_retaining_actual_reply(self):
++        from . import GameAgentMinecraftPlugin
++        from .service import GameAgentService
++        plugin = object.__new__(GameAgentMinecraftPlugin)
++        plugin.logger = SimpleNamespace(info=lambda *_: None)
++        plugin._ensure_service_started = AsyncMock(return_value=True)
++        service = plugin._service = GameAgentService(logger=None, push_message_fn=lambda **_: None)
++        server_state = {'mana': {'current': 17, 'max': 28},
++                        'abilities': [{'id': 'blink', 'cost': 10, 'description': '完整技能说明' * 100}]}
++        actual = {'status': 'received', 'messages': ['MC_STATUS {"accepted":true}'],
++                  'records': [{'kind': 'MC_STATUS', 'value': {'accepted': True}}], 'readOnly': True}
++        service._client = SimpleNamespace(send_server_command=AsyncMock(return_value=actual), is_connected=True)
++        service.observe_game = AsyncMock(return_value={'fresh': True, 'observedAt': 20,
++            'state': {'self': {'health': 20, 'food': 18, 'position': {'x': 1, 'y': 64, 'z': 2}, 'effects': []},
++                      'server': {'channels': {'mcagent:state': {'value': server_state, 'observedAt': 19999}}}}})
++        result = await plugin.minecraft_server(command='/mycli guild status')
++        self.assertEqual(result['messages'], actual['messages'])
++        self.assertEqual(result['current']['mana'], server_state['mana'])
++        self.assertEqual(service._server_command_history[0]['records'], actual['records'])
++        original = service._game_observations.evidence.read(result['replyEvidence']['id'], '/')['value']
++        self.assertEqual(original['current']['serverState'], server_state)
++        self.assertEqual(original['records'], actual['records'])
++        state = await plugin.minecraft_observe(evidence_id=result['replyEvidence']['id'],
++                                             reference_path='/current/serverState', detail='full')
++        self.assertEqual(state['value'], server_state)
++        self.assertEqual(state['decision']['status'], 'manual')
++
+     async def test_archived_authorization_cannot_override_current_busy_body(self):
+         from . import GameAgentMinecraftPlugin
+         from .service import GameAgentService

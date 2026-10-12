@@ -571,3 +571,12 @@ model-facing projection. Every current value, original array index and exact
 evidence path survives; full observations remain arrays. This targets local
 32K capacity without changing model parameters, tool rounds or game authority.
 See [the measured input comparison and compatibility limits](../../docs/local-current-slot-input.md).
+
+Plugin patches 0092–0093 reduce repeated item-protocol wrappers, historical
+connection announcements and duplicate server command representations for the
+local 32K deployment. Complete originals remain queryable; current tasks,
+authentication, resources, players, enemies and emergency rescue guidance keep
+their semantics. Small replies stay whole when references would be larger.
+Apply the complete plugin series at an observed idle boundary; the host series
+is unchanged. See [the offline comparison and deployment limits](../../docs/local-current-decision-essentials.md)
+and [the optional server-side improvement request](../../docs/local-server-guidance-request-2026-10-12.txt).
