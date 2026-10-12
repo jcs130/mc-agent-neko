@@ -36,6 +36,7 @@ export function buildMaintenanceQueue({ tickets, ledger, receipts, previous = {}
                 approvalKind: 'checked-repair-follow-up', occurrenceIds: ['repair:' + checkedRepair.ticketId + ':' + checkedRepair.ticketOccurrences],
                 observedAt: group.observedAt || checkedRepair.deployment?.at || checkedRepair.recordedAt } : null);
         if ((!approved?.reviewerApproved && !approved?.triageCandidate) || !members.length) continue;
+        const latestObservedAt = measured ? Math.max(approved.observedAt ?? 0, progress.observedAt) : approved.observedAt ?? group.observedAt;
         const baselines = Object.fromEntries(members.map(t => [t.id, t.occurrences ?? 1]));
         const occurrenceIds = (approved.stateSignal ? [approved.activationId || group.key]
             : approved.occurrenceIds ?? ticketIdentity(members[0], options).occurrenceIds).slice().sort();
@@ -55,15 +56,15 @@ export function buildMaintenanceQueue({ tickets, ledger, receipts, previous = {}
             ? Math.max(prior?.dueAt ?? 0, latest.recordedAt + 300000) : prior?.dueAt ?? now;
         const severity = members.reduce((level, t) => Math.max(level, { critical: 40, high: 30, med: 20, low: 10 }[t.severity] ?? 0), 0);
         const recurrent = receipts.some(r => group.ticketIds.includes(r.ticketId) && baselines[r.ticketId] > r.ticketOccurrences);
-        const fresh = now - (approved.observedAt ?? 0) <= (group.component === 'execution' ? 1800000 : 90000);
+        const fresh = now - (latestObservedAt ?? 0) <= (group.component === 'execution' ? 1800000 : 90000);
         current.push({ ...prior, id, incidentKey: group.key, component: group.component, ticketId: approved.ticketId ?? group.primaryTicketId,
             approvalKind: approved.approvalKind ?? 'reviewer-approved-finding',
             requiresRuntimeRecheck: approved.triageCandidate === true,
-            ticketIds: group.ticketIds, baselines, occurrenceIds, observedAt: approved.observedAt ?? group.observedAt,
+            ticketIds: group.ticketIds, baselines, occurrenceIds, observedAt: latestObservedAt,
             createdAt: prior?.createdAt ?? now, updatedAt: now, dueAt, status, priority: severity + (fresh ? 1000 : 0) + (recurrent && fresh ? 100 : 0),
             lease: prior?.lease ?? null,
             source: { reportRoot: 'reports', reportAt: approved.reportAt ?? null, ticketPath: 'repair-queue.json', evidenceIds: occurrenceIds,
-                ...(approved.triageCandidate ? { measuredProgress: { firstAt: progress.firstAt, observedAt: progress.observedAt,
+                ...(measured ? { measuredProgress: { firstAt: progress.firstAt, observedAt: progress.observedAt,
                     elapsedMs: progress.elapsedMs, decisionCount: progress.decisionCount, samples: progress.samples } } : {}) },
             repair: latest ? { id: latest.id, phase: latest.phase, commit: latest.commit,
                 writeback: latest.writeback?.state, verificationAt: latest.verification?.at ?? null } : null });

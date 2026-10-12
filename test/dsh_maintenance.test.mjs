@@ -196,4 +196,7 @@ test('a fresh measured idle-loop candidate reaches triage even when the model ha
     assert.equal(later.requests[0].id, first.requests[0].id);
     assert.equal(buildMaintenanceQueue({ ...opts, sessionId: 'different' }).requests.length, 0);
     assert.equal(buildMaintenanceQueue({ ...opts, now: NOW + 120000 }).requests.length, 0);
+    const oldApproval = { incidents: { [first.requests[0].incidentKey]: { key: first.requests[0].incidentKey,
+        reviewerApproved: true, occurrenceIds: ['autonomy:' + candidate.activationId], observedAt: NOW - 600000 } } };
+    assert.equal(buildMaintenanceQueue({ ...opts, ledger: oldApproval }).requests[0].observedAt, NOW);
 });
